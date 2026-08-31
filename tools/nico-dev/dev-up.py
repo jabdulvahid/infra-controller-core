@@ -25,6 +25,7 @@ Interactive moments (by design, not accident):
 
 import argparse
 import datetime
+import os
 import shlex
 import subprocess
 import sys
@@ -54,6 +55,26 @@ def sh(cmd, interactive=True):
 def vm_ssh(args, remote_cmd):
     return ['ssh', '-o', 'StrictHostKeyChecking=accept-new',
             f'{args.user}@{args.ip}', remote_cmd]
+
+
+def preflight(args):
+    """Cheap Mac-side validation of resolved options — runs before ANY
+    step (and in --dry-run), so bad values fail here, not mid-run."""
+    probs = []
+    if args.ssh_key and not Path(args.ssh_key).expanduser().exists():
+        probs.append(f'ssh_key file not found: {args.ssh_key}')
+    if not Path(args.share).expanduser().is_dir():
+        probs.append(f'share folder does not exist: {args.share}')
+    if args.ngc_tag:
+        if not os.environ.get(args.token_env):
+            probs.append(f'env var {args.token_env} is empty or unset '
+                         f'(the NGC API key)')
+        if not (args.ngc_image or os.environ.get('NICO_NGC_IMAGE')):
+            probs.append('no NGC image: set ngc.nico_image in the config '
+                         'or export NICO_NGC_IMAGE')
+    if not Path('/Applications/UTM.app/Contents/MacOS/utmctl').exists():
+        probs.append('UTM not found at /Applications/UTM.app')
+    return probs
 
 
 def build_steps(args):
@@ -279,6 +300,12 @@ def main():
             raise SystemExit(f'Error: {flag} {val} — steps are: {", ".join(keys)}')
     start = keys.index(args.from_step) if args.from_step else 0
     stop = keys.index(args.until_step) if args.until_step else len(keys) - 1
+
+    probs = preflight(args)
+    if probs:
+        for pr in probs:
+            print(f'  ✗ {pr}', file=sys.stderr)
+        raise SystemExit(1)
 
     print(f'nico-dev — bring-up: {args.name} @ {args.ip}')
     mode = (f'NGC pre-built, tag {args.ngc_tag}' if args.ngc_tag
