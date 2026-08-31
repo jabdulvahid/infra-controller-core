@@ -1,0 +1,171 @@
+# nico-dev — Developer simulation profile
+#
+# Single Linux VM (UTM, Apple Virtualization backend, ARM64).
+# VM IS the CP-1 node — no nested virtualization required.
+# DPU stand-in: ContainerLab FRR container running in the VM.
+#
+# Repos and site folder live on a shared folder visible from both VM and Mac.
+# Mac builds Nico images and pushes to a local Docker registry.
+# VM runs the k8s cluster, ContainerLab fabric, and Nico helm stack.
+#
+# Topology:
+#   super-spine → spine-1 → leaf-cp  (CP/DPU leaf)
+#                          └ leaf-mat (MAT BMC leaf)
+
+# Shared folder paths — set by create-dev-site.py
+nico_vm_folder: NICO_VM_FOLDER
+nico_mac_folder: NICO_MAC_FOLDER
+
+# Locations INSIDE the shared folder (joined with nico_vm_folder / nico_mac_folder).
+# Set explicitly via create-dev-site.py --nico-repo-folder / --nico-dev-folder
+# (required flags, validated to exist at site creation — nothing is guessed).
+#   nico_repo_folder: repo dir name — 'infra-controller-core' (fork convention)
+#                     or 'infra-controller' (upstream clone default)
+#   nico_dev_folder:  where the nico-dev scripts live in the share
+nico_repo_folder: NICO_REPO_FOLDER
+nico_dev_folder: NICO_DEV_FOLDER
+
+# Mac container registry — Docker registry:2 on Mac, VM pulls via 192.168.64.1
+registry:
+  host: 192.168.64.1   # Mac IP as seen from UTM VM (Shared Network)
+  port: 5000
+  nico_tag: latest
+
+fabric:
+  dc_name: dev
+  image: frr-arm64:local   # built by deploy-dev-fabric.py from Ubuntu apt (ARM64)
+
+  prefixes:
+    switch_underlay:     7.128.0.0/16
+    switch_loopbacks:    7.129.0.0/16
+    dpu_fabric:          7.130.0.0/16
+    dpu_loopbacks:       7.131.0.0/16
+    internet_uplink:     7.132.0.0/30    # host=7.132.0.1, super-spine=7.132.0.2
+    control_plane_link:  7.132.1.0/31    # vm-host=7.132.1.1, dpu=7.132.1.0
+    mat_underlay:        7.140.2.0/24
+    service_vips:        7.133.1.0/27
+    overlay:             8.150.0.0/16    # EVPN/VXLAN tenant space
+
+  switch_asn_base:  4266050001
+  dpu_asn:          4268030002
+  metallb_asn:      4268030000
+  datacenter_asn:   4266050000
+
+  # DNS: fabric containers inherit Docker's DNS, which prepare-vm.sh points at
+  # the UTM gateway (192.168.64.1) — no per-site DNS config needed here.
+
+  internet_uplink:
+    enabled: true
+
+  evpn:
+    enabled: true
+    control_plane_vni: 60000
+
+kubernetes:
+  version: "1.32"        # major.minor for pkgs.k8s.io apt repo
+  pod_cidr: 10.244.0.0/16
+
+nico-system:
+  helm-values:
+    sitename: dev
+    domain: dev.example.com
+
+    net-plan:
+      service_vips:      "7.133.1.0/27"
+      api_vip:           "7.133.1.17"
+      dhcp_vip:          "7.133.1.0"
+      pxe_vip:           "7.133.1.2"
+      ssh_console_vip:   "7.133.1.4"
+      ntp_vip_0:         "7.133.1.5"
+      ntp_vip_1:         "7.133.1.6"
+      ntp_vip_2:         "7.133.1.7"
+      dns_vip_0:         "7.133.1.20"
+      dns_vip_1:         "7.133.1.19"
+      metallb_asn:       "4268030000"
+
+    networks:
+      admin:
+        prefix: "8.135.0.0/16"
+        gateway: "8.135.0.1"
+        mtu: 9000
+        reserve_first: 5
+      rack-mat-hosts:
+        prefix: "7.140.2.0/24"
+        gateway: "7.140.2.1"
+        mtu: 1500
+        reserve_first: 2
+
+    bypass_rbac: true
+    enable_route_servers: false
+
+    pools:
+      vlan_id:          { start: 100,            end: 501             }
+      vni:              { start: 1024500,         end: 1024800         }
+      vpc_vni:          { start: 60101,           end: 60999           }
+      vpc_dpu_lo:       { start: "10.255.247.3",  end: "10.255.247.255" }
+      external_vpc_vni: { start: 51008,           end: 51011           }
+      fnn_asn:          { start: "4268031000",    end: "4268031099"    }
+
+    components:
+      nico_pxe: false
+      nico_dsx_exchange_consumer: false
+
+  fnn:
+    enabled: true
+    admin_vpc_vni: 61000
+
+    additional_route_target_imports:
+      - vni: managed_node_bmc
+      - vni: utility_cluster
+      - vni: ufm
+      - vni: powershelf
+      - vni: site_controller_bmc
+
+    routing_profiles:
+      INTERNAL:
+        route_target_imports:
+          - vni: managed_node_bmc
+          - vni: admin_network
+        route_targets_on_exports:
+          - vni: internal_tenant
+      EXTERNAL:
+        route_target_imports:
+          - vni: infra_egress
+        route_targets_on_exports:
+          - vni: external_tenant
+      PRIVILEGED_INTERNAL:
+        route_target_imports:
+          - vni: managed_node_bmc
+          - vni: admin_network
+          - vni: site_controller
+        route_targets_on_exports:
+          - vni: internal_tenant
+
+  # NICo REST stack — BASE feature (all four dev surfaces: nico-admin-cli,
+  # nico-cli, gRPC API, REST API). Deploys the dedicated rest-postgres
+  # (temporal/keycloak DBs), Keycloak dev IdP, Temporal, the nico-rest
+  # umbrella, and the site-agent. REST API exposed on NodePort 30388
+  # (production parity): https://<vm-ip>:30388. Adds ~2-3 GB of pods.
+  rest:
+    enabled: true
+
+  vault:
+    # file = persistent storage (hostPath /var/lib/vault) + auto-unseal sidecar.
+    # Survives VM reboots — REQUIRED for golden images. 'dev' (in-memory,
+    # legacy) loses all Vault state on pod restart: nico-api crashes with 403
+    # after every reboot. Do not switch back to dev for anything distributable.
+    mode: file
+
+  postgresql:
+    instances: 1
+    synchronous_mode: false
+    storage_class: local-path
+    volume_size: 5Gi
+
+chart-versions:
+  metallb:                "0.14.5"
+  local-path-provisioner: "v0.0.31"
+  cert-manager:           "v1.17.1"
+  vault:                  "0.25.0"
+  external-secrets:       "0.14.3"
+  postgres-operator:      "1.15.1"

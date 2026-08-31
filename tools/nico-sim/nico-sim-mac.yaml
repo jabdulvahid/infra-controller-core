@@ -1,0 +1,386 @@
+# DC Simulation — MacBook / developer profile
+# (generate-fabric.py, generate-nodes.py, generate-sim-values.py,
+#  deploy-nico-system.py, build-nico-components.py)
+#
+# ── Purpose ───────────────────────────────────────────────────────────────────
+# Minimal resource footprint for developer MacBooks and low-resource Linux VMs.
+# Differences from nico-sim.yaml (large simulation):
+#   - 1 CP node instead of 3  (single-node k8s — saves ~16GB RAM)
+#   - No MH VMs, no MH DPU VMs
+#   - Smaller VM sizing throughout
+#   - PostgreSQL single instance (no synchronous replication)
+#   - Local container registry kept — devs need it to rebuild and test images
+#
+# Full fabric topology is retained (all 6 leafs) — same as large sim so network
+# behaviour is identical. Only the compute footprint shrinks.
+#
+# ── sim-host on Mac ───────────────────────────────────────────────────────────
+# The simulation requires KVM. On macOS this means running inside a Linux VM
+# with nested virtualization enabled (e.g. UTM on Apple Silicon, or a Linux VM
+# via VirtualBox/VMware on Intel Mac). sim-host IS that Linux VM — not the Mac
+# itself. Minimum: 16GB RAM allocated to the Linux VM, 4 cores, 100GB disk.
+# Verify nested virt inside the VM: grep -c vmx /proc/cpuinfo (must be > 0)
+#
+# ── Path to infra-controller-core ─────────────────────────────────────────────
+# REQUIRED: update this to the actual path inside your Linux VM.
+infra_controller_repo: /home/user/projects/infra-controller-core
+
+fabric:
+  dc_name: dc1              # Datacenter name — ContainerLab lab prefix (clab-dc1-*)
+                            # and VM name prefix ({dc_name}-{site_name}-{role}-N).
+                            # The Nico site name is nico-system.helm-values.sitename.
+  num_leafs: 6                    # same as large sim — full fabric topology retained
+  num_control_plane_leafs: 1      # only 1 CP leaf needed for 1 CP node
+  image: frrouting/frr@sha256:990e83490108b686fd6df3b1cafa6bdbb2714acb00eedb9a89693946f46f45ce
+                                  # FRR Docker image — pinned by digest (FRRouting 8.4_git).
+                                  # To upgrade: docker pull frrouting/frr:latest, verify version, update digest.
+
+  prefixes:
+    # All fabric prefixes identical to nico-sim.yaml — same address space,
+    # same topology. Only the number of VMs changes, not the fabric.
+
+    # ── Fabric address space (/16s — supports up to 1000-rack simulations) ───
+    switch_underlay: 7.128.0.0/16
+    # /31 pairs between switches:
+    #   spine-1 → super-spine: 7.128.0.0/31, spine-2 → super-spine: 7.128.0.2/31
+    #   leaf-1  → spine-1:     7.128.0.4/31, leaf-1  → spine-2:     7.128.0.6/31
+
+    switch_loopbacks: 7.129.0.0/16
+    # /32s: super-spine=.0.1, spine-1=.0.2, spine-2=.0.3, leaf-1..N
+
+    dpu_fabric: 7.130.0.0/16
+    # /31 pairs between leafs and DPU stand-in VMs:
+    #   cp-dpu-1 ↔ leaf-1: 7.130.0.0/31 (leaf=.0, dpu=.1)
+
+    dpu_loopbacks: 7.131.0.0/16
+    # /32 loopbacks for all DPU stand-in VMs. cp-dpu-1=7.131.0.1, etc.
+
+    # ── Per-rack underlay pool — 1024 /24 subnets, one per rack ─────────────
+    underlay_pool: 7.140.0.0/14
+
+    overlay: 8.150.0.0/16              # EVPN/VXLAN tenant space
+    mgmt: 172.20.20.0/24               # ContainerLab management network
+
+  switch_asn_base: 4266050001
+  dpu_asn_base: 4268030001
+  datacenter_asn: 4266050000   # = switch_asn_base - 1; route-target namespace ASN.
+                                # must match nico-api siteConfig datacenter_asn and startupSMN.template
+
+  internet_uplink:
+    enabled: true
+    prefix: 7.132.0.0/30   # sim-host=.1 (7.132.0.1), super-spine=.2 (7.132.0.2)
+    # Required: provides outbound internet to fabric containers and makes
+    # Nico VIPs reachable from sim-host. Same as large sim.
+
+  registry_link:
+    enabled: true           # registry VM is enabled — devs need local images
+    prefix: 7.132.0.4/30   # super-spine=.5 (7.132.0.5), registry-vm=.6 (7.132.0.6)
+
+  evpn:
+    enabled: true
+    control_plane_vni: 60000
+    managed_host_vni: 60100
+
+  # ── EVPN VNI table — identical to nico-sim.yaml (see there for full annotations) ──
+  evpn_vnis:
+    cloud_prefixes:        1
+    forti_manager:         2
+    smn_to_tan:            98
+    utility_cluster:       101
+    managed_node_bmc:      900
+    site_controller_bmc:   901
+    tan_base:              1000
+    tan_1:                 1001
+    ufm:                   1002
+    powershelf:            1003
+    console_1:             1005
+    site_controller:       50100
+    internal_tenant:       50200
+    breakfix:              50300
+    admin_network:         50400
+    external_tenant:       50500
+    infra_egress:          10
+
+  # ── Underlay leaf definitions — identical to nico-sim.yaml ─────────────────
+  underlay_leafs:
+    rack-leaf-4:
+      leaf: leaf-4
+      export_vni: managed_node_bmc
+      relay: true
+    rack-leaf-5:
+      leaf: leaf-5
+      export_vni: managed_node_bmc
+      relay: true
+    rack-mat-hosts:
+      leaf: leaf-mat
+      bridge: br-internet
+      export_vni: managed_node_bmc
+      relay: false
+
+  # ── Fabric services — identical to nico-sim.yaml ───────────────────────────
+  service_prefix: "7.138.0.0/16"
+  service_vnis:
+    - name: utility_cluster
+      prefix: "7.138.0.0/24"
+      vni: utility_cluster
+    - name: ufm
+      prefix: "7.138.1.0/24"
+      vni: ufm
+    - name: powershelf
+      prefix: "7.138.2.0/24"
+      vni: powershelf
+    - name: site-controller-bmc
+      prefix: "7.138.3.0/24"
+      vni: site_controller_bmc
+
+control_plane:
+  num_vms: 1                      # ← MAC: single-node k8s (saves ~16GB RAM vs 3-node)
+  vm_prefix: cp
+  dpu_per_vm: 1
+  dpu_prefix: cp-dpu
+  site_controller_routes_asn: 4266050000   # = fabric.datacenter_asn; see nico-sim.yaml for full explanation
+
+  # ── startupSMN route policy — identical to nico-sim.yaml ───────────────────
+  # See nico-sim.yaml for full annotation of each field.
+  smn_route_policy:
+    route_export:
+      - vni: site_controller        # → {site_controller_routes_asn}:50100
+
+    route_import:
+      fixed:                        # hardcoded in startupSMN.template — do not modify
+        - vni: managed_node_bmc     # → {datacenter_asn}:900
+        - vni: admin_network        # → {datacenter_asn}:50400
+        - vni: site_controller      # → {datacenter_asn}:50100
+      extra:                        # → routeTargetsToImport in site config
+        - vni: utility_cluster      # → {datacenter_asn}:101
+        - vni: site_controller_bmc  # → {datacenter_asn}:901
+
+  control_plane_prefix: 7.132.1.0/24
+  # /31 pairs for DPU stand-in ↔ CP host VM link (BlueField PCIe/rshim sim).
+  # Mac: only pair 1 used: cp-dpu-1 (.0) ↔ cp-1 (.1) — 7.132.1.0/31
+  # /24 retained for consistency with nico-sim.yaml (future multi-node Mac sims).
+
+  # ── IP reference table for nico-sim-mac.yaml ───────────────────────────────
+  # VM                 │ Fabric IP      │ OOB IP        │ Notes
+  # ───────────────────┼────────────────┼───────────────┼────────────────────
+  # dc1-site1-cp-1     │ 7.132.1.1/31   │ dynamic DHCP  │ k8s node (single)
+  # dc1-site1-cp-dpu-1 │ 7.130.0.1/31   │ dynamic DHCP  │ FRR, loopback=7.131.0.1
+  # dc1-site1-registry │ 7.132.0.6      │ dynamic DHCP  │ Docker registry:2 :5000
+  #
+  # kubeadm API server: https://7.132.1.1:6443
+  # kubectl config: ~/.kube/config-dc1-site1
+
+  provisioning: golden_image
+
+  sizing:                         # ← MAC: halved from large sim
+    ram_mb: 4096                  # large sim: 8192
+    vcpus: 4                      # large sim: 8
+    disk_gb: 50                   # large sim: 100
+
+  dpu_sizing:                     # ← MAC: halved from large sim
+    ram_mb: 1024                  # large sim: 2048
+    vcpus: 1                      # large sim: 2
+    disk_gb: 10                   # large sim: 20
+
+  dns_servers: [10.126.136.6, 10.126.136.22, 10.120.237.36, 10.120.237.52]
+  console_password: Sim12345!
+
+  oob_network:
+    name: oob-cp
+    prefix: 192.168.200.0/24
+    internet: false
+
+managed_hosts:
+  num_vms:
+    rack-leaf-4: 0                # ← MAC: no MH VMs — saves ~8GB RAM + 80GB disk
+    rack-leaf-5: 0                # leafs still exist in fabric; VMs just not deployed
+  vm_prefix: mh
+  dpu_per_vm: 1                   # ratio is correct; 0 VMs means 0 DPUs created
+  dpu_prefix: mh-dpu
+
+  dpu_sizing:
+    ram_mb: 1024                  # ← MAC: smaller (large sim: 2048)
+    vcpus: 1
+    disk_gb: 10
+
+  provisioning: bare_metal
+
+  sizing:
+    ram_mb: 2048                  # ← MAC: smaller (large sim: 4096)
+    vcpus: 2
+    disk_gb: 20
+
+  oob_network:
+    name: oob-mh
+    prefix: 192.168.210.0/24
+    internet: false
+
+mh_dpu:
+  count: 0                        # ← MAC: no standalone MH DPU VM (no MH VMs to pair with)
+  leaf: leaf-4
+  dpu_prefix: mh-dpu
+  sizing:
+    ram_mb: 1024
+    vcpus: 1
+    disk_gb: 10
+
+golden_image:
+  control_plane:
+    path: /var/lib/libvirt/images/cp-golden.qcow2
+    os_image_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+    os_image_name: noble-server-cloudimg-amd64.img
+    os_image_dir: /var/lib/libvirt/images
+    kubernetes:
+      version: "1.32"
+      pod_network_cidr: "10.244.0.0/16"
+
+  managed_hosts:
+    path: /var/lib/libvirt/images/mh-golden.qcow2
+    os_image_url:  https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+    os_image_name: noble-server-cloudimg-amd64.img
+    os_image_dir:  /var/lib/libvirt/images
+
+nico_container_registry:
+  # Kept enabled — devs need the local registry to rebuild images after code changes.
+  # Workflow: cargo build → build-nico-components.py → push to 7.132.0.6:5000 → redeploy Nico.
+  # To use pre-built images instead: set enabled: false, image.source: nvcr below.
+  enabled: true
+  # renaming this key is an error; the generator validates its presence at startup.
+  fabric_link: registry_link
+  vm_prefix: registry
+  port: 5000
+  sizing:
+    ram_mb: 2048                  # ← MAC: halved (large sim: 4096)
+    vcpus: 1                      # large sim: 2
+    disk_gb: 50                   # ← MAC: smaller (large sim: 100)
+  oob_network:
+    name: oob-registry
+    prefix: 192.168.202.0/24
+    internet: false
+
+# ── Helm chart versions — identical to nico-sim.yaml ───────────────────────────
+chart-versions:
+  metallb:              "0.14.5"
+  local-path-provisioner: "v0.0.31"
+  cert-manager:         "v1.17.1"
+  vault:                "0.25.0"
+  external-secrets:     "0.14.3"
+  postgres-operator:    "1.11.0"
+
+nico-system:
+
+  underlay:
+    rack-leaf-4: "leaf-4"
+    rack-leaf-5: "leaf-5"
+    rack-mat-hosts: "leaf-mat"
+
+  vault:
+    mode: dev                     # in-memory; single instance — no Vault HA needed
+    dev_root_token: root
+
+  postgresql:
+    instances: 1                  # ← MAC: single instance (saves ~6GB RAM vs 3-node)
+    synchronous_mode: false       # ← MAC: must be false with instances: 1 (no replica)
+    storage_class: local-path
+    volume_size: 5Gi              # ← MAC: smaller (large sim: 10Gi)
+
+  image:
+    source: local                 # local registry — devs need this to test image changes
+    local_nico_tag: latest        # pushed to 7.132.0.6:5000/nico:latest
+    nvcr_repository: ""           # set these if switching to source: nvcr
+    nvcr_nico_tag: ""
+    nvcr_pull_secret: ""
+
+  helm-values:
+
+    sitename: site1
+    domain: dc1-site1.example.com
+
+    net-plan:
+      service_vips: "7.133.1.0/27"
+      service_vips_reserved: "7.133.1.32/27"
+
+      dhcp_vip:          "7.133.1.0"
+      pxe_vip:           "7.133.1.2"
+      route_server_vip_0: "7.133.1.3"
+      ssh_console_vip:   "7.133.1.4"
+      ntp_vip_0:         "7.133.1.5"
+      ntp_vip_1:         "7.133.1.6"
+      ntp_vip_2:         "7.133.1.7"
+      route_server_vip_1: "7.133.1.8"
+      route_server_vip_2: "7.133.1.9"
+      unbound_vip:       "7.133.1.14"
+      api_vip:           "7.133.1.17"
+      dns_vip_1:         "7.133.1.19"
+      dns_vip_0:         "7.133.1.20"
+
+      metallb_asn: "4268030000"
+
+    pools:
+      vlan_id:           { start: 100,          end: 501          }
+      vni:               { start: 1024500,      end: 1024800      }
+      vpc_vni:           { start: 60101,        end: 60999        }
+      vpc_dpu_lo:        { start: "10.255.247.3", end: "10.255.247.255" }
+      external_vpc_vni:  { start: 51008,        end: 51011        }
+      fnn_asn:           { start: "4268031000", end: "4268031099" }
+
+    networks:
+      admin:
+        prefix: "8.135.0.0/16"
+        gateway: "8.135.0.1"
+        mtu: 9000
+        reserve_first: 5
+
+      rack-leaf-4:
+        prefix: "7.140.0.0/24"
+        gateway: "7.140.0.1"
+        mtu: 1500
+        reserve_first: 2
+      rack-leaf-5:
+        prefix: "7.140.1.0/24"
+        gateway: "7.140.1.1"
+        mtu: 1500
+        reserve_first: 2
+      rack-mat-hosts:
+        prefix: "7.140.2.0/24"
+        gateway: "7.140.2.1"
+        mtu: 1500
+        reserve_first: 2
+
+    bypass_rbac: true
+    enable_route_servers: false
+
+    fnn:
+      enabled: true
+      admin_vpc_vni: 61000
+
+      additional_route_target_imports:
+        - vni: managed_node_bmc
+        - vni: utility_cluster
+        - vni: ufm
+        - vni: powershelf
+        - vni: site_controller_bmc
+
+      routing_profiles:
+        INTERNAL:
+          route_target_imports:
+            - vni: managed_node_bmc
+            - vni: admin_network
+          route_targets_on_exports:
+            - vni: internal_tenant
+        EXTERNAL:
+          route_target_imports:
+            - vni: infra_egress
+          route_targets_on_exports:
+            - vni: external_tenant
+        PRIVILEGED_INTERNAL:
+          route_target_imports:
+            - vni: managed_node_bmc
+            - vni: admin_network
+            - vni: site_controller
+          route_targets_on_exports:
+            - vni: internal_tenant
+
+    components:
+      nico_pxe: false
+      nico_dsx_exchange_consumer: false
