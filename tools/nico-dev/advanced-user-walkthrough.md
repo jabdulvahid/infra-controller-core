@@ -6,9 +6,20 @@ NEVER merged upstream. Both fork and upstream (renamed NVIDIA/
 infra-controller) verified public via unauthenticated API — anything
 pushed is world-readable, hence the scrub gate below.
 
-Jasmeer drafted each step; Claude reviewed. Status: steps 0–4 settled;
-branch NOT yet created; walkthrough not yet executed (vm1 recreation in
-~/nico-tests pends the branch).
+Jasmeer drafted each step; Claude reviewed.
+
+**Status: EXECUTED AND PASSED 2026-08-31** — fresh clone of the pushed
+branch into ~/nico-tests/vm1/shared, config file (devup-vm1.yaml, NGC
+mode ngc: group), one dev-up command; dev-up.py's maiden end-to-end
+voyage. Empty context → https://11.133.1.17/admin, Forge
+v2.2.0-pr-441-gc594e35f3, dc1/dev1 on the 11/12 defaults, zero source
+builds (all seven images pulled from NGC). Findings fixed en route (see
+issues.md): 20260831-#1 (bare-ssh MaxAuthTries → pinned identity, plus
+known_hosts scrub / preflight / config-aware resume / prep --ssh-key),
+#2 (REST images were never shipped by the NGC path — now pulled from NGC
+same-tag, --rest-only checkout build as fallback), #3 (script-created
+VMs lacked display+serial devices). Steps below preserved as reviewed;
+the README carries the user-facing version.
 
 ## Step 2 — prerequisites validation (runs FROM the clone; reordered 2026-08-30)
 
