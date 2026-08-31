@@ -126,16 +126,39 @@ def main():
     run(['docker', 'tag', ngc_ref, local_ref], 'docker tag')
     run(['docker', 'push', local_ref], 'docker push')
 
-    # The REST images (Go) are NOT on NGC — they are always built from the
-    # repo checkout, tagged to match the core image. Fast: buildx Go builds,
-    # minutes. Found on the dev-up maiden run: --initial deploys the full
-    # REST stack, which then pulls nico-rest-*:<local_tag> from the local
-    # registry — nothing had ever pushed them (the earlier validation was a
-    # redeploy over a golden clone with the REST stack already placed).
-    print(f'Step 5: REST images from the checkout (tag {local_tag})...')
-    run([sys.executable, str(here / 'build-dev-nico-mac.py'), site,
-         '--tag', local_tag, '--rest-only'],
-        'REST image build (rest-api/ buildx)')
+    # REST images: CI publishes them alongside the core image, SAME tag,
+    # same org/team (verified 2026-08-31: nico-rest-db's tag list includes
+    # v2.2.0-pr-441-gc594e35f3). Pull + retag + push the six the base
+    # deploy references — zero build, version-matched with the core by
+    # construction. Fallback if a tag is missing: build them from the
+    # checkout (--rest-only; version skew vs the core is then possible).
+    rest_images = ['nico-rest-api', 'nico-rest-workflow',
+                   'nico-rest-site-manager', 'nico-rest-site-agent',
+                   'nico-rest-db', 'nico-rest-cert-manager']
+    ngc_base = args.ngc_image.rsplit('/', 1)[0]
+    print(f'Step 5: REST images from NGC ({ngc_base}/*:{args.ngc_tag})...')
+    fell_back = False
+    for i, image in enumerate(rest_images, 1):
+        src = f'{ngc_base}/{image}:{args.ngc_tag}'
+        dst = f'localhost:{REGISTRY_PORT}/{image}:{local_tag}'
+        print(f'  [{i}/{len(rest_images)}] {image}')
+        r = run(['docker', 'pull', '--platform', 'linux/arm64', src],
+                f'pull {image}', check=False)
+        if r.returncode != 0:
+            print(f'\n  WARNING: {src} not pullable — falling back to '
+                  f'building the REST images from the checkout\n'
+                  f'  (they may not exactly match the core image\'s '
+                  f'commit).')
+            run([sys.executable, str(here / 'build-dev-nico-mac.py'), site,
+                 '--tag', local_tag, '--rest-only'],
+                'REST image build (rest-api/ buildx)')
+            fell_back = True
+            break
+        run(['docker', 'tag', src, dst], f'tag {image}')
+        run(['docker', 'push', dst], f'push {image}')
+    if not fell_back:
+        print(f'  REST images pulled + pushed ✓ ({len(rest_images)}, '
+              f'tag {args.ngc_tag} → {local_tag})')
 
     deploy = 'deploy-dev-nico.py' if args.initial else 'redeploy-dev-nico.py'
     print(f'Step 6: {deploy} --tag {local_tag}...')
