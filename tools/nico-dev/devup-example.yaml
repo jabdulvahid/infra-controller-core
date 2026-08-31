@@ -14,11 +14,12 @@ site: dev1                        # site name
 underlay: 11                      # first IP octet — becomes a Mac-routed
 overlay: 12                       #   prefix; avoid octets your Mac uses
 
-# ── Choose ONE deploy mode ─────────────────────────────────────────────
+# ── Choose ONE deploy mode (setting both is an error) ──────────────────
 # NGC pre-built (quickest onboarding — no source build, no Rust):
-# ngc_tag: v2.2.0-pr-441-g1234567    # tag must exist as linux/arm64
-# ngc_image: nvcr.io/<org>/<team>/<image>   # or export NICO_NGC_IMAGE
-# token_env: NGC_API_KEY               # env var NAME holding your NGC key
+# ngc:
+#   tag: v2.2.0-pr-441-g1234567     # must exist as linux/arm64
+#   image: nvcr.io/<org>/<team>/<image>    # or export NICO_NGC_IMAGE
+#   token_env: NGC_API_KEY          # env var NAME holding your NGC key
 #
-# Source build (the default when ngc_tag is absent):
-# tag: main-20260830                 # image label; default main-<today>
+# Source build (the default when ngc: is absent):
+# tag: main-20260830                # image label; default main-<today>
