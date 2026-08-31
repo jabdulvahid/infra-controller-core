@@ -1,0 +1,861 @@
+# DC Simulation definition — single source of truth for all generators
+# (generate-fabric.py, generate-nodes.py, generate-sim-values.py,
+#  deploy-nico-system.py, build-nico-components.py)
+#
+# ── sim-host ──────────────────────────────────────────────────────────────────
+# "sim-host" refers to the Linux machine running this simulation. It can be:
+#   - A bare-metal machine (recommended — KVM runs at near-native speed)
+#   - A VM with nested virtualization enabled (e.g. a cloud instance with
+#     /dev/kvm exposed, or an on-prem VM with vmx/svm passthrough) — KVM-in-KVM
+#     works but adds CPU overhead; adequate for development and CI.
+#     Verify nested virt is available: grep -c vmx /proc/cpuinfo (must be > 0)
+# sim-host is the hypervisor (KVM/libvirt for VMs), the container runtime host
+# (ContainerLab/Docker for switch containers), and the upstream router for the
+# simulated fabric (internet_uplink). All scripts run on sim-host. In the
+# current deployment this machine is jaslinux (941beb7-lcedt, Ubuntu 24.04,
+# i9-13900K, 62GB RAM), but the simulation is portable — any Ubuntu 24.04
+# machine (bare-metal or nested-virt VM) with sufficient resources can be sim-host.
+#
+# ── Path to infra-controller-core ─────────────────────────────────────────────
+# REQUIRED: all Nico tooling reads Helm charts and build sources from here.
+# Simulation-specific output is written to {infra_controller_repo}/nico-sim/{dc_name}/
+infra_controller_repo: /home/jabdulvahid/projects/infra-controller-core
+
+# Kubeconfig written by form-k8s-cluster.py — path relative to this yaml file.
+# All nico-sim scripts read kubeconfig from here (works for any user, including root).
+kubeconfig: dc1-site1.kubeconfig.yaml
+
+fabric:
+  dc_name: dc1              # Datacenter name (any length, human-readable).
+  dc_nick_name: dc1         # ≤4 chars — used in ContainerLab bridge names.
+                            # virbr-{dc_nick}-internet must be ≤15 chars → dc_nick ≤4 chars.
+                            # Default: first 4 chars of dc_name. Two roles:
+                            #   1. ContainerLab lab name — switch containers are named
+                            #      clab-{dc_name}-{node}  e.g. clab-dc1-super-spine.
+                            #      Switches belong to the DC (fabric is DC-wide, not site-specific).
+                            #   2. VM name prefix — all KVM VMs are named
+                            #      {dc_name}-{site_name}-{role}-N  e.g. dc1-site1-cp-1.
+                            #      vm_prefix/dpu_prefix fields below define the role segment;
+                            #      generate-nodes.py prepends dc_name + site_name automatically.
+                            # The Nico site name is nico-system.helm-values.sitename (site1).
+  num_leafs: 6                    # total leaf switches (leaf-1/2/3: CP, leaf-4/5: MH racks, leaf-mat: MAT)
+  num_control_plane_leafs: 3      # leafs dedicated to CP VMs (must be <= num_leafs)
+  image: frrouting/frr@sha256:990e83490108b686fd6df3b1cafa6bdbb2714acb00eedb9a89693946f46f45ce
+                                  # FRR Docker image for switch containers — pinned by digest (no stable
+                                  # version tag available; digest identifies FRRouting 8.4_git exactly).
+                                  # Verified on jaslinux 2026-08-06: vtysh "show version" → FRRouting 8.4_git.
+                                  # To upgrade: docker pull frrouting/frr:latest, verify version, update digest.
+
+  prefixes:
+    # ── IP address allocation ─────────────────────────────────────────────────
+    # All fabric IPs are FULLY DETERMINISTIC — computed by generate-nodes.py
+    # from these prefixes using sequential /31 allocation in VM index order.
+    # An end user can calculate any VM's fabric IP without running anything.
+    #
+    # Formula: split the prefix into /31 pairs. Pair N (1-indexed) gives:
+    #   .even address → left side (leaf or DPU stand-in internal)
+    #   .odd  address → right side (DPU stand-in fabric or CP host internal)
+    #
+    # OOB IPs (192.168.200.x, 192.168.201.x) are NOT deterministic.
+    # libvirt assigns them from its DHCP pool by arrival order. The MAC
+    # addresses ARE deterministic (see generate-nodes.py vm_mac/dpu_mac),
+    # so in practice each VM gets a stable IP once the pool is seeded, but
+    # this is not guaranteed. Scripts discover OOB IPs via:
+    #   virsh net-dhcp-leases oob-cp | awk ...
+    # To make OOB IPs deterministic, add static DHCP reservations to the
+    # libvirt network XML (not currently done).
+
+    # ── Fabric address space sizing (/16s) ───────────────────────────────────
+    # All four fabric prefixes are /16 to support up to 1000-rack simulations.
+    # A /24 would cap at ~6 racks (switch_underlay) or ~128 DPUs (dpu_fabric).
+    # Address requirements at scale (2 spines, N leafs, 1 DPU per rack):
+    #   switch_underlay:  4 + 4N addrs  → needs /20 at N=1000  (/16 gives 16384)
+    #   switch_loopbacks: 3 + N  addrs  → needs /22 at N=1000  (/16 gives 65536)
+    #   dpu_fabric:       2N     addrs  → needs /21 at N=1000  (/16 gives 65536)
+    #   dpu_loopbacks:    N      addrs  → needs /22 at N=1000  (/16 gives 65536)
+
+    switch_underlay: 7.128.0.0/16
+    # /31 pairs between switches (generate-fabric.py allocates these):
+    #   spine-1 → super-spine: 7.128.0.0/31   (spine-1=.0, ss=.1)
+    #   spine-2 → super-spine: 7.128.0.2/31   (spine-2=.2, ss=.3)
+    #   leaf-1  → spine-1:     7.128.0.4/31   (leaf-1=.4, sp1=.5)
+    #   leaf-1  → spine-2:     7.128.0.6/31   (leaf-1=.6, sp2=.7)
+    #   ... and so on for each leaf×spine pair
+
+    switch_loopbacks: 7.129.0.0/16
+    # /32s for switch loopbacks (sequential: super-spine=.0.1, spine-1=.0.2, spine-2=.0.3, leaf-1..N)
+
+    dpu_fabric: 7.130.0.0/16
+    # /31 pairs between leafs and DPU stand-in VMs (sequential by VM index):
+    #   cp-dpu-1 ↔ leaf-1:    7.130.0.0/31  (leaf-1=.0,  cp-dpu-1=.1)
+    #   cp-dpu-2 ↔ leaf-2:    7.130.0.2/31  (leaf-2=.2,  cp-dpu-2=.3)
+    #   cp-dpu-3 ↔ leaf-3:    7.130.0.4/31  (leaf-3=.4,  cp-dpu-3=.5)
+    # General formula for cp-dpu-N: fabric_ip = base + (N-1)*2 + 1
+
+    dpu_loopbacks: 7.131.0.0/16
+    # /32 loopbacks for all DPU stand-in VMs (CP DPUs + MH DPUs).
+    # Allocated sequentially by VM index: cp-dpu-1=7.131.0.1, cp-dpu-2=7.131.0.2, etc.
+    # Moved here from control_plane section — DPU loopbacks are fabric-wide
+    # (MH DPU stand-ins also need loopbacks, not just CP DPUs).
+
+    # ── Per-rack underlay pool (/14) ─────────────────────────────────────────
+    # Each rack gets one /24 allocated sequentially from this pool.
+    # 7.140.0.0/14 = 1024 /24 subnets → supports up to 1024 racks.
+    # Replaces the old "one /16 per rack" scheme which could not scale beyond ~8 racks
+    # in the 7.x.x.x /8 space. Each rack's /24 holds up to 254 BMC/host addresses —
+    # sufficient for any real rack (max ~40 hosts × 2 BMC addresses each).
+    # generate-fabric.py allocates /24s in rack definition order.
+    underlay_pool: 7.140.0.0/14
+
+    overlay: 8.150.0.0/16              # EVPN/VXLAN tenant space (8.x.x.x = overlay)
+    # IP address mental model:
+    #   7.x.x.x — underlay/infrastructure: switch links, DPU fabric, loopbacks,
+    #              service VIPs, OOB/BMC discovery, underlay networks
+    #   8.x.x.x — overlay: EVPN tenant VPCs; fabric-side interfaces of managed
+    #              host DPUs get IPs from this space when assigned to a VPC
+    mgmt: 172.20.20.0/24               # ContainerLab management network
+
+    # service_vips and all nico VIP assignments live under
+    # nico-system.helm-values.net-plan (see below).
+
+  switch_asn_base: 4266050001   # ASNs for switches (super-spine, spines, leafs)
+  dpu_asn_base: 4268030001     # ASNs for DPU stand-in VMs (cp-dpu-N = dpu_asn_base + N)
+
+  # ── datacenter_asn ────────────────────────────────────────────────────────
+  # A single ASN assigned to this datacenter by the network team (GNI).
+  # Used as the "owner" namespace in EVPN route-target strings: {datacenter_asn}:{vni}
+  # e.g. 4266050001:900 tags BMC routes as belonging to this datacenter.
+  #
+  # This is NOT the eBGP session ASN of any individual switch (those are derived
+  # from switch_asn_base above). It is a site-level identifier that must match:
+  #   1. startupSMN.template: {{.DatacenterASN}} and {{.SiteControllerRoutesASN}}
+  #      (both set to this value — they differ only in co-location scenarios)
+  #   2. nico-api siteConfig TOML: datacenter_asn field
+  #      (flows to managed-host dpu-agent via ManagedHostNetworkConfigResponse)
+  #   3. generate-fabric.py: FRR route-target config on each leaf
+  #      (leaf-mat exports {datacenter_asn}:900 for MAT BMC routes)
+  # If these three disagree, route-target matching silently fails — routes are
+  # advertised but never imported.
+  #
+  # For the sim, reuse switch_asn_base (the super-spine ASN) as the datacenter
+  # ASN — a practical choice since the super-spine is the fabric's root.
+  datacenter_asn: 4266050000   # = switch_asn_base - 1; the DC route-target namespace ASN.
+                               # Convention: datacenter_asn is one below switch_asn_base so
+                               # it is reserved purely as a route-target namespace and never
+                               # assigned to an actual switch. Verified against production
+                               # Nautobot: all route-targets use 4266050000:{vni}.
+                               # All route-targets: 4266050000:{vni}
+
+  # ── internet_uplink ──────────────────────────────────────────────────────────
+  # A /30 point-to-point link between sim-host (the sim host) and the
+  # super-spine container. This is the sim equivalent of the physical uplink
+  # a real datacenter has to the internet or corporate WAN.
+  #
+  # How it works:
+  #   sim-host acts as the "upstream router / internet gateway" for the fabric.
+  #   generate-fabric.py creates a veth pair: one end on sim-host (7.132.0.1),
+  #   the other end inside the super-spine container (7.132.0.2). The super-spine
+  #   peers with sim-host over BGP on this link and receives a default route (0/0)
+  #   from sim-host. sim-host also applies iptables MASQUERADE so that any packet
+  #   leaving the fabric via this link is NAT'd to sim-host's real IP — giving
+  #   the entire fabric outbound internet (DNS lookups, apt installs, image pulls).
+  #
+  # Why this matters — it replicates real Nico site behaviour:
+  #   In a real NVIDIA datacenter, the Nico site is reachable from the corporate
+  #   network or internet via the fabric's uplink. MetalLB announces the Nico
+  #   service VIPs (7.133.1.x) into the fabric via BGP from the CP DPU stand-ins.
+  #   Those VIPs propagate up through the leafs → spines → super-spine → uplink.
+  #   From sim-host (or any machine with a route to 7.133.1.0/27 via 7.132.0.2)
+  #   you can curl the Nico API and open the Admin UI in a browser — exactly as
+  #   a site operator would from a jump host connected to the real datacenter.
+  #
+  # Accessing the Nico Admin UI from sim-host (or your laptop via SSH tunnel):
+  #   The Admin UI is served at https://<api_vip> (default: https://7.133.1.17).
+  #   From sim-host:
+  #     curl -k https://7.133.1.17/healthz          # API health check
+  #     open https://7.133.1.17/admin               # browser (if sim-host has a GUI)
+  #   From your laptop via SSH port-forward:
+  #     ssh -L 8443:7.133.1.17:443 jabdulvahid@sim-host
+  #     open https://localhost:8443/admin            # in your laptop's browser
+  #   Admin credentials:
+  #     kubectl get secret nico-api-web-basic-auth -n nico-system \
+  #       -o jsonpath='{.data.password}' | base64 -d
+  #
+  # Without this uplink:
+  #   - No outbound internet from fabric containers (can't pull images, no DNS)
+  #   - VIPs not reachable from sim-host (BGP default route missing, packets dropped)
+  #   - MAT cannot resolve nico-api.nico-system (no route to api_vip)
+  #   - nico-admin-cli cannot connect to the API
+  #
+  # IP allocation (prefix is a /30 — only 2 usable host addresses):
+  #   .1 → sim-host veth end (the "upstream router")
+  #   .2 → super-spine container eth (the "WAN interface")
+  internet_uplink:
+    enabled: true
+    prefix: 7.132.0.0/30   # /30: sim-host=.1 (7.132.0.1), super-spine=.2 (7.132.0.2)
+
+  # ── registry_link ────────────────────────────────────────────────────────────
+  # A /30 point-to-point link between the super-spine and the Nico container
+  # registry VM. The registry VM is defined in `nico_container_registry:` below
+  # and references this link explicitly via `fabric_link: registry_link`.
+  # generate-nodes.py reads `fabric_link` to wire the VM — no implicit coupling.
+  #
+  # The registry sits at the super-spine rather than behind a leaf because it is
+  # pure infrastructure — not a managed compute node, not a Nico tenant. Attaching
+  # at the super-spine gives it reachability from all leafs without occupying a
+  # rack slot.
+  #
+  # IP allocation:
+  #   .5 → super-spine end (7.132.0.5)
+  #   .6 → registry VM eth1 fabric-facing interface (7.132.0.6)
+  registry_link:
+    enabled: true
+    prefix: 7.132.0.4/30    # super-spine=.5 (7.132.0.5), registry-vm=.6 (7.132.0.6)
+
+  evpn:
+    enabled: true
+    control_plane_vni: 60000   # VNI for Nico control plane VPC (matches startupSMN.template)
+    managed_host_vni: 60100    # VNI for simulated managed hosts / MAT
+
+  # ── EVPN route-target VNI table (NVIDIA production values) ───────────────────
+  # Single source of truth for all VNI numbers used in the sim.
+  # Keys are symbolic names; values match NVIDIA production constants from
+  # startupSMN.template. generate-fabric.py uses these to configure per-leaf
+  # import/export policies. generate-sim-values.py uses them for fnn section.
+  # All route-targets are expressed as {datacenter_asn}:{vni}.
+  # ── EVPN VNI table ───────────────────────────────────────────────────────────
+  # Verified against production Nautobot export (2026-08-06, 10 route-targets,
+  # datacenter_asn=4266050000). Entries marked [production] exist in Nautobot;
+  # entries marked [Fnn constant] come from startupSMN.template / fnn codebase.
+  evpn_vnis:
+    cloud_prefixes:        1       # [production] Kiwi Cloud Prefixes — internet/cloud egress
+    forti_manager:         2       # [production] FortiManager Prefixes — firewall management
+    smn_to_tan:            98      # [production] SMN1_TO-TAN — SMN to Tenant Access Network
+    utility_cluster:       101     # [production] Utility Cluster (FnnCommonJumphostRouteTarget)
+    managed_node_bmc:      900     # [production] SMN1_FORGE1 — BMCs for Nico managed nodes
+    site_controller_bmc:   901     # [production] SMN1_FORGE1-SC — BMCs for site controllers
+    tan_base:              1000    # [production] (no description in Nautobot) — TAN base VNI
+    tan_1:                 1001    # [production] SMN1_TAN1 — Tenant Access Network 1
+    ufm:                   1002    # [Fnn constant] FnnCommonUfmRouteTarget — UFM
+    powershelf:            1003    # [Fnn constant] FnnCommonPowershelfRouteTarget — powershelf
+    console_1:             1005    # [production] SMN1_CONSOLE1 — console access network
+    site_controller:       50100   # [production] NICo Site Controller (FnnCommonSiteControllerRouteTarget)
+    internal_tenant:       50200   # [Fnn constant] FnnCommonInternalTenantRouteTarget
+    breakfix:              50300   # [Fnn constant] FnnCommonBreakfirstRouteTarget
+    admin_network:         50400   # [Fnn constant] FnnCommonAdminNetworkTarget
+    external_tenant:       50500   # [Fnn constant] FnnCommonExternalTenantRouteTarget
+    infra_egress:          10      # [Fnn constant] FnnCommonInfraEgressVrfRouteTarget — default-route
+
+  # ── Underlay leaf definitions ─────────────────────────────────────────────────
+  # Each physical underlay network maps to a leaf in the ContainerLab topology.
+  # generate-fabric.py creates the leaf node, wires it to spines, and generates
+  # FRR config using the export_vni and leaf type.
+  #
+  # export_vni: symbolic key from evpn_vnis — what this leaf advertises into EVPN.
+  # relay: whether a DHCP relay container is needed (false for API-mode networks).
+  # bridge: host bridge on sim-host (only for leaf-mat — connects to br-internet
+  #         where MAT IP aliases live).
+  #
+  # CP leafs (leaf-1/2/3) are NOT listed here — they are generated automatically
+  # from control_plane.num_vms and follow their own import/export rules
+  # (export: site_controller + admin_network; import: managed_node_bmc + services).
+  underlay_leafs:
+    rack-leaf-4:
+      leaf: leaf-4
+      export_vni: managed_node_bmc    # MH BMC/OOB routes → VNI 900
+      relay: true                     # dhcrelay container on this leaf
+    rack-leaf-5:
+      leaf: leaf-5
+      export_vni: managed_node_bmc    # MH BMC/OOB routes → VNI 900
+      relay: true
+    rack-mat-hosts:
+      leaf: leaf-mat
+      bridge: br-dc1-internet         # sim-host host bridge where MAT IP aliases live
+      export_vni: managed_node_bmc    # MAT BMC mock routes → VNI 900
+      relay: false                    # MAT uses API-mode DHCP, no relay needed
+
+  # ── Fabric services (external to Nico) ───────────────────────────────────────
+  # Services that exist in the fabric independently of Nico.
+  # Nico needs to REACH them (not manage them) — access controlled by VNI route-import.
+  # Services run as containers on sim-host and attach to the fabric dynamically
+  # via VXLAN using a pre-reserved VNI. No fabric redeploy needed to add a service.
+  #
+  # Reserved prefix pool: 7.138.0.0/16 — one /24 per service.
+  # VNI keys reference evpn_vnis above — resolved to NVIDIA production numbers.
+  #
+  # To attach a new service container:
+  #   ./attach-service.sh <name>   (creates VXLAN + starts container)
+  # No topology change needed — VNIs are pre-configured in fabric at deploy time.
+  service_prefix: "7.138.0.0/16"   # reserved pool; /24s allocated per service below
+  service_vnis:
+    - name: utility_cluster
+      prefix: "7.138.0.0/24"
+      vni: utility_cluster                 # → 101  (FnnCommonJumphostRouteTarget)
+    - name: ufm
+      prefix: "7.138.1.0/24"
+      vni: ufm                      # → 1002 (FnnCommonUfmRouteTarget)
+    - name: powershelf
+      prefix: "7.138.2.0/24"
+      vni: powershelf               # → 1003 (FnnCommonPowershelfRouteTarget)
+    - name: site-controller-bmc
+      prefix: "7.138.3.0/24"
+      vni: site_controller_bmc      # → 901  (FnnCommonSiteControllerBmcRouteTarget)
+
+  # ASN allocation:
+  #   switch_asn_base = 4266050001
+  #     super-spine:   switch_asn_base + 0      = 4266050001
+  #     spine-N:       switch_asn_base + N      = 4266050002, 4266050003
+  #     leaf-N:        switch_asn_base + 10 + N = 4266050012..4266050015
+  #
+  #   dpu_asn_base = 4268030001
+  #     cp-dpu-N:      dpu_asn_base + N         = 4268030002..4268030004
+  #
+  # Note: the registry VM connects directly to super-spine via registry_link and does NOT
+  # run FRR or participate in BGP — it has no ASN.
+
+control_plane:
+  num_vms: 3                      # must be <= num_control_plane_leafs
+  vm_prefix: cp                   # role segment — actual VM names: {dc_name}-{site_name}-cp-N
+                                  #   e.g. dc1-site1-cp-1, dc1-site1-cp-2, dc1-site1-cp-3
+  dpu_per_vm: 1                   # DPU stand-in VMs per CP node (1 in production)
+  dpu_prefix: cp-dpu              # role segment — actual DPU VM names: {dc_name}-{site_name}-cp-dpu-N
+                                  #   e.g. dc1-site1-cp-dpu-1, dc1-site1-cp-dpu-2, dc1-site1-cp-dpu-3
+
+  # ── site_controller_routes_asn ────────────────────────────────────────────
+  # The ASN Nico uses to tag its OWN routes exported into EVPN.
+  # Maps to siteControllerRoutesAsn in startupSMN.template:
+  #   route-export:
+  #     to-evpn:
+  #       route-target:
+  #         {site_controller_routes_asn}:{FnnCommonSiteControllerRouteTarget}: {}
+  #
+  # Kept separate from fabric.datacenter_asn so the three ASN namespaces are distinct:
+  #   fabric.datacenter_asn          — who owns the fabric VNIs (BMC, admin, etc.)
+  #   control_plane.site_controller_routes_asn — who owns Nico's exported routes
+  #   net-plan.metallb_asn           — MetalLB BGP speaker for VIP announcements
+  #
+  # In production these are usually equal to datacenter_asn (same GNI team owns
+  # everything). They differ only in co-location / multi-operator deployments.
+  # Set equal to datacenter_asn here; change if Nico operates under a different ASN.
+  site_controller_routes_asn: 4266050000   # = fabric.datacenter_asn (same team, same DC)
+
+  # ── startupSMN route policy ───────────────────────────────────────────────
+  # Maps directly to the route-export and route-import blocks in startupSMN.template.
+  # VNI keys reference fabric.evpn_vnis — resolved to {asn}:{vni} at generation time.
+  #
+  # route_export: routes the CP DPU advertises into EVPN tagged with
+  #   site_controller_routes_asn (not datacenter_asn — Nico is the owner).
+  #
+  # route_import.fixed: the three entries hardcoded in startupSMN.template.
+  #   generate-fabric.py does NOT inject these — they are already in the template.
+  #   Listed here for documentation only so the full picture is visible in one place.
+  #
+  # route_import.extra: site-specific additions beyond the fixed three.
+  #   Maps to `routeTargetsToImport` in the site config (lines 250-254 of
+  #   startupSMN.template). generate-fabric.py injects these into the site config
+  #   so the template merges them in at DPU provisioning time.
+  smn_route_policy:
+    route_export:
+      - vni: site_controller        # → {site_controller_routes_asn}:50100
+                                    #   tags CP DPU routes so fabric knows they are
+                                    #   site-controller routes (SMN return traffic)
+
+    route_import:
+      fixed:                        # hardcoded in startupSMN.template — do not modify
+        - vni: managed_node_bmc     # → {datacenter_asn}:900  — BMCs for Nico managed nodes
+        - vni: admin_network        # → {datacenter_asn}:50400 — admin network routes
+        - vni: site_controller      # → {datacenter_asn}:50100 — other site-controllers
+      extra:                        # → routeTargetsToImport in site config (site-specific)
+        - vni: utility_cluster      # → {datacenter_asn}:101  — utility cluster / jumphosts
+        - vni: site_controller_bmc  # → {datacenter_asn}:901  — BMCs for site controllers
+
+  # ── CP-specific IP prefixes ───────────────────────────────────────────────
+  # These live here (not in fabric.prefixes) because they serve the CP layer,
+  # not the fabric switching layer.
+
+  # dpu_loopbacks moved to fabric.prefixes.dpu_loopbacks (7.131.0.0/16) —
+  # all DPU stand-ins (CP + MH) share the same loopback pool.
+  # cp-dpu-1: 7.131.0.1, cp-dpu-2: 7.131.0.2, etc.
+
+  control_plane_prefix: 7.132.1.0/24
+  # /31 pairs for the internal DPU stand-in ↔ CP host VM link — the simulated
+  # BlueField PCIe/rshim internal link. NOT part of the fabric.
+  #   Pair 1: cp-dpu-1 (.0)  ↔  cp-1 (.1)  — 7.132.1.0/31
+  #   Pair 2: cp-dpu-2 (.2)  ↔  cp-2 (.3)  — 7.132.1.2/31
+  #   Pair 3: cp-dpu-3 (.4)  ↔  cp-3 (.5)  — 7.132.1.4/31
+  #   ...
+  #   Pair 128: cp-dpu-128 (.254) ↔ cp-128 (.255) — 7.132.1.254/31
+  # General formula: cp-N host_ip = base + (N-1)*2 + 1
+  #
+  # Sized as /24 (256 addresses = 128 /31 pairs) to support up to 128 CP nodes —
+  # sufficient to manage 10K bare-metal systems (128-node k8s control plane).
+  # Note: 7.132.0.0/30 = internet_uplink, 7.132.0.4/30 = registry_link.
+  # control_plane_prefix uses 7.132.1.0/24 to avoid overlap within 7.132.x.x.
+  #
+  # IMPORTANT for k8s snapshots: kubeadm binds to these host_ip addresses.
+  # They are fully deterministic (no DHCP), so a qcow2 snapshot is valid
+  # across re-deploys as long as VMs are recreated with the same MACs
+  # (guaranteed by generate-nodes.py: vm_mac(i,2) = 52:54:00:00:{i:02x}:02).
+
+  # ── MAC address scheme (generate-nodes.py vm_mac / dpu_mac) ──────────────
+  # MACs are deterministic — derived from VM index (i = 1..num_vms).
+  # This makes libvirt DHCP leases stable across reboots (same MAC → same IP
+  # in the libvirt lease table), and allows qcow2 snapshot/restore to work
+  # because kubeadm's node identity is tied to these MACs.
+  #
+  # VM names follow the convention {dc_name}-{site_name}-{role}-N (e.g. dc1-site1-cp-1).
+  # MAC addresses below use short role indices — the full VM name does not affect MACs.
+  #
+  # CP host VM (dc1-site1-cp-N):
+  #   eth0 OOB:        52:54:00:00:{N:02x}:01  e.g. dc1-site1-cp-1 = 52:54:00:00:01:01
+  #   eth1 host-link:  52:54:00:00:{N:02x}:02  e.g. dc1-site1-cp-1 = 52:54:00:00:01:02
+  #
+  # DPU stand-in VM (dc1-site1-cp-dpu-N):
+  #   eth0 OOB:        52:54:00:01:{N:02x}:01  e.g. dc1-site1-cp-dpu-1 = 52:54:00:01:01:01
+  #   eth1 fabric:     52:54:00:01:{N:02x}:02  e.g. dc1-site1-cp-dpu-1 = 52:54:00:01:01:02
+  #   eth2 host-link:  52:54:00:01:{N:02x}:03  e.g. dc1-site1-cp-dpu-1 = 52:54:00:01:01:03
+  #
+  # Registry VM (dc1-site1-registry):
+  #   52:54:00:03:01:01 (OOB), 52:54:00:03:01:02 (fabric/registry_link)
+  #
+  # ── Complete IP reference table for default nico-sim.yaml ──────────────────
+  # VM                    │ Fabric IP      │ OOB IP        │ Notes
+  # ──────────────────────┼────────────────┼───────────────┼──────────────────────────
+  # dc1-site1-cp-1        │ 7.132.1.1/31   │ 192.168.200.21│ k8s node, eth1=host-link
+  # dc1-site1-cp-2        │ 7.132.1.3/31   │ 192.168.200.22│ k8s node, eth1=host-link
+  # dc1-site1-cp-3        │ 7.132.1.5/31   │ 192.168.200.23│ k8s node, eth1=host-link
+  # dc1-site1-cp-dpu-1    │ 7.130.0.1/31   │ 192.168.200.11│ FRR, loopback=7.131.0.1
+  # dc1-site1-cp-dpu-2    │ 7.130.0.3/31   │ 192.168.200.12│ FRR, loopback=7.131.0.2
+  # dc1-site1-cp-dpu-3    │ 7.130.0.5/31   │ 192.168.200.13│ FRR, loopback=7.131.0.3
+  # dc1-site1-registry    │ 7.132.0.6      │ 192.168.200.31│ Docker registry:2 :5000
+  #
+  # Fabric IPs: deterministic, derived from prefixes above.
+  # OOB IPs: static — defined in control_plane.vms below, applied as DHCP reservations.
+  #
+  # kubeadm API server endpoint: https://7.132.1.1:6443 (dc1-site1-cp-1 host-link IP)
+  # kubeconfig written to site folder by form-k8s-cluster.py:
+  # kubectl config: ~/.kube/config-dc1-site1
+
+  # ── Static OOB IP assignments ─────────────────────────────────────────────
+  # DPU VMs: .11-.1N  │  CP host VMs: .21-.2N
+  # Applied as libvirt DHCP reservations (MAC → IP) so IPs never float between
+  # sessions or reboots. generate-nodes.py reads these and writes <host> entries
+  # into oob-network.xml. If absent, falls back to auto-assignment from OOB prefix.
+  vms:
+    - index: 1
+      host_oob_ip: 192.168.200.21
+      dpu_oob_ip:  192.168.200.11
+    - index: 2
+      host_oob_ip: 192.168.200.22
+      dpu_oob_ip:  192.168.200.12
+    - index: 3
+      host_oob_ip: 192.168.200.23
+      dpu_oob_ip:  192.168.200.13
+
+  # 'cloud_init'  — vanilla Ubuntu cloud image; packages installed on first boot (~3-5 min)
+  #                 os_image_url/name/dir must be set below in this section.
+  # 'golden_image' — pre-baked image; packages already installed, ~30s boot.
+  #                 os_image_url/name/dir must be set in golden_image.control_plane (not here).
+  #                 Build once: sudo python3 create-golden-image.py nico-sim.yaml
+  provisioning: golden_image
+
+  # os_image_* — required here only when provisioning: cloud_init
+  # (for cloud_init mode uncomment and set provisioning: cloud_init)
+  # os_image_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+  # os_image_name: noble-server-cloudimg-amd64.img
+  # os_image_dir: /var/lib/libvirt/images
+
+  sizing:                         # host CP VM sizing
+    ram_mb: 8192
+    vcpus: 8
+    disk_gb: 100
+
+  dpu_sizing:                     # DPU stand-in VM sizing (lightweight — FRR + routing only)
+    ram_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+
+  # loopbacks are in fabric.prefixes.dpu_loopbacks (7.131.0.0/16)
+  # cp-dpu-1 gets 7.131.0.1, cp-dpu-2 gets 7.131.0.2, etc.
+
+  dns_servers: [10.126.136.6, 10.126.136.22, 10.120.237.36, 10.120.237.52]
+  # NVIDIA internal DNS servers — reachable from fabric containers via MASQUERADE.
+  # Public DNS (8.8.8.8) is blocked by NVIDIA's network on port 53.
+  console_password: Sim12345!     # password for virsh console login (ubuntu user)
+                                  # change this before production use
+
+  oob_network:
+    name: dc1-cp                  # libvirt network name (shared by host VMs + DPU stand-ins)
+    prefix: 192.168.200.0/24      # OOB subnet (DHCP for VMs)
+    internet: false               # isolated — no NAT, no outbound internet via OOB
+    # All outbound internet goes via fabric (eth1 → DPU stand-in → leaf → spine → super-spine → host)
+
+managed_hosts:
+  # MH VMs pre-provisioned per underlay rack.
+  # num_vms is a dict keyed by underlay network name (must exist in both
+  # nico-system.helm-values.networks and fabric.underlay_leafs).
+  # rack-mat-hosts is intentionally absent — MAT virtual machines use API mode,
+  # no physical leaf or relay container needed.
+  # Each physical MH VM has:
+  #   - OOB interface: DHCP (gets IP from Nico via dhcrelay on the rack leaf)
+  #   - Fabric interface: present but NO IP — Nico configures at ingestion time
+  num_vms:
+    rack-leaf-4: 2                 # dc1-site1-mh-1, dc1-site1-mh-2 — on leaf-4
+    rack-leaf-5: 2                 # dc1-site1-mh-3, dc1-site1-mh-4 — on leaf-5
+  vm_prefix: mh                   # role segment — actual VM names: {dc_name}-{site_name}-mh-N
+  dpu_per_vm: 1                   # one DPU stand-in per MH VM (matches production)
+  dpu_prefix: mh-dpu              # role segment — actual DPU VM names: {dc_name}-{site_name}-mh-dpu-N
+
+  # DPU stand-in VM config — analogous to control_plane.dpu_sizing.
+  # dc1-site1-mh-dpu-1 runs sim-dpu-agent.py to exercise the dpu-agent code path early.
+  # No MH VMs are planned for active use now; DPU VMs deploy alongside them
+  # when num_vms > 0.
+  dpu_sizing:
+    ram_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+
+  # bare_metal: empty disk, no OS — correct production model.
+  #   VM boots → disk is empty → falls through to PXE/network boot →
+  #   sends DHCP on OOB → Nico discovers and ingests it.
+  #   No golden image needed. Real servers have disks but no pre-installed OS.
+  # golden_image: pre-baked Ubuntu image — only if you need to SSH into MH VMs
+  #   for debugging. Build once: create-golden-image.py nico-sim.yaml --target mh
+  provisioning: bare_metal
+
+  sizing:
+    ram_mb: 4096
+    vcpus: 2
+    disk_gb: 40
+
+  oob_network:
+    name: dc1-mh
+    prefix: 192.168.210.0/24
+    internet: false
+
+  # How managed-host OOB/BMC prefixes (rack-mat-hosts, rack-leaf-4, rack-leaf-5)
+  # are made reachable to Nico-api running on CP VMs.
+  #
+  #   underlay_local — leaf-mat gets the gateway IP on eth3 at deploy time;
+  #                    FRR has a connected route and advertises the prefix via
+  #                    regular BGP so the fabric routes directly to it. Simple.
+  #
+  #   overlay_evpn   — prefix exported into EVPN VNI 900 (RT {dc_asn}:900);
+  #                    DPU stand-ins import via vpc_{ControlPlaneVNI} VRF and
+  #                    leak to default VRF. Matches production SMN architecture.
+  #                    NOT YET IMPLEMENTED — see context doc 2026-08-13.
+  oob_routing_mode: underlay_local
+
+  # Static OOB IP assignments — sequential across all racks
+  vms:
+    - index: 1
+      oob_ip: 192.168.210.11
+    - index: 2
+      oob_ip: 192.168.210.12
+    - index: 3
+      oob_ip: 192.168.210.13
+    - index: 4
+      oob_ip: 192.168.210.14
+
+# ── Standalone MH DPU VM ─────────────────────────────────────────────────────
+# One additional DPU stand-in VM on leaf-4 NOT paired with an MH VM.
+# Exists to exercise the sim-dpu-agent.py code path and catch bugs early,
+# independently of managed_hosts.num_vms. Analogous to cp-dpu-1/2/3 on the
+# CP side. Set count: 0 in nico-sim-mac.yaml to skip it on low-resource hosts.
+mh_dpu:
+  count: 1
+  leaf: leaf-4
+  dpu_prefix: mh-dpu              # VM name: {dc_name}-{site_name}-mh-dpu-standalone
+  sizing:
+    ram_mb: 2048
+    vcpus: 2
+    disk_gb: 20
+
+# ── Golden image builder config ───────────────────────────────────────────────
+# Read by create-golden-image.py only. Not used at VM deployment time.
+# create-golden-image.py builds a pre-baked image with all packages +
+# kubeadm prereqs pre-installed. Run once per environment setup.
+golden_image:
+  control_plane:
+    path: /var/lib/libvirt/images/cp-golden.qcow2
+    # os_image_* here when provisioning: golden_image — used by:
+    #   create-golden-image.py  as the base Ubuntu image for the builder VM
+    #   generate-nodes.py       as the base image for DPU stand-in VMs (always vanilla)
+    os_image_url: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+    os_image_name: noble-server-cloudimg-amd64.img
+    os_image_dir: /var/lib/libvirt/images
+    kubernetes:
+      version: "1.32"                  # pinned k8s version
+      pod_network_cidr: "10.244.0.0/16"  # CNI pod CIDR (Flannel/Calico)
+
+  managed_hosts:
+    path: /var/lib/libvirt/images/mh-golden.qcow2
+    # Base Ubuntu image used for both the builder VM and the MH VMs.
+    # MH VMs have NO kubernetes packages — they are tenant workload hosts,
+    # not k8s nodes. Golden image pre-installs only: python3, ssh, iproute2,
+    # iputils-ping, curl, net-tools. Cloud-init then adds only SSH key +
+    # hostname (no package downloads needed — works without network at boot).
+    os_image_url:  https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+    os_image_name: noble-server-cloudimg-amd64.img
+    os_image_dir:  /var/lib/libvirt/images
+
+nico_container_registry:
+  # Docker registry:2 VM — serves all Nico container images to the CP k8s nodes.
+  # build-nico-components.py pushes images here; containerd on CP VMs pulls from here.
+  #
+  # Set enabled: false when pulling pre-built images from an external registry
+  # (e.g. nvcr.io) — the VM will not be created, saving ~4GB RAM and 100GB disk.
+  # When disabled, also set nico-system.image.source: nvcr and configure
+  # nvcr_repository / nvcr_pull_secret / nvcr_nico_tag below.
+  # generate-nodes.py and generate-fabric.py both check this flag and skip
+  # registry VM creation and registry_link wiring when false.
+  enabled: true
+
+  # fabric_link explicitly names the fabric link this VM attaches to.
+  # generate-nodes.py reads this field from the required `nico_container_registry:` key —
+  # renaming the key is an error; the generator validates its presence at startup.
+  # Ignored when enabled: false.
+  fabric_link: registry_link        # → fabric.registry_link (7.132.0.4/30), VM gets .6
+  vm_prefix: registry               # actual VM name: {dc_name}-{site_name}-registry
+                                    #   e.g. dc1-site1-registry
+  port: 5000                        # Docker registry:2 listen port
+  sizing:
+    ram_mb: 4096
+    vcpus: 2
+    disk_gb: 100
+  oob_network:
+    name: dc1-reg
+    prefix: 192.168.202.0/24
+    internet: false
+
+# ── Helm chart versions ───────────────────────────────────────────────────────
+# All chart versions are pinned here. deploy-nico-system.py reads these and
+# fails loudly if any are missing, so upgrades are always explicit.
+#
+# When nico changes and requires a different dependency version, update here
+# and check generate-sim-values.py for any schema/values changes needed.
+# Versions match the production helmfile.yaml in helm-prereqs/ unless noted.
+chart-versions:
+  metallb:              "0.14.5"    # metallb/metallb
+  local-path-provisioner: "v0.0.31" # rancher/local-path-provisioner GitHub release tag
+  cert-manager:         "v1.17.1"   # jetstack/cert-manager
+  vault:                "0.25.0"    # hashicorp/vault
+  external-secrets:     "0.14.3"    # external-secrets/external-secrets
+  postgres-operator:    "1.11.0"    # sais/postgres-operator
+
+
+# ── Nico system deployment config ────────────────────────────────────────────
+nico-system:
+
+  # ── Underlay-to-leaf associations ────────────────────────────────────────────
+  # Underlay network name → leaf name. Consumed by generate-sim-values.py to
+  # configure Nico's siteConfig. Must stay in sync with fabric.underlay_leafs.
+  underlay:
+    rack-leaf-4: "leaf-4"
+    rack-leaf-5: "leaf-5"
+    rack-mat-hosts: "leaf-mat"
+
+  # ── Simulation infrastructure (consumed by deploy-nico-system.py) ─────────
+  # NOT Helm values — controls HOW dependencies are deployed in simulation.
+
+  vault:
+    mode: dev                     # in-memory; auto-initialized, never needs unsealing
+                                  # switch to 'production' when machine/MAT state must persist
+    dev_root_token: root          # fixed token used by deploy script for nico-prereqs
+    # production mode fields (uncomment when switching):
+    # storage_class: local-path
+    # volume_size: 10Gi
+    # node: dc1-site1-cp-1
+
+  postgresql:
+    instances: 3                  # match production — 1 instance breaks synchronous_commit=remote_apply
+    synchronous_mode: true        # set false when instances: 1 (no replica to sync to)
+    storage_class: local-path
+    volume_size: 10Gi
+
+  image:
+    source: local                 # 'local' | 'nvcr'
+    # local: built by build-nico-components.py, pushed to registry VM (7.132.0.6:5000)
+    local_nico_tag: latest        # tag for the local nico image (7.132.0.6:5000/nico:<tag>)
+    # nvcr:  pulled from nvcr.io — set nvcr_repository + nvcr_pull_secret + nvcr_nico_tag
+    nvcr_repository: ""           # e.g. nvcr.io/<org>/<team>
+    nvcr_nico_tag: ""             # e.g. 25.4.0 — nico image tag on nvcr
+    nvcr_pull_secret: ""          # base64 NGC API key
+
+  # ── Helm values (flows into Helm charts via generate-sim-values.py) ───────
+  # These become actual Helm chart values: nico-prereqs, nico umbrella,
+  # and the siteConfig TOML injected into nico-api.
+
+  helm-values:
+
+    # Site identity — the Nico site name within the datacenter.
+    # sitename becomes the Nico siteConfig site_name and appears in API responses.
+    # Convention: {dc_name}-{sitename} gives the fully-qualified site identity
+    #   e.g. dc1-site1 — matches VM naming prefix and kubectl config file name.
+    sitename: site1
+    site_nick_name: sit1    # ≤4 chars — used in OOB network names and VM names.
+                            # virbr-{site_nick}-reg must be ≤15 chars → site_nick ≤4 chars.
+    domain: dc1-site1.example.com
+
+    # ── Network plan — all IPs/prefixes consumed by Nico ─────────────────────
+    # Single source of truth for the Nico services IP plan.
+    # Index follows production convention (derived from stardrive VIP allocation).
+    # Production uses 7.133.97.0/27; simulation maps 1:1 to 7.133.1.0/27.
+    # Disabled services (pxe, route_servers, unbound) are documented for
+    # completeness — their VIPs are reserved but MetalLB does not announce them.
+    net-plan:
+      # Active MetalLB IPAddressPool — announced into fabric by CP DPU stand-ins.
+      # /27 = 32 IPs; current services use up to .20, leaving headroom within the /27.
+      # The next /27 (7.133.1.32/27) is reserved for future Nico services — together
+      # they form 7.133.1.0/26 (64 IPs). Expand service_vips to /26 when .32+ is needed.
+      service_vips: "7.133.1.0/27"
+      service_vips_reserved: "7.133.1.32/27"   # reserved — do not allocate until service_vips /27 is full
+
+      # ── VIP index (offset matches production .97.X → .1.X) ────────────────
+      dhcp_vip:          "7.133.1.0"   # CARBIDE_DHCP_EXTERNAL      (.0)
+      pxe_vip:           "7.133.1.2"   # CARBIDE_PXE                (.2) — nico_pxe disabled in sim
+      route_server_vip_0: "7.133.1.3"  # FRR_ROUTING_0              (.3) — route_servers disabled
+      ssh_console_vip:   "7.133.1.4"   # CARBIDE_SSH_CONSOLE        (.4)
+      ntp_vip_0:         "7.133.1.5"   # CARBIDE_NTP_SERVERS_0      (.5)
+      ntp_vip_1:         "7.133.1.6"   # CARBIDE_NTP_SERVERS_1      (.6)
+      ntp_vip_2:         "7.133.1.7"   # CARBIDE_NTP_SERVERS_2      (.7)
+      route_server_vip_1: "7.133.1.8"  # FRR_ROUTING_1              (.8) — disabled
+      route_server_vip_2: "7.133.1.9"  # FRR_ROUTING_2              (.9) — disabled
+      unbound_vip:       "7.133.1.14"  # FORGE_UNBOUND_EXTERNAL     (.14) — disabled in sim
+      api_vip:           "7.133.1.17"  # CARBIDE_API_EXTERNAL       (.17)
+      dns_vip_1:         "7.133.1.19"  # CARBIDE_DNS_INSTANCE_1     (.19)
+      dns_vip_0:         "7.133.1.20"  # CARBIDE_DNS_INSTANCE_0     (.20)
+
+      # MetalLB BGP speaker ASN — called myASN in MetalLB, bgpAsnStart in stardrive.
+      # Convention: one less than dpu_asn_base so the ASN block is contiguous:
+      #   metallb_asn  (bgpAsnStart)     = dpu_asn_base - 1  = 4268030000
+      #   cp-dpu-N     (bgpAsnStart + N) = dpu_asn_base + N  = 4268030002..4268030004
+      #   fnn-asn pool (bgpAsnStart + …) = see pools.fnn_asn below
+      metallb_asn: "4268030000"
+
+    # ── Resource pools — consumed by nico-api siteConfig ─────────────────────
+    # REQUIRED: nico-api exits at startup if any pool is missing.
+    # lo-ip: auto-derived from control_plane.dpu_loopbacks, offset by num_vms
+    #   (cp-dpu-1/2/3 already hold .1/.2/.3 → pool starts at .4)
+    pools:
+      vlan_id:           { start: 100,          end: 501          }
+      vni:               { start: 1024500,      end: 1024800      }
+      # vpc_vni must start AFTER managed_host_vni (60100) and NOT include
+      # fnn.admin_vpc_vni (61000).
+      vpc_vni:           { start: 60101,        end: 60999        }
+      # per-VPC DPU loopback IPs for FNN VRF loopback addressing inside DPUs
+      vpc_dpu_lo:        { start: "10.255.247.3", end: "10.255.247.255" }
+      # VNIs for external (non-internal) tenant VPCs
+      external_vpc_vni:  { start: 51008,        end: 51011        }
+      # FNN ASN pool — each managed-host DPU needs one ASN for FNN VPC routing.
+      # Not consumed in simulation yet (no managed hosts), but required in
+      # nico-api siteConfig. Kept well clear of cp-dpu ASNs (4268030002..4268030004).
+      fnn_asn:           { start: "4268031000", end: "4268031099" }
+
+    # Admin network — host↔DPU link prefix for managed hosts.
+    # Analogous to control_plane_prefix (7.132.1.0/29) for CP nodes:
+    # when mh-N is added, Nico allocates a /31 from this prefix for the
+    # mh-N ↔ mh-dpu-N internal link. Large /16 to accommodate many hosts.
+    # NOT OOB/BMC — managed host OOB is handled separately by Nico DHCP
+    # (not simulated now).
+    networks:
+      # ── admin — host↔DPU internal link prefix for managed hosts ──────────────
+      # Analogous to control_plane_prefix for CP nodes: Nico allocates a /31
+      # from this prefix for each mh-N ↔ mh-dpu-N internal link.
+      admin:
+        prefix: "8.135.0.0/16"
+        gateway: "8.135.0.1"
+        mtu: 9000
+        reserve_first: 5
+
+      # ── underlay networks — OOB/BMC discovery subnets per rack ───────────────
+      # type = "underlay" in Nico siteConfig TOML.
+      # Nico's DHCP service assigns IPs from these prefixes to BMCs/hosts.
+      # A DHCP relay agent on each rack's leaf adds giaddr from its interface
+      # on the underlay subnet, telling Nico which rack the discovery came from.
+      #
+      # rack-leaf-4 and rack-leaf-5: OOB subnets for pre-provisioned MH VMs.
+      # rack-mat-hosts: OOB subnet for MAT virtual machines (API mode — no
+      #   physical relay needed; MAT calls Nico gRPC directly).
+      # Per-rack /24s allocated sequentially from fabric.prefixes.underlay_pool (7.140.0.0/14).
+      # Adding a new rack = add an entry here; generate-fabric.py assigns the next /24.
+      rack-leaf-4:
+        prefix: "7.140.0.0/24"   # 1st /24 from pool
+        gateway: "7.140.0.1"
+        mtu: 1500
+        reserve_first: 2
+      rack-leaf-5:
+        prefix: "7.140.1.0/24"   # 2nd /24 from pool
+        gateway: "7.140.1.1"
+        mtu: 1500
+        reserve_first: 2
+      rack-mat-hosts:
+        prefix: "7.140.2.0/24"   # 3rd /24 from pool
+        gateway: "7.140.2.1"
+        mtu: 1500
+        reserve_first: 2
+
+    # Skip RBAC checks — required in simulation (no Azure SSO / OIDC configured)
+    bypass_rbac: true
+
+    # BGP route servers — false: DPU stand-ins handle fabric BGP directly with leafs.
+    # nico-api does not peer with external BGP route servers in simulation.
+    enable_route_servers: false
+
+    # FNN (Fabric Networking Namespace)
+    fnn:
+      enabled: true
+      # admin_vpc_vni: static VNI for the admin VPC — must be OUTSIDE all pools.
+      # NOT in vpc_vni pool (60101-60999), NOT managed_host_vni (60100),
+      # NOT control_plane_vni (60000).
+      admin_vpc_vni: 61000
+
+      # ── Three-layer route-import model ───────────────────────────────────────
+      # Production has three places that must agree on route-targets:
+      #   Layer 1 — Fabric (generate-fabric.py): FRR VNI/RT config on each leaf.
+      #             Derives from fabric.evpn_vnis + fabric.underlay_leafs.
+      #   Layer 2 — Nico API (generate-sim-values.py): fnn.additional_route_target_imports
+      #             and fnn.routing_profiles in nico-api siteConfig TOML.
+      #             Controls what Nico's API sends to the dpu-agent.
+      #   Layer 3 — DPU agent (sim-dpu-agent.py): --additional-fnn-route-target-import
+      #             flags applied to NVUE startup.yaml on the DPU.
+      #             Receives route-targets from Nico API ManagedHostNetworkConfigResponse.
+      # VNI keys below reference fabric.evpn_vnis — resolved to NVIDIA production numbers.
+
+      # Layer 2: what Nico API includes in ManagedHostNetworkConfigResponse
+      # (consumed by generate-sim-values.py → nico-api siteConfig TOML).
+      additional_route_target_imports:
+        - vni: managed_node_bmc     # → 900: Nico reaches MAT BMC mocks + MH BMCs
+        - vni: utility_cluster             # → 101: Nico reaches utility_cluster containers
+        - vni: ufm                  # → 1002: Nico reaches UFM
+        - vni: powershelf           # → 1003: Nico reaches powershelf controllers
+        - vni: site_controller_bmc  # → 901: Nico reaches site-controller BMCs
+
+      # Named routing profiles — controls per-VPC route-target import/export.
+      # Keys match production routing_profile_type names in nico-core.yaml.
+      routing_profiles:
+        INTERNAL:
+          route_target_imports:
+            - vni: managed_node_bmc   # → 900
+            - vni: admin_network      # → 50400
+          route_targets_on_exports:
+            - vni: internal_tenant    # → 50200
+        EXTERNAL:
+          route_target_imports:
+            - vni: infra_egress       # → 10 (default route)
+          route_targets_on_exports:
+            - vni: external_tenant    # → 50500
+        PRIVILEGED_INTERNAL:
+          route_target_imports:
+            - vni: managed_node_bmc   # → 900
+            - vni: admin_network      # → 50400
+            - vni: site_controller    # → 50100
+          route_targets_on_exports:
+            - vni: internal_tenant    # → 50200
+
+    # Nico subcharts — false overrides the chart default
+    # All others default true: nico_api, nico_bmc_proxy, nico_dhcp, nico_dns,
+    # nico_hardware_health, nico_ntp, nico_ssh_console_rs
+    components:
+      nico_pxe: false                    # no PXE boot for simulation
+      nico_dsx_exchange_consumer: false  # not needed in simulation

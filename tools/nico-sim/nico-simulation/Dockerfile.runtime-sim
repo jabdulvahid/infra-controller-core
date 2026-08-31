@@ -1,0 +1,53 @@
+#
+# DC Simulation — runtime container for building nico image
+#
+# Based on dev/docker/Dockerfile.runtime-container-x86_64 with fluent-bit
+# removed.  The production Dockerfile pins a fluent-bit GPG key that may
+# drift from what packages.fluentbit.io currently serves.  In simulation
+# fluent-bit is not required (it is used only by nico-ssh-console-rs for
+# log forwarding, which is optional in a lab).
+#
+# This file lives in claude-notes/dc-simulation/nico-simulation/ and is
+# copied into {infra_controller_repo}/nico-simulation/ by
+# build-nico-components.py before the docker build runs.
+# The nico repo (infra-controller-core) is never modified.
+#
+# Do NOT use this for production images.
+#
+FROM debian:12-slim
+
+ARG CI_COMMIT_SHORT_SHA
+ENV CI_COMMIT_SHORT_SHA $CI_COMMIT_SHORT_SHA
+
+RUN CACHEKEY=${CI_COMMIT_SHORT_SHA} apt-get update && \
+    DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt upgrade -y && \
+    DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y --no-install-recommends \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /var/run/kea
+
+RUN CACHEKEY=${CI_COMMIT_SHORT_SHA} apt-get update && \
+    DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt install -y --no-install-recommends \
+        curl \
+        ipmitool \
+        iproute2 \
+        iputils-ping \
+        kea-dhcp4-server \
+        kea-dhcp6-server \
+        kea-ctrl-agent \
+        libaio1 \
+        libc-ares2 \
+        libgrpc++1.51 \
+        libkrb5-3 \
+        libprotoc32 \
+        libssh-4 \
+        libudev1 \
+        nginx \
+        openipmi \
+        openssh-client \
+        openssh-server \
+        postgresql-client-15 \
+        tpm2-tools \
+        zlib1g && \
+    rm -rf /var/lib/apt/lists/*

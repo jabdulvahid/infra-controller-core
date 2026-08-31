@@ -1,0 +1,45 @@
+#
+# nico-dev — ARM64 runtime container (dev variant, no fluent-bit)
+#
+# Based on dev/docker/Dockerfile.runtime-container-aarch64 with fluent-bit
+# removed. The production Dockerfile pins a fluent-bit GPG key that may
+# drift from packages.fluentbit.io. In dev, fluent-bit is not required
+# (it is used only by nico-ssh-console-rs for log forwarding).
+#
+# Copied into {infra_controller_repo}/nico-dev-docker/ by build-dev-nico.py
+# before the docker build runs. The nico repo is never permanently modified.
+#
+# Do NOT use this for production images.
+#
+FROM arm64v8/debian:12-slim
+
+ARG CI_COMMIT_SHORT_SHA
+ENV CI_COMMIT_SHORT_SHA $CI_COMMIT_SHORT_SHA
+
+RUN mkdir -p /var/run/kea
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        ipmitool \
+        iproute2 \
+        iputils-ping \
+        kea-dhcp4-server \
+        kea-dhcp6-server \
+        kea-ctrl-agent \
+        libaio1 \
+        libc-ares2 \
+        libgrpc++1.51 \
+        libkrb5-3 \
+        libprotoc32 \
+        libssh-4 \
+        libudev1 \
+        nginx \
+        openipmi \
+        openssh-client \
+        openssh-server \
+        postgresql-client-15 \
+        tpm2-tools \
+        zlib1g && \
+    rm -rf /var/lib/apt/lists/*

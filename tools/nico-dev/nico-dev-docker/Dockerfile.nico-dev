@@ -1,0 +1,83 @@
+#
+# nico-dev — ARM64 nico image build (dev variant)
+#
+# Based on dev/docker/Dockerfile.release-container-aarch64 with:
+#   1. No CI quality gates (no cargo make, no clippy/lints/license checks)
+#   2. Plain cargo build --release, excludes bmc-mock (broken Cargo.toml)
+#   3. Separate sccache cache ID (sccache-aarch64-dev) from production
+#
+# The runtime stage is structurally identical to production: same binaries,
+# same COPY paths, same directory layout — compatible with Nico helm charts.
+#
+# Copied into {infra_controller_repo}/nico-dev-docker/ by build-dev-nico.py
+# before the docker build runs. The nico repo is never permanently modified.
+#
+ARG CONTAINER_BUILD_AARCH64
+ARG CONTAINER_RUNTIME_AARCH64
+
+FROM $CONTAINER_BUILD_AARCH64 as builder
+ARG VERSION
+ENV VERSION $VERSION
+ENV CONTAINER_REPO_ROOT=/carbide
+
+RUN USER=root cargo new --bin carbide
+WORKDIR ./carbide
+COPY . ./
+
+# bmc-mock has a duplicate [dev-dependencies] in its Cargo.toml.
+# cargo needs to parse it transitively; truncate at the second occurrence.
+RUN awk 'BEGIN{n=0} /^\[dev-dependencies\]$/{n++; if(n==2){exit}} {print}' \
+    crates/bmc-mock/Cargo.toml > /tmp/bmc-mock-fixed.toml && \
+    mv /tmp/bmc-mock-fixed.toml crates/bmc-mock/Cargo.toml
+
+# Dev build: plain cargo build, no CI gates, sccache for speed.
+# Cache ID is separate from the production aarch64 cache (sccache-aarch64)
+# to avoid cross-contamination between dev and prod build artifacts.
+RUN --mount=type=cache,id=sccache-aarch64-dev,target=/sccache \
+  export DATABASE_URL="postgresql://root@%2Fvar%2Frun%2Fpostgresql/root" && \
+  export SCCACHE_DIR=/sccache && \
+  export RUSTC_WRAPPER=sccache && \
+  export CARGO_PROFILE_RELEASE_DEBUG=false && \
+  /etc/init.d/postgresql start && \
+  sudo -u postgres psql -c "ALTER USER root WITH SUPERUSER;" && \
+  createdb root && \
+  cargo build --release --workspace --exclude bmc-mock --jobs 2 && \
+  mkdir -p /carbide/target/bin && \
+  find /carbide/target/release -maxdepth 1 -type f -exec cp -t /carbide/target/bin {} + && \
+  rm -rf /carbide/target/debug && \
+  rm -rf /carbide/target/release
+
+FROM $CONTAINER_RUNTIME_AARCH64
+RUN mkdir -p /opt/carbide/migrations && \
+    mkdir -p /opt/carbide/pxe/templates && \
+    mkdir -p /opt/carbide/scout-firmware-scripts && \
+    mkdir -p /opt/carbide/static
+
+COPY --from=builder \
+    "/carbide/target/bin/carbide-api" \
+    "/carbide/target/bin/carbide" \
+    "/carbide/target/bin/carbide-dns" \
+    "/carbide/target/bin/nico-admin-cli" \
+    "/carbide/target/bin/carbide-dsx-exchange-consumer" \
+    "/carbide/target/bin/forge-dpu-agent" \
+    "/carbide/target/bin/forge-dhcp-server" \
+    "/carbide/target/bin/forge-hw-health" \
+    "/carbide/target/bin/forge-log-parser" \
+    "/carbide/target/bin/ssh-console" \
+    "/carbide/target/bin/carbide-bmc-proxy" \
+    "/opt/carbide/"
+
+# aarch64 kea hooks library path differs from x86_64
+COPY --from=builder /carbide/target/bin/libdhcp.so /usr/lib/aarch64-linux-gnu/kea/hooks
+RUN mkdir -p /usr/lib/kea/hooks && \
+    ln -sf /usr/lib/aarch64-linux-gnu/kea/hooks/libdhcp.so /usr/lib/kea/hooks/libdhcp.so
+
+RUN ln -s /opt/carbide/nico-admin-cli /opt/carbide/carbide-admin-cli && \
+    ln -s /opt/carbide/nico-admin-cli /opt/carbide/forge-admin-cli
+
+COPY crates/api-db/migrations/ /opt/carbide/migrations/
+COPY pxe/templates/*            /opt/carbide/pxe/templates/
+COPY pxe/scout-firmware-scripts/ /opt/carbide/scout-firmware-scripts/
+COPY crates/api/casbin-policy.csv /opt/carbide/
+
+ENV CASBIN_POLICY_FILE=/opt/carbide/casbin-policy.csv
