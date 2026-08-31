@@ -52,7 +52,7 @@ without running; `--list` names the steps.
   ready-made image instead of compiling, cutting the 20–40 min source
   build out of the first run. Needs an NGC API key (env var named by
   `token_env`) with registry-read on the image's org/team, and the image
-  repo via `ngc_image` or `NICO_NGC_IMAGE`.
+  repo via `nico_image` or `NICO_NGC_IMAGE`.
 - **Source build** (the default) — builds nico from this very checkout
   and deploys it; the full dev loop.
 
