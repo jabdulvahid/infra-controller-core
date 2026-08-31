@@ -1,0 +1,92 @@
+#
+# DC Simulation — nico image build (sim variant)
+#
+# Based on dev/docker/Dockerfile.release-container-sa-x86_64 with two changes:
+#   1. Skips CI quality gates (clippy, lints, format checks, license, bans)
+#   2. Excludes bmc-mock from the build
+#      bmc-mock has a duplicate [dev-dependencies] key in the current branch
+#      that breaks cargo metadata / cargo-make; it is a test mock only and is
+#      not deployed in simulation.
+#
+# The runtime stage is IDENTICAL to production: same binaries, same COPY paths,
+# same directory layout.  Images produced here are compatible with the nico Helm
+# charts without any chart changes.
+#
+# This file lives in claude-notes/dc-simulation/nico-simulation/ and is copied
+# into {infra_controller_repo}/nico-simulation/ by build-nico-components.py
+# before the docker build runs.  The nico repo is never permanently modified.
+#
+ARG CONTAINER_BUILD_X86_64
+ARG CONTAINER_RUNTIME_X86_64
+
+FROM $CONTAINER_BUILD_X86_64 as builder
+ARG VERSION
+ENV VERSION $VERSION
+ENV CONTAINER_REPO_ROOT=/carbide
+
+RUN USER=root cargo new --bin carbide
+WORKDIR ./carbide
+COPY . ./
+
+# Simulation build: plain cargo build, no CI overhead.
+# --mount=type=cache keeps sccache across rebuilds for speed.
+# --exclude bmc-mock: test mock with a broken Cargo.toml in the current branch.
+# bmc-mock/Cargo.toml has a duplicate [dev-dependencies] section in the current branch.
+# cargo needs to parse it (transitive dep: api-core→machine-controller→redfish→bmc-mock).
+# Remove the second occurrence of [dev-dependencies] inside the Docker layer only.
+RUN awk 'BEGIN{n=0} /^\[dev-dependencies\]$/{n++; if(n==2){exit}} {print}' \
+    crates/bmc-mock/Cargo.toml > /tmp/bmc-mock-fixed.toml && \
+    mv /tmp/bmc-mock-fixed.toml crates/bmc-mock/Cargo.toml && \
+    echo "Fixed bmc-mock/Cargo.toml: truncated at duplicate [dev-dependencies]"
+
+RUN --mount=type=cache,id=sccache-x86_64-sim,target=/sccache \
+  export DATABASE_URL="postgresql://root@%2Fvar%2Frun%2Fpostgresql/root" && \
+  export SCCACHE_DIR=/sccache && \
+  export RUSTC_WRAPPER=sccache && \
+  export CARGO_PROFILE_RELEASE_DEBUG=true && \
+  /etc/init.d/postgresql start && \
+  sudo -u postgres psql -c "ALTER USER root WITH SUPERUSER;" && \
+  createdb root && \
+  cargo build --release --workspace --exclude bmc-mock && \
+  mkdir -p /carbide/target/bin && \
+  find /carbide/target/release -maxdepth 1 -type f -exec cp -t /carbide/target/bin {} + && \
+  rm -rf /carbide/target/debug && \
+  rm -rf /carbide/target/release
+
+# Runtime stage — identical structure to production Dockerfile
+FROM $CONTAINER_RUNTIME_X86_64
+ARG CI_COMMIT_SHORT_SHA
+ENV CI_COMMIT_SHORT_SHA $CI_COMMIT_SHORT_SHA
+
+RUN mkdir -p /opt/carbide/migrations && \
+    mkdir -p /opt/carbide/pxe/templates && \
+    mkdir -p /opt/carbide/scout-firmware-scripts && \
+    mkdir -p /opt/carbide/static
+
+COPY --from=builder \
+    "/carbide/target/bin/carbide-api" \
+    "/carbide/target/bin/carbide" \
+    "/carbide/target/bin/carbide-dns" \
+    "/carbide/target/bin/nico-admin-cli" \
+    "/carbide/target/bin/carbide-dsx-exchange-consumer" \
+    "/carbide/target/bin/forge-dpu-agent" \
+    "/carbide/target/bin/forge-dhcp-server" \
+    "/carbide/target/bin/forge-hw-health" \
+    "/carbide/target/bin/forge-log-parser" \
+    "/carbide/target/bin/ssh-console" \
+    "/carbide/target/bin/carbide-bmc-proxy" \
+    "/opt/carbide/"
+
+COPY --from=builder /carbide/target/bin/libdhcp.so /usr/lib/x86_64-linux-gnu/kea/hooks
+RUN mkdir -p /usr/lib/kea/hooks && \
+    ln -sf /usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp.so /usr/lib/kea/hooks/libdhcp.so
+
+RUN ln -s /opt/carbide/nico-admin-cli /opt/carbide/carbide-admin-cli && \
+    ln -s /opt/carbide/nico-admin-cli /opt/carbide/forge-admin-cli
+
+COPY crates/api-db/migrations/ /opt/carbide/migrations/
+COPY pxe/templates/*            /opt/carbide/pxe/templates/
+COPY pxe/scout-firmware-scripts/ /opt/carbide/scout-firmware-scripts/
+COPY crates/api/casbin-policy.csv /opt/carbide/
+
+ENV CASBIN_POLICY_FILE=/opt/carbide/casbin-policy.csv
