@@ -75,7 +75,7 @@ each is also independently runnable — see [how-to.md](how-to.md).
 
 ## After bring-up
 
-- `ndev.py <share>/sites/<site>` — site status; `fabric verify` for the
+- `ndev.py <share>/sites/<dc>/<site>` — site status; `fabric verify` for the
   full fabric health check
 - Dev cycle (rebuild + redeploy), native Mac CLIs, MAT fleet runs,
   golden-image baking: all in [how-to.md](how-to.md)

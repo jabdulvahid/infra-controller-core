@@ -108,8 +108,8 @@ def stale_known_hosts(ip):
 def build_steps(args):
     """Returns [(key, where, description, [commands], recovery)]."""
     share = str(Path(args.share).expanduser())
-    site_vm = f'/home/{args.user}/mac/sites/{args.site}'      # bindfs view
-    site_mac = f'{share}/sites/{args.site}'
+    site_vm = f'/home/{args.user}/mac/sites/{args.dc}/{args.site}'   # bindfs view
+    site_mac = f'{share}/sites/{args.dc}/{args.site}'
     ndev_vm = f'/home/{args.user}/mac/{args.nico_dev_rel}'
     vip_net = f'{args.underlay}.133.1.0/27'
 
@@ -389,7 +389,7 @@ Then resume with:
 
     print('=' * 60)
     print(f'  Done. GUI: https://{args.underlay}.133.1.17/admin')
-    print(f'  KUBECONFIG=%s/sites/{args.site}/{args.dc}-{args.site}.kubeconfig.yaml'
+    print(f'  KUBECONFIG=%s/sites/{args.dc}/{args.site}/{args.dc}-{args.site}.kubeconfig.yaml'
           % str(Path(args.share).expanduser()))
     print('=' * 60)
 
