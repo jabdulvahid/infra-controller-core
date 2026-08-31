@@ -29,6 +29,7 @@ if [[ "${1:-}" == "init" ]]; then
     VM_USER="${USER}"
     SHARE_NAME="share"
     STATIC_IP=""
+    SSH_KEY_ARG=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -36,6 +37,7 @@ if [[ "${1:-}" == "init" ]]; then
             --vm-user)   VM_USER="$2";    shift 2 ;;
             --share)     SHARE_NAME="$2"; shift 2 ;;
             --static-ip) STATIC_IP="$2";  shift 2 ;;
+            --ssh-key)   SSH_KEY_ARG="$2"; shift 2 ;;
             *) echo "Unknown option: $1" >&2; exit 1 ;;
         esac
     done
@@ -77,6 +79,14 @@ if [[ "${1:-}" == "init" ]]; then
     # (ssh-add -L): during its login attempt ssh offers them all, the server
     # rejects each, and sshd closes the connection ("Too many authentication
     # failures") BEFORE password auth gets a turn — no prompt, silent failure.
+    if [[ -n "${SSH_KEY_ARG}" ]]; then
+        SSH_KEY_ARG="${SSH_KEY_ARG/#\~/$HOME}"
+        if [[ ! -f "${SSH_KEY_ARG}" ]]; then
+            echo "Error: --ssh-key ${SSH_KEY_ARG} not found" >&2
+            exit 1
+        fi
+        CANDIDATES=("${SSH_KEY_ARG}")
+    else
     CANDIDATES=()
     for k in "${HOME}/.ssh/id_nico_sim.pub" "${HOME}/.ssh/id_ed25519.pub" \
              "${HOME}/.ssh/id_rsa.pub" "${HOME}"/.ssh/*.pub; do
@@ -93,6 +103,7 @@ if [[ "${1:-}" == "init" ]]; then
         ssh-keygen -t ed25519 -N "" -f "${HOME}/.ssh/id_ed25519"
         CANDIDATES=("${HOME}/.ssh/id_ed25519.pub")
     fi
+    fi   # end of key auto-discovery (skipped when --ssh-key given)
 
     if [[ ${#CANDIDATES[@]} -eq 1 ]]; then
         PUB="${CANDIDATES[0]}"
