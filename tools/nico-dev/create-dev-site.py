@@ -8,7 +8,7 @@ IP prefixes, names, and shared folder paths.
 Usage:
   python3 create-dev-site.py \\
     --dc-name dc1 --site-name dev \\
-    --underlay 7 --overlay 8 \\
+    --underlay 11 --overlay 12 \\
     --folder /mnt/mac/sites/dev \\
     --nico-vm-folder /mnt/mac \\
     --nico-mac-folder ~/Mac

@@ -32,24 +32,33 @@ bash check-prereqs.sh --build    # also build nico from source
 Fix any ✗ (each line says how). Note: the first VM-building run pops a
 macOS dialog "Terminal wants to control UTM" — click **Allow**.
 
-**3. Decide your identities, then one command:** a VM name, VM
-user/password, an SSH public key, datacenter/site names, and two IP
-octets (defaults shown; they become Mac-routed prefixes, so pick octets
-your Mac doesn't already use):
+**3. Describe your setup in a config file, then one command.** Copy the
+commented example and edit — VM name, user/password, SSH key, dc/site
+names, two IP octets, and your deploy mode:
 
 ```bash
-python3 dev-up.py \
-  --name nico-vm1 \
-  --user nico \
-  --password 'Welcome123!' \
-  --ssh-key ~/.ssh/id_ed25519.pub \
-  --dc dc1 --site dev1 \
-  --underlay 7 --overlay 8
+cp devup-example.yaml my-vm.yaml
+vi my-vm.yaml
+python3 dev-up.py --config my-vm.yaml
 ```
 
+Any option can still be overridden on the command line
+(`--site other` beats the file); `--dry-run` prints the exact plan
+without running; `--list` names the steps.
+
+**Two deploy modes** (choose in the config):
+
+- **NGC pre-built** (`ngc_tag: ...`) — the quickest onboarding: pulls a
+  ready-made image instead of compiling, cutting the 20–40 min source
+  build out of the first run. Needs an NGC API key (env var named by
+  `token_env`) with registry-read on the image's org/team, and the image
+  repo via `ngc_image` or `NICO_NGC_IMAGE`.
+- **Source build** (the default) — builds nico from this very checkout
+  and deploys it; the full dev loop.
+
 The share folder and repo layout are auto-detected from where the script
-lives. Do NOT pass `--ip` — the VM's address is derived from your Mac's
-own UTM subnet (that's the point); `--host-num N` changes the last octet
+lives. Do NOT set `ip` — the VM's address is derived from your Mac's own
+UTM subnet (that's the point); `host_num` changes the last octet
 (default 126; two VMs can't share one).
 
 **What to expect:** an early pause to set the UTM share **Path** in the

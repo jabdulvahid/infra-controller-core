@@ -234,8 +234,8 @@ On the **VM**, generate your site configuration:
 python3 ~/mac/infra-controller-core/tools/nico-dev/create-dev-site.py \
   --dc-name dc1 \
   --site-name dev \
-  --underlay 7 \
-  --overlay 8 \
+  --underlay 11 \
+  --overlay 12 \
   --folder ~/mac/sites/dev \
   --nico-vm-folder /home/nico/mac \
   --nico-mac-folder ~/projects \
@@ -423,10 +423,10 @@ CLI setup.
 
 ```bash
 # On Mac — route the VIP range via the VM (re-add after each Mac reboot)
-sudo route -n add -net 7.133.1.0/27 192.168.64.126
+sudo route -n add -net 11.133.1.0/27 192.168.64.126
 ```
 
-Then open **https://7.133.1.17/admin** in a browser. The certificate is
+Then open **https://11.133.1.17/admin** in a browser. The certificate is
 self-signed — accept the browser warning. The VIP is
 `<underlay-octet>.133.1.17` (this guide's example uses octet 7); the root
 path answering `Forge development build` in plain text is healthy, not an
@@ -491,18 +491,18 @@ The Mac needs a static route to reach them through the VM:
 
 ```bash
 # On Mac (re-run after network changes or sleep/wake)
-sudo route -n add -net 7.133.1.0/27 192.168.64.126
+sudo route -n add -net 11.133.1.0/27 192.168.64.126
 
 # Verify
-netstat -rn | grep 7.133
-# → 7.133.1/27   192.168.64.126   UGSc   bridge100
+netstat -rn | grep 11.133
+# → 11.133.1/27   192.168.64.126   UGSc   bridge100
 
 # Test
-ping -c 1 7.133.1.17    # Nico API VIP
+ping -c 1 11.133.1.17    # Nico API VIP
 ```
 
 > This route is **not persistent** — macOS drops it on WiFi reconnect or sleep/wake.
-> Re-add it each session. Symptom of missing route: `traceroute 7.133.1.17` exits
+> Re-add it each session. Symptom of missing route: `traceroute 11.133.1.17` exits
 > via your default gateway instead of `192.168.64.126`.
 
 ---
@@ -527,7 +527,7 @@ python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/configure-c
 2. Issues an admin-cli client cert from Vault PKI
 3. Issues a MAT client cert from Vault PKI
 4. Generates `run-admin-cli.sh` and `run-mat.sh` in the site folder
-5. Adds `7.133.1.17 nico-api.dc1-dev` to `/etc/hosts`
+5. Adds `11.133.1.17 nico-api.dc1-dev` to `/etc/hosts`
 
 > **MAT** must run on the VM — it binds to `br-dev-internet` which only exists inside the VM.
 > Full MAT architecture, plumbing, and failure catalog: [mat-in-nico-dev.md](mat-in-nico-dev.md).
@@ -746,7 +746,7 @@ export KUBECONFIG=<share>/sites/<dc>/<site>/<dc>-<site>.kubeconfig.yaml
 kubectl get nodes
 
 # Route to Nico VIPs
-sudo route -n add -net 7.133.1.0/27 192.168.64.126
+sudo route -n add -net 11.133.1.0/27 192.168.64.126
 
 # CLIs — the nico-dev scripts live in YOUR share (first-boot copied them
 # there); the maintainer's own checkout does not exist for you
@@ -1151,9 +1151,9 @@ kubectl get nodes
 
 **Route to Nico VIPs missing (Mac):**
 ```bash
-netstat -rn | grep 7.133
+netstat -rn | grep 11.133
 # If empty:
-sudo route -n add -net 7.133.1.0/27 192.168.64.126
+sudo route -n add -net 11.133.1.0/27 192.168.64.126
 ```
 
 **Vault sealed after cluster restart:**
