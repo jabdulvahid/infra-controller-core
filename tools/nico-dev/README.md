@@ -48,7 +48,7 @@ without running; `--list` names the steps.
 
 **Two deploy modes** (choose in the config):
 
-- **NGC pre-built** (`ngc_tag: ...`) — the quickest onboarding: pulls a
+- **NGC pre-built** (`ngc:` block with `nico_tag`, `nico_image`) — the quickest onboarding: pulls a
   ready-made image instead of compiling, cutting the 20–40 min source
   build out of the first run. Needs an NGC API key (env var named by
   `token_env`) with registry-read on the image's org/team, and the image
