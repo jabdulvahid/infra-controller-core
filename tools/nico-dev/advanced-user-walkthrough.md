@@ -60,7 +60,7 @@ from step 3.
 
 ## Step 3 — one command, empty Mac → cluster (former 3+4)
 
-Decide: VM name, user/password, ssh key, dc/site names, octets (7/8 default;
+Decide: VM name, user/password, ssh key, dc/site names, octets (11/12 default;
 they become Mac-routed prefixes — avoid colliding octets).
 
 ```bash
@@ -71,7 +71,7 @@ python3 dev-up.py \
   --password 'Welcome123!' \
   --ssh-key ~/.ssh/id_ed25519.pub \
   --dc dc1 --site dev1 \
-  --underlay 7 --overlay 8 \
+  --underlay 11 --overlay 12 \
   --repo infra-controller-core \
   --nico-dev-rel infra-controller-core/tools/nico-dev
 ```

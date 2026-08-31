@@ -264,7 +264,7 @@ On the **VM**:
 ```bash
 python3 ~/mac/claude-notes/nico-dev/create-dev-site.py \
   --dc-name dc1 --site-name dev \
-  --underlay 7 --overlay 8 \
+  --underlay 11 --overlay 12 \
   --folder ~/mac/sites/dev \
   --nico-vm-folder /home/nico/mac \
   --nico-mac-folder /Users/<you>/projects \

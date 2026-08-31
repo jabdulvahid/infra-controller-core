@@ -64,7 +64,7 @@ def build_steps(args):
     ndev_vm = f'/home/{args.user}/mac/{args.nico_dev_rel}'
     vip_net = f'{args.underlay}.133.1.0/27'
 
-    return [
+    steps = [
         ('vm', 'Mac', 'Build the base VM (cloud image + cloud-init)',
          [[sys.executable, NICO_DEV / 'build-nico-dev-vm.py',
            '--name', args.name, '--share', share, '--user', args.user,
@@ -132,6 +132,32 @@ def build_steps(args):
          f'lifecycle): sudo route -n add -net {vip_net} {args.ip}. how-to §9.\n'
          f'(route "File exists" = already there — harmless; ndev shows status.)'),
     ]
+    if args.ngc_tag:
+        steps = apply_ngc_mode(steps, args, site_mac)
+    return steps
+
+
+def apply_ngc_mode(steps, args, site_mac):
+    """--ngc-tag: deploy a pre-built image instead of building from source.
+    Replaces build+nico with one step calling deploy-nico-from-ngc.py
+    (registry-ensure → login → pull → retag → push → deploy --initial)."""
+    ngc_cmd = [sys.executable, NICO_DEV / 'deploy-nico-from-ngc.py',
+               site_mac, args.ngc_tag, '--token-env', args.token_env,
+               '--initial']
+    if args.ngc_image:
+        ngc_cmd += ['--ngc-image', args.ngc_image]
+    ngc_step = (
+        'ngc', 'Mac', 'Deploy pre-built image from NGC (no source build)',
+        [ngc_cmd],
+        'Checks: the key in $' + args.token_env + ' needs registry-read on '
+        'the image\'s org/team; the tag must exist as linux/arm64\n'
+        '(docker manifest inspect <image>:<tag>); a 10GB image needs ~25GB '
+        'free across colima+registry+VM. how-to: "Deploying pre-built\n'
+        'NGC images".')
+    steps = [s for s in steps if s[0] not in ('build', 'nico')]
+    at = next(i for i, s in enumerate(steps) if s[0] == 'registry') + 1
+    steps.insert(at, ngc_step)
+    return steps
 
 
 def main():
@@ -164,8 +190,8 @@ def main():
                    help='VirtFS mount tag (UTM-created VMs tag it "share")')
     p.add_argument('--dc', default='dc1')
     p.add_argument('--site', default='dev')
-    p.add_argument('--underlay', type=int, default=7)
-    p.add_argument('--overlay', type=int, default=8)
+    p.add_argument('--underlay', type=int, default=11)
+    p.add_argument('--overlay', type=int, default=12)
     p.add_argument('--repo', default=DEF_REPO,
                    help='nico repo folder name inside the share '
                         f'(default: {DEF_REPO})')
@@ -174,12 +200,46 @@ def main():
                         f'(default: {DEF_REL})')
     p.add_argument('--tag',
                    default='main-' + datetime.date.today().strftime('%Y%m%d'),
-                   help='image tag for build + deploy (default main-YYYYMMDD)')
+                   help='image tag for build + deploy (default main-YYYYMMDD; '
+                        'ignored in NGC mode)')
+    p.add_argument('--ngc-tag', default=None, metavar='TAG',
+                   help='deploy this pre-built NGC image tag instead of '
+                        'building from source (replaces the build+nico '
+                        'steps — the quickest onboarding path)')
+    p.add_argument('--ngc-image', default=None, metavar='REPO',
+                   help='NGC image repository nvcr.io/<org>/<team>/<image> '
+                        '(default: $NICO_NGC_IMAGE)')
+    p.add_argument('--token-env', default='NGC_API_KEY', metavar='VAR',
+                   help='NAME of the env var holding your NGC API key '
+                        '(default: NGC_API_KEY; the value is never printed)')
+    p.add_argument('--config', default=None, metavar='FILE',
+                   help='yaml file supplying any of these options as '
+                        'defaults (keys = option names with underscores); '
+                        'explicit command-line flags override the file')
     p.add_argument('--from', dest='from_step', default=None, metavar='STEP',
                    help='resume from this step')
     p.add_argument('--until', dest='until_step', default=None, metavar='STEP',
                    help='stop after this step')
     p.add_argument('--list', action='store_true', help='list steps and exit')
+    p.add_argument('--dry-run', action='store_true',
+                   help='print the resolved plan (steps + exact commands) '
+                        'without running anything')
+    # --config pre-pass: the yaml supplies DEFAULTS; explicit flags win.
+    conf = argparse.ArgumentParser(add_help=False)
+    conf.add_argument('--config', default=None)
+    conf_args, _ = conf.parse_known_args()
+    if conf_args.config:
+        import yaml
+        cfg_path = Path(conf_args.config).expanduser()
+        cfg = yaml.safe_load(cfg_path.read_text()) or {}
+        valid = {a.dest for a in p._actions}
+        unknown = sorted(set(cfg) - valid)
+        if unknown:
+            raise SystemExit(
+                f'Error: unknown key(s) in {cfg_path}: {", ".join(unknown)}\n'
+                f'Valid keys: {", ".join(sorted(valid - {"help"}))}')
+        p.set_defaults(**cfg)
+
     args = p.parse_args()
     if args.ip_explicit:
         args.ip = args.ip_explicit
@@ -204,9 +264,19 @@ def main():
     stop = keys.index(args.until_step) if args.until_step else len(keys) - 1
 
     print(f'nico-dev — bring-up: {args.name} @ {args.ip}')
+    mode = (f'NGC pre-built, tag {args.ngc_tag}' if args.ngc_tag
+            else f'source build, tag {args.tag}')
     print(f'  site {args.dc}/{args.site} (underlay {args.underlay}, '
-          f'overlay {args.overlay}), tag {args.tag}')
+          f'overlay {args.overlay}) — {mode}')
     print(f'  steps: {" → ".join(keys[start:stop + 1])}\n')
+
+    if args.dry_run:
+        for key, where, desc, cmds, _ in steps[start:stop + 1]:
+            print(f'━━ {key} [{where}] — {desc}')
+            for cmd in cmds:
+                print(f'  $ {" ".join(shlex.quote(str(c)) for c in cmd)}')
+        print('\n(dry run — nothing executed)')
+        return
 
     for key, where, desc, cmds, recovery in steps[start:stop + 1]:
         n = keys.index(key) + 1
