@@ -198,10 +198,9 @@ def main():
     p.add_argument('--nico-dev-rel', default=DEF_REL,
                    help='nico-dev folder path relative to the share '
                         f'(default: {DEF_REL})')
-    p.add_argument('--tag',
-                   default='main-' + datetime.date.today().strftime('%Y%m%d'),
-                   help='image tag for build + deploy (default main-YYYYMMDD; '
-                        'ignored in NGC mode)')
+    p.add_argument('--tag', default=None,
+                   help='source-build image tag (default main-YYYYMMDD; '
+                        'mutually exclusive with --ngc-tag)')
     p.add_argument('--ngc-tag', default=None, metavar='TAG',
                    help='deploy this pre-built NGC image tag instead of '
                         'building from source (replaces the build+nico '
@@ -232,6 +231,19 @@ def main():
         import yaml
         cfg_path = Path(conf_args.config).expanduser()
         cfg = yaml.safe_load(cfg_path.read_text()) or {}
+        # NGC settings live in an `ngc:` group; expand to the flat options.
+        ngc = cfg.pop('ngc', None)
+        if ngc is not None:
+            sub = {'tag': 'ngc_tag', 'image': 'ngc_image',
+                   'token_env': 'token_env'}
+            if not isinstance(ngc, dict) or set(ngc) - set(sub):
+                raise SystemExit(f'Error: ngc: in {cfg_path} must be a map '
+                                 f'with keys: {", ".join(sub)}')
+            if 'tag' in cfg:
+                raise SystemExit(f'Error: {cfg_path} sets BOTH deploy modes '
+                                 f'— `tag:` (source build) and `ngc:` '
+                                 f'(pre-built). Choose one.')
+            cfg.update({sub[k]: v for k, v in ngc.items()})
         valid = {a.dest for a in p._actions}
         unknown = sorted(set(cfg) - valid)
         if unknown:
@@ -241,6 +253,11 @@ def main():
         p.set_defaults(**cfg)
 
     args = p.parse_args()
+    if args.tag and args.ngc_tag:
+        raise SystemExit('Error: both deploy modes set — --tag (source '
+                         'build) and --ngc-tag (pre-built). Choose one.')
+    if not args.tag:
+        args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
     if args.ip_explicit:
         args.ip = args.ip_explicit
     elif args.ip is None:
