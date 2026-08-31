@@ -284,6 +284,8 @@ tell application "UTM"
         {{backend:qemu, configuration:{{name:"{args.name}", architecture:"aarch64", ¬
           memory:{VM_MEM_MB}, cpu cores:{VM_CPUS}, ¬
           directory share mode:VirtFS, ¬
+          displays:{{{{hardware:"virtio-gpu-pci"}}}}, ¬
+          serial ports:{{{{interface:ptty}}}}, ¬
           drives:{{{{removable:false, source:POSIX file "{disk}"}}, ¬
                    {{removable:false, source:POSIX file "{iso}"}}}}}}}}
     get name of vm
