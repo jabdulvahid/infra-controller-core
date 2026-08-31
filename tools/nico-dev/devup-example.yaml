@@ -17,7 +17,7 @@ overlay: 12                       #   prefix; avoid octets your Mac uses
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
 # NGC pre-built (quickest onboarding — no source build, no Rust):
 # ngc:
-#   tag: v2.2.0-pr-441-g1234567     # must exist as linux/arm64
+#   nico_tag: v2.2.0-pr-441-g1234567   # must exist as linux/arm64
 #   nico_image: nvcr.io/<org>/<team>/<image>   # or export NICO_NGC_IMAGE
 #   token_env: NGC_API_KEY          # env var NAME holding your NGC key
 #

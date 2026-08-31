@@ -234,7 +234,7 @@ def main():
         # NGC settings live in an `ngc:` group; expand to the flat options.
         ngc = cfg.pop('ngc', None)
         if ngc is not None:
-            sub = {'tag': 'ngc_tag', 'nico_image': 'ngc_image',
+            sub = {'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image',
                    'token_env': 'token_env'}
             if not isinstance(ngc, dict) or set(ngc) - set(sub):
                 raise SystemExit(f'Error: ngc: in {cfg_path} must be a map '
