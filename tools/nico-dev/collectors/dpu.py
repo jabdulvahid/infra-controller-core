@@ -6,6 +6,7 @@ We inspect it directly via docker exec instead of SSH.
 
 import re
 import subprocess
+import sys
 
 
 def _docker_exec(container, cmd, timeout=8):
@@ -62,7 +63,19 @@ def collect(site):
     ips       = site.get('_ips', {})
 
     container_name = f'clab-{clab_name}-dpu-1'
-    running        = _is_running(container_name)
+
+    # Off-host (Mac): the clab containers live in the VM's docker, not the
+    # Mac's — "not found" here means "can't see", not "stopped". Report n/a
+    # like the fabric collector does (20260826-#5 polish, closed 20260831).
+    if sys.platform == 'darwin':
+        return {
+            'name': container_name, 'running': None,
+            'fabric_ip': ips.get('dpu_lcp_ip', ''),
+            'cp_link_ip': ips.get('dpu_cp_ip', ''),
+            'bgp_estab': None, 'bgp_total': None, 'ip_forward': None,
+        }
+
+    running = _is_running(container_name)
 
     bgp_estab  = 0
     bgp_total  = 0
