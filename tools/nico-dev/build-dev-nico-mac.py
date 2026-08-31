@@ -107,7 +107,14 @@ def main():
                    help='Push already-built images, skip build')
     p.add_argument('--skip-rest', action='store_true',
                    help='Skip building the NICo REST images (rest-api/ Makefile)')
+    p.add_argument('--rest-only', action='store_true',
+                   help='Build/push ONLY the REST images — for the NGC path, '
+                        'where the core image comes pre-built but the REST '
+                        'images are always built from this checkout (Go, '
+                        'minutes not tens of minutes)')
     args = p.parse_args()
+    if args.rest_only and args.skip_rest:
+        p.error('--rest-only and --skip-rest are contradictory')
 
     site_yaml, site_folder = resolve_site(args.site)
     cfg = yaml.safe_load(open(site_yaml))
@@ -166,7 +173,9 @@ def main():
     docker_dir   = repo_path / 'dev' / 'docker'
     repo_dev_dir = repo_path / 'nico-dev-docker'
 
-    if not args.push_only:
+    if args.rest_only:
+        print('\nSteps 2-4: Skipped (--rest-only: core image comes from NGC)')
+    elif not args.push_only:
         repo_dev_dir.mkdir(exist_ok=True)
         copies = ['Dockerfile.runtime-dev', 'Dockerfile.nico-dev']
         for name in copies:
@@ -255,6 +264,12 @@ def main():
                 sys.exit(1)
         print(f'\n  REST images built and pushed ✓ '
               f'({len(rest_images)} images, tag {args.tag})')
+
+    if args.rest_only:
+        print(f'\n{"="*55}')
+        print(f'  REST-only build + push complete ✓  (tag {args.tag})')
+        print(f'{"="*55}')
+        return
 
     # Size gate: with CARGO_PROFILE_RELEASE_DEBUG=false the nico image is
     # ~1-2 GB uncompressed (265 MB compressed). Debug symbols once bloated it
