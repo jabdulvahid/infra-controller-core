@@ -72,6 +72,10 @@ def preflight(args):
         if not (args.ngc_image or os.environ.get('NICO_NGC_IMAGE')):
             probs.append('no NGC image: set ngc.nico_image in the config '
                          'or export NICO_NGC_IMAGE')
+        if subprocess.run(['docker', 'info'],
+                          capture_output=True).returncode != 0:
+            probs.append('docker daemon not reachable (the ngc step needs '
+                         'the Mac registry): colima start --cpu 4 --memory 8')
     if not Path('/Applications/UTM.app/Contents/MacOS/utmctl').exists():
         probs.append('UTM not found at /Applications/UTM.app')
     return probs
