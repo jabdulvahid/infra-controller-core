@@ -54,7 +54,11 @@ def render_info(site, fabric=None, dpu=None, cluster=None, bgp=None):
         leaf_names = ', '.join(leafs) if leafs else ''
         lines.append(f'  {"":18} {"└── leafs":25} {len(leafs)}  ({leaf_names})')
 
-    if dpu:
+    if dpu and dpu['running'] is None:
+        # Off-host (Mac): the DPU container is only visible from the VM.
+        lines.append(f'  {"DPU stand-in":<18} '
+                     + dim('n/a (VM-side — run ndev on the VM)'))
+    elif dpu:
         run_icon  = ok('') if dpu['running'] else fail('')
         ip_fwd    = dpu.get('ip_forward')
         fwd_str   = f'ip_forward: {ip_fwd}' if ip_fwd is not None else dim('ip_forward: ?')
