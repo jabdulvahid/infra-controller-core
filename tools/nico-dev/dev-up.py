@@ -53,7 +53,15 @@ def sh(cmd, interactive=True):
 
 
 def vm_ssh(args, remote_cmd):
-    return ['ssh', '-o', 'StrictHostKeyChecking=accept-new',
+    # Pin the identity: bare ssh offers EVERY agent key; sshd disconnects
+    # after MaxAuthTries rejections before the right key gets a turn
+    # ("Too many authentication failures", exit 255) — the prepare-vm.sh
+    # lesson, relearned on the dev-up maiden run.
+    ident = []
+    if args.ssh_key:
+        priv = str(Path(args.ssh_key).expanduser()).removesuffix('.pub')
+        ident = ['-i', priv, '-o', 'IdentitiesOnly=yes']
+    return ['ssh', '-o', 'StrictHostKeyChecking=accept-new'] + ident + [
             f'{args.user}@{args.ip}', remote_cmd]
 
 
@@ -81,6 +89,22 @@ def preflight(args):
     return probs
 
 
+def stale_known_hosts(ip):
+    """Hosts (the IP + any /etc/hosts names for it) with known_hosts
+    entries. When the run CREATES the VM, any such entry is guaranteed
+    stale (new VM = new host key) — the classic silent time-sink."""
+    hosts = {ip}
+    try:
+        for line in Path('/etc/hosts').read_text().splitlines():
+            parts = line.split('#')[0].split()
+            if parts and parts[0] == ip:
+                hosts.update(parts[1:])
+    except OSError:
+        pass
+    return sorted(h for h in hosts if subprocess.run(
+        ['ssh-keygen', '-F', h], capture_output=True).returncode == 0)
+
+
 def build_steps(args):
     """Returns [(key, where, description, [commands], recovery)]."""
     share = str(Path(args.share).expanduser())
@@ -105,7 +129,8 @@ def build_steps(args):
         ('prep', 'Mac', 'Prepare the VM (mounts, tools, ssh keys)',
          [['bash', NICO_DEV / 'prepare-vm.sh', 'init',
            '--vm-ip', args.ip, '--vm-user', args.user,
-           '--share', args.share_name]],
+           '--share', args.share_name]
+          + (['--ssh-key', args.ssh_key] if args.ssh_key else [])],
          'Check plain `ssh {u}@{ip}` works (password auth) and the share\n'
          'is attached in UTM (Settings → Sharing: VirtFS + Path). how-to §2.'
          .format(u=args.user, ip=args.ip)),
@@ -311,6 +336,19 @@ def main():
             print(f'  ✗ {pr}', file=sys.stderr)
         raise SystemExit(1)
 
+    # Fresh-VM runs: pre-existing known_hosts entries for the VM's IP (or
+    # its /etc/hosts names) are guaranteed stale — scrub instead of letting
+    # step ssh die on a host-key mismatch mid-run.
+    if keys[start] == 'vm':
+        stale = stale_known_hosts(args.ip)
+        if stale and args.dry_run:
+            print(f'  (would remove stale known_hosts entries for: '
+                  f'{", ".join(stale)} — a NEW VM gets a new host key)')
+        elif stale:
+            for h in stale:
+                subprocess.run(['ssh-keygen', '-R', h], capture_output=True)
+            print(f'  removed stale known_hosts entries: {", ".join(stale)}')
+
     print(f'nico-dev — bring-up: {args.name} @ {args.ip}')
     mode = (f'NGC pre-built, tag {args.ngc_tag}' if args.ngc_tag
             else f'source build, tag {args.tag}')
@@ -332,9 +370,12 @@ def main():
         for cmd in cmds:
             rc = sh(cmd)
             if rc != 0:
-                resume = (f'{sys.argv[0]} --name {args.name} --from {key}'
-                          + (f' --tag {args.tag}' if key in ('build', 'nico')
-                             else ''))
+                if args.config:
+                    resume = f'{sys.argv[0]} --config {args.config} --from {key}'
+                else:
+                    resume = (f'{sys.argv[0]} --name {args.name} --from {key}'
+                              + (f' --tag {args.tag}'
+                                 if key in ('build', 'nico') else ''))
                 print(f'''
 ✗ Step "{key}" failed (exit {rc}).
 
