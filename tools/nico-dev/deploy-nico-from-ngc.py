@@ -126,8 +126,19 @@ def main():
     run(['docker', 'tag', ngc_ref, local_ref], 'docker tag')
     run(['docker', 'push', local_ref], 'docker push')
 
+    # The REST images (Go) are NOT on NGC — they are always built from the
+    # repo checkout, tagged to match the core image. Fast: buildx Go builds,
+    # minutes. Found on the dev-up maiden run: --initial deploys the full
+    # REST stack, which then pulls nico-rest-*:<local_tag> from the local
+    # registry — nothing had ever pushed them (the earlier validation was a
+    # redeploy over a golden clone with the REST stack already placed).
+    print(f'Step 5: REST images from the checkout (tag {local_tag})...')
+    run([sys.executable, str(here / 'build-dev-nico-mac.py'), site,
+         '--tag', local_tag, '--rest-only'],
+        'REST image build (rest-api/ buildx)')
+
     deploy = 'deploy-dev-nico.py' if args.initial else 'redeploy-dev-nico.py'
-    print(f'Step 5: {deploy} --tag {local_tag}...')
+    print(f'Step 6: {deploy} --tag {local_tag}...')
     run([sys.executable, str(here / deploy), site, '--tag', local_tag],
         deploy)
 
