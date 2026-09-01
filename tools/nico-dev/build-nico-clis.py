@@ -13,7 +13,7 @@ Crates built:
 machine-a-tron runs on the VM (not Mac) — it needs the br-<dc>-internet
 interface which lives inside the UTM VM. It is therefore built FOR LINUX
 ARM64 inside a rust container (colima — already a nico-dev prerequisite):
-on Apple Silicon the linux/arm64 container is native, so this is a plain
+the linux/<host-arch> container is native (arm64 or amd64), so this is a plain
 Linux cargo build with zero assumptions about the Mac's rust setup. The
 rust image version is read from the repo's own rust-toolchain.toml. The
 binary is delivered through the share to {site}/mat/machine-a-tron, where
@@ -31,6 +31,7 @@ Usage:
 """
 
 import argparse
+import platform
 import os
 import subprocess
 import sys
@@ -41,6 +42,10 @@ try:
 except ImportError:
     print('Error: pyyaml not installed. Run: pip3 install pyyaml')
     sys.exit(1)
+
+
+DOCKER_ARCH = 'arm64' if platform.machine() == 'arm64' else 'amd64'
+ELF_MACHINE = 'aarch64' if platform.machine() == 'arm64' else 'x86-64'
 
 
 def resolve_site(arg):
@@ -162,7 +167,7 @@ def build_mat_container(repo_path, site_folder, out_dir=None):
 
     MAT must run ON THE VM (it binds br-<dc>-internet, which only exists
     there, and its interface plumbing is Linux-only) — a native Mac build is
-    a Mach-O binary the VM cannot execute. Building in a linux/arm64
+    a Mach-O binary the VM cannot execute. Building in a linux/<host-arch>
     container is a plain native Linux build on Apple Silicon: no zig, no
     rustup targets, no assumptions about the Mac's toolchain. The container
     image version tracks the repo's own rust-toolchain.toml. Named docker
@@ -195,7 +200,7 @@ def build_mat_container(repo_path, site_folder, out_dir=None):
             'protobuf-compiler libprotobuf-dev cmake pkg-config libssl-dev '
             '&& rm -rf /var/lib/apt/lists/*\n'
         )
-        r = subprocess.run(['docker', 'build', '--platform', 'linux/arm64',
+        r = subprocess.run(['docker', 'build', '--platform', f'linux/{DOCKER_ARCH}',
                             '-t', image, '-f', '-', '.'],
                            input=dockerfile, text=True)
         if r.returncode != 0:
@@ -205,7 +210,7 @@ def build_mat_container(repo_path, site_folder, out_dir=None):
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'  First build: ~10-20 min (pulls {image} once)  |  incremental: ~1-2 min')
-    run(['docker', 'run', '--rm', '--platform', 'linux/arm64',
+    run(['docker', 'run', '--rm', '--platform', f'linux/{DOCKER_ARCH}',
          '-v', f'{Path(repo_path).resolve()}:/src']
         + _worktree_git_mount(repo_path) +
         ['-v', 'nico-mat-target:/target',
@@ -225,12 +230,12 @@ def build_mat_container(repo_path, site_folder, out_dir=None):
     if not dest.exists():
         raise RuntimeError(f'Binary not delivered: {dest}')
     r = subprocess.run(['file', str(dest)], capture_output=True, text=True)
-    if 'ELF' not in r.stdout or 'aarch64' not in r.stdout:
-        raise RuntimeError(f'Unexpected binary format (want ELF aarch64): '
+    if 'ELF' not in r.stdout or ELF_MACHINE not in r.stdout:
+        raise RuntimeError(f'Unexpected binary format (want ELF {ELF_MACHINE}): '
                            f'{r.stdout.strip()}')
     dest.chmod(0o755)
     size_mb = dest.stat().st_size / 1024 / 1024
-    print(f'  ✓ {dest}  ({size_mb:.0f} MB, ELF aarch64 — verified)')
+    print(f'  ✓ {dest}  ({size_mb:.0f} MB, ELF {ELF_MACHINE} — verified)')
     print(f'  Delivered via the share — run-mat.sh on the VM installs it locally.')
     return dest
 

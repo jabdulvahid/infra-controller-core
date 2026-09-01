@@ -211,11 +211,11 @@ def main():
     print(f'  iptables: allowed DNS + HTTPS from {inet_br}')
 
     # ── Step 3b: Ensure ARM64-compatible FRR image ────────────────────────────
-    # frrouting/frr:latest has no ARM64 variant — build from apt instead.
-    # Always use frr-arm64:local regardless of what the yaml specifies.
+    # frrouting/frr:latest has no ARM64 variant — build from apt instead
+    # (native arch either way; apt resolves per-arch). Name is arch-neutral.
     # The local image is built once and reused on subsequent runs.
-    image = 'frr-arm64:local'
-    print(f'\nStep 3b: Ensuring ARM64 FRR image ({image})...')
+    image = 'frr-local:local'
+    print(f'\nStep 3b: Ensuring local FRR image ({image})...')
     # Always rebuild to pick up Dockerfile changes
     r = subprocess.run(['docker', 'image', 'inspect', image],
                        capture_output=True)

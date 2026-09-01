@@ -10,6 +10,14 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # uid: 1000                       # default: your Mac UID (share ownership match)
 # host_num: 126                   # last octet of the VM IP; two VMs can't share one
 
+# ── VM sizing (defaults shown; override per machine) ───────────────────
+# vm_cpus: 6
+# vm_mem_mb: 12288                # a CEILING, not committed memory — the
+#                                 #   running stack uses ~5G; 8192 is enough
+#                                 #   to RUN the sim on a 16GB Mac
+# vm_disk_gb: 120                 # sparse — grows with use, ~25G after
+#                                 #   an NGC bring-up
+
 # ── Your site identity — EDIT THESE ────────────────────────────────────
 dc: dc1                           # datacenter name (yours to choose)
 site: dev1                        # site name (yours to choose)
@@ -22,7 +30,7 @@ overlay: 12                       #   prefixes. Pick octets nothing on your
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
 # NGC pre-built (quickest onboarding — no source build, no Rust):
 # ngc:
-#   nico_tag: v2.2.0-pr-441-g1234567   # must exist as linux/arm64
+#   nico_tag: v2.2.0-pr-441-g1234567   # must exist for your arch (ngc-tags.py)
 #   nico_image: nvcr.io/<org>/<team>/<image>   # or export NICO_NGC_IMAGE
 #   token_env: NGC_API_KEY          # env var NAME holding your NGC key
 #

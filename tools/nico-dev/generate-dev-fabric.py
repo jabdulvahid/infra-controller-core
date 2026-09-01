@@ -327,7 +327,7 @@ router bgp {dpu_asn}
 # ── ContainerLab topology ─────────────────────────────────────────────────────
 
 def gen_topo(cfg, ips, dc):
-    image    = 'frr-arm64:local'   # always use local ARM64 build
+    image    = 'frr-local:local'   # local apt-built FRR (native arch)
     mgmt_pfx = '172.20.30.0/24'   # separate from nico-sim to allow coexistence
 
     lines = [

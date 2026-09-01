@@ -147,6 +147,9 @@ def build_steps(args):
           + (['--ssh-key', args.ssh_key] if args.ssh_key else [])
           + (['--uid', str(args.uid)] if args.uid is not None else [])
           + (['--host-num', str(args.host_num)] if args.host_num else [])
+          + (['--cpus', str(args.vm_cpus)] if args.vm_cpus else [])
+          + (['--mem-mb', str(args.vm_mem_mb)] if args.vm_mem_mb else [])
+          + (['--disk-gb', str(args.vm_disk_gb)] if args.vm_disk_gb else [])
           + (['--ip', args.ip_explicit] if args.ip_explicit else [])],
          'The vm step is rerun-safe and self-healing (issues 20260828-#2..#4).\n'
          'Common: share Path not set in UTM (GUI step), ssh timeout →\n'
@@ -226,7 +229,7 @@ def apply_ngc_mode(steps, args, site_mac):
         'ngc', 'Mac', 'Deploy pre-built image from NGC (no source build)',
         [ngc_cmd],
         'Checks: the key in $' + args.token_env + ' needs registry-read on '
-        'the image\'s org/team; the tag must exist as linux/arm64\n'
+        'the image\'s org/team; the tag must exist for the host arch\n'
         '(docker manifest inspect <image>:<tag>); a 10GB image needs ~25GB '
         'free across colima+registry+VM. how-to: "Deploying pre-built\n'
         'NGC images".')
@@ -255,6 +258,13 @@ def main():
     p.add_argument('--uid', type=int, default=None,
                    help='VM user UID (vm step passthrough; default: your '
                         'Mac UID)')
+    p.add_argument('--vm-cpus', type=int, default=None,
+                   help='VM CPU cores (vm step passthrough; default 6)')
+    p.add_argument('--vm-mem-mb', type=int, default=None,
+                   help='VM memory MB (vm step passthrough; default 12288 — '
+                        'a ceiling; measured working set ~5G, 8192 runs it)')
+    p.add_argument('--vm-disk-gb', type=int, default=None,
+                   help='VM disk GB, sparse (vm step passthrough; default 120)')
     p.add_argument('--host-num', type=int, default=None,
                    help='last octet of the VM IP (vm step passthrough; '
                         'default 126). On a non-192.168.64 subnet use '

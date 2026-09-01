@@ -38,6 +38,7 @@ Usage:
 """
 
 import argparse
+import platform
 import ipaddress
 import sys
 from pathlib import Path
@@ -628,8 +629,9 @@ def gen_nico(cfg):
         'nico-dhcp': {
             'config': {
                 'kea': {
-                    # ARM64 hook library path (x86 default is /usr/lib/x86_64-linux-gnu/...)
-                    'hookLibraryPath': '/usr/lib/aarch64-linux-gnu/kea/hooks/libdhcp.so',
+                    # per-arch hook path (this script runs on the VM;
+                    # platform.machine() = aarch64 | x86_64 there)
+                    'hookLibraryPath': f'/usr/lib/{platform.machine()}-linux-gnu/kea/hooks/libdhcp.so',
                     'hookParameters': {
                         'provisioningServer': np.get('pxe_vip', ''),
                     },
