@@ -302,12 +302,11 @@ end tell'''
         print(f'  (UTM imported COPIES of disk+seed into the VM bundle — '
               f'{Path(disk).parent} is now only a rerun cache)')
 
-        # Serial console: REJECTED in the creation record (-1700, found
-        # live 2026-09-01). Added post-create via update configuration;
-        # NON-FATAL — a console is a nicety, ssh is the product. Server
-        # VM ruling: serial (text), NOT a Display (implies GUI/graphics).
-        # ptty is the only scriptable mode; UTM's double-click "Built-in
-        # Terminal" serial is GUI-only — advised in the manual step.
+        # Serial console via update configuration is OPT-IN: the config
+        # round-trip is suspected of mangling the boot setup (20260901-#3
+        # — VM started but never booted: display inactive, serial silent,
+        # no IP). Default path adds NO devices post-create; the manual
+        # Built-in Terminal advice below covers console needs.
         extras = f'''
 tell application "UTM"
     set theVM to virtual machine named "{args.name}"
@@ -315,12 +314,13 @@ tell application "UTM"
     set config to {{serial ports:{{{{interface:ptty}}}}}} & config
     update configuration theVM with config
 end tell'''
-        r = run(['osascript', '-e', extras], 'serial console add',
-                capture=True, check=False)
-        devices_added = (r.returncode == 0)
-        if devices_added:
-            print('  Serial console (pty) added ✓ — utmctl attach prints '
-                  'its PTY path; screen <pty> 115200')
+        if args.serial_console:
+            r = run(['osascript', '-e', extras], 'serial console add',
+                    capture=True, check=False)
+            devices_added = (r.returncode == 0)
+            if devices_added:
+                print('  Serial console (pty) added ✓ — utmctl attach '
+                      'prints its PTY path; screen <pty> 115200')
     # No drive resize here: UTM scripting can't resize an existing drive
     # (guest size ignored at make-time; absent from fetched drive records;
     # -10006 on update — 20260828-#3). The disk is grown at stage image.
@@ -382,6 +382,11 @@ def main():
     p.add_argument('--mem-mb', type=int, default=DEF_MEM_MB,
                    help=f'VM memory in MB (default {DEF_MEM_MB}; measured working '
                         'set ~5G — 8192 is enough to RUN the sim)')
+    p.add_argument('--serial-console', action='store_true',
+                   help='EXPERIMENTAL: add a pty serial device post-create '
+                        'via update configuration (suspected of breaking '
+                        'the boot config, 20260901-#3 — default off; the '
+                        'GUI Built-in Terminal advice is the safe path)')
     p.add_argument('--disk-gb', type=int, default=DEF_DISK_GB,
                    help=f'VM disk virtual size in GB, sparse '
                         f'(default {DEF_DISK_GB})')
