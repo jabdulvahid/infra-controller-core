@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # nico-dev — graft (or update) tools/nico-dev into the CURRENT git checkout.
 #
-#   bash graft-tools.sh              # from anywhere inside your clone/worktree
-#   bash graft-tools.sh <fork-url>   # non-default tools source
+#   bash graft-tools.sh              # STABLE: newest validated-* tag
+#   bash graft-tools.sh --edge       # branch tip (maintainers / the brave)
+#   bash graft-tools.sh --ref <tag|branch>    # exactly that ref
+#   bash graft-tools.sh <fork-url> [--edge|--ref X]   # non-default source
 #
 # Pulls only tools/nico-dev from the fork's nico-dev branch into this
 # working tree as UNTRACKED, git-excluded files: invisible to git status,
@@ -16,8 +18,36 @@
 
 set -euo pipefail
 
-FORK_URL="${1:-https://github.com/jabdulvahid/infra-controller-core.git}"
+FORK_URL="https://github.com/jabdulvahid/infra-controller-core.git"
 BRANCH="nico-dev"
+REF=""
+MODE="stable"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --edge)  MODE="edge"; shift ;;
+        --ref)   MODE="ref"; REF="$2"; shift 2 ;;
+        http*|git@*|/*) FORK_URL="$1"; shift ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+# Stable channel: newest validated-* tag on the fork; falls back to the
+# branch tip when none exist yet.
+if [[ "$MODE" == "stable" ]]; then
+    LATEST=$(git ls-remote --tags "$FORK_URL" 'refs/tags/validated-*' 2>/dev/null              | awk -F/ '{print $NF}' | sort | tail -1)
+    if [[ -n "$LATEST" ]]; then
+        REF="$LATEST"
+        echo "Channel: STABLE ($REF) — use --edge for the branch tip."
+    else
+        REF="$BRANCH"
+        echo "Channel: no validated tags yet — using branch tip ($BRANCH)."
+    fi
+elif [[ "$MODE" == "edge" ]]; then
+    REF="$BRANCH"
+    echo "Channel: EDGE (branch tip)."
+else
+    echo "Channel: pinned ref ($REF)."
+fi
 
 TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "Error: not inside a git checkout — cd into your nico clone/worktree." >&2
@@ -25,8 +55,8 @@ TOP="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$TOP"
 
-echo "Fetching ${BRANCH} from ${FORK_URL}..."
-git fetch "$FORK_URL" "$BRANCH"
+echo "Fetching ${REF} from ${FORK_URL}..."
+git fetch "$FORK_URL" "$REF"
 
 echo "Extracting tools/nico-dev into ${TOP}..."
 git checkout FETCH_HEAD -- tools/nico-dev
@@ -47,6 +77,6 @@ fi
 
 SHA="$(git rev-parse --short FETCH_HEAD)"
 echo ""
-echo "tools/nico-dev grafted (source: ${BRANCH} @ ${SHA}) — untracked and"
+echo "tools/nico-dev grafted (source: ${REF} @ ${SHA}) — untracked and"
 echo "git-ignored; your branch and status are untouched. Next:"
 echo "  cd tools/nico-dev && export PATH=\"\$PATH:\$(pwd)\" && check-prereqs.sh"

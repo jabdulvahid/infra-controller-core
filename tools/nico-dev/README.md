@@ -50,7 +50,10 @@ echo 'tools/nico-dev/' >> "$(git rev-parse --git-common-dir)/info/exclude"
 
 The tools land untracked and locally ignored — impossible to sweep into a
 commit. Rerun `graft-tools.sh` (it's in the folder now) any time to
-update them; it overwrites `tools/nico-dev` in place.
+update them; it overwrites `tools/nico-dev` in place. By default it
+fetches the **stable channel** — the newest `validated-*` tag, a state
+that passed a full bring-up; `graft-tools.sh --edge` fetches the branch
+tip (latest fixes, maintainer-grade risk).
 
 **3. Tools on PATH, prerequisites checked:**
 
@@ -135,3 +138,13 @@ modes, and gives the exact resume command (`dev-up.py --config ...
 
 **Friction = bug.** If a step confused you or an error message didn't
 rescue you, that's a defect in this tooling — please report it.
+
+## Maintainers
+
+- `smoke-test.sh` — ~6-minute unattended boot-path check (throwaway VM:
+  create → boot → static IP early → cloud-init done → arch → delete).
+  RULE: no push touching the cloud-init seed, the VM creation record, or
+  prepare-vm's guest section without a green smoke run.
+- After a full bring-up validates the tip, tag it:
+  `git tag validated-YYYYMMDD && git push origin validated-YYYYMMDD` —
+  that's what the stable graft channel serves.
