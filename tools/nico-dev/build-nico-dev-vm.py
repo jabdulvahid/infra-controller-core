@@ -339,13 +339,13 @@ end tell'''
      and tools all flow through it. Mode is already VirtFS; only the
      Path needs you (macOS does not allow scripts to set it).''')
     print('''  2. Devices → New → Serial → Mode: Built-in Terminal  (OPTIONAL)
-     What you get: a TEXT console window when you double-click the VM
-     in UTM — rescue access when ssh is unreachable (boot or network
-     issues). This is a server VM: no Display/graphics needed.'''
-          + ('''
-     (A pty serial was already scripted in: from the terminal,
-     utmctl attach prints its PTY path → screen <pty> 115200.)'''
-             if devices_added else ''))
+     What you get: a TEXT console window on double-click — rescue
+     access when ssh is unreachable. ⚠ WARNING (20260901-#7): CLOSING
+     that window STOPS THE VM — hide it (Cmd-H) or minimize, never
+     close. Safer rescue path, no window to mis-close: a pty serial
+     (Mode: Pseudo-TTY) read from your terminal via
+     `utmctl attach <vm>` (prints the PTY path) → `screen <pty> 115200`
+     — quitting screen never touches the VM.''')
 
 
 def stage_boot(static_ip, args):
