@@ -629,9 +629,13 @@ def gen_nico(cfg):
         'nico-dhcp': {
             'config': {
                 'kea': {
-                    # per-arch hook path (this script runs on the VM;
-                    # platform.machine() = aarch64 | x86_64 there)
-                    'hookLibraryPath': f'/usr/lib/{platform.machine()}-linux-gnu/kea/hooks/libdhcp.so',
+                    # per-arch hook path. NOTE: this can render on the
+                    # Mac (NGC lane) OR the VM — macOS says 'arm64' where
+                    # Linux says 'aarch64' (20260901-#6), so normalize:
+                    'hookLibraryPath': '/usr/lib/%s-linux-gnu/kea/hooks/libdhcp.so'
+                                       % {'arm64': 'aarch64'}.get(
+                                           platform.machine(),
+                                           platform.machine()),
                     'hookParameters': {
                         'provisioningServer': np.get('pxe_vip', ''),
                     },
