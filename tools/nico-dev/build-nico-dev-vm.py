@@ -302,24 +302,25 @@ end tell'''
         print(f'  (UTM imported COPIES of disk+seed into the VM bundle — '
               f'{Path(disk).parent} is now only a rerun cache)')
 
-        # Display + serial: REJECTED in the creation record (-1700, found
-        # live 2026-09-01 — the 'serial ports' term even resolves to a
-        # different property there). Attempt post-create via update
-        # configuration; NON-FATAL — a console is a nicety, ssh is the
-        # product. Falls back to printing the GUI steps.
+        # Serial console: REJECTED in the creation record (-1700, found
+        # live 2026-09-01). Added post-create via update configuration;
+        # NON-FATAL — a console is a nicety, ssh is the product. Server
+        # VM ruling: serial (text), NOT a Display (implies GUI/graphics).
+        # ptty is the only scriptable mode; UTM's double-click "Built-in
+        # Terminal" serial is GUI-only — advised in the manual step.
         extras = f'''
 tell application "UTM"
     set theVM to virtual machine named "{args.name}"
     set config to configuration of theVM
-    set config to {{displays:{{{{hardware:"virtio-gpu-pci"}}}}, ¬
-                   serial ports:{{{{interface:ptty}}}}}} & config
+    set config to {{serial ports:{{{{interface:ptty}}}}}} & config
     update configuration theVM with config
 end tell'''
-        r = run(['osascript', '-e', extras], 'display+serial add',
+        r = run(['osascript', '-e', extras], 'serial console add',
                 capture=True, check=False)
         devices_added = (r.returncode == 0)
         if devices_added:
-            print('  Display + serial console added ✓')
+            print('  Serial console (pty) added ✓ — utmctl attach prints '
+                  'its PTY path; screen <pty> 115200')
     # No drive resize here: UTM scripting can't resize an existing drive
     # (guest size ignored at make-time; absent from fetched drive records;
     # -10006 on update — 20260828-#3). The disk is grown at stage image.
@@ -331,13 +332,14 @@ end tell'''
      What you get: the VM mounts this folder — your repos, site config,
      and tools all flow through it. Mode is already VirtFS; only the
      Path needs you (macOS does not allow scripts to set it).''')
-    if not devices_added:
-        print('''  2. Devices → New → Display  (OPTIONAL, recommended)
-     What you get: a console window when you double-click the VM in
-     UTM — handy when ssh is unreachable (boot or network issues).
-     Without it the VM is headless: ssh only. A New → Serial device
-     additionally enables a serial console from the terminal
-     (utmctl attach prints its PTY path; then: screen <pty> 115200).''')
+    print('''  2. Devices → New → Serial → Mode: Built-in Terminal  (OPTIONAL)
+     What you get: a TEXT console window when you double-click the VM
+     in UTM — rescue access when ssh is unreachable (boot or network
+     issues). This is a server VM: no Display/graphics needed.'''
+          + ('''
+     (A pty serial was already scripted in: from the terminal,
+     utmctl attach prints its PTY path → screen <pty> 115200.)'''
+             if devices_added else ''))
 
 
 def stage_boot(static_ip, args):
