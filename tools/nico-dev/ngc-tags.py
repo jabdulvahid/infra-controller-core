@@ -134,16 +134,14 @@ def main():
         hits = [i for i, t in enumerate(prs) if args.before in t]
         if not hits:
             raise SystemExit(f'Error: no PR build matches "{args.before}".')
-        if len(hits) > 1 and args.before not in (prs[i] for i in hits):
-            raise SystemExit(
-                f'Error: "{args.before}" is ambiguous ({len(hits)} matches, '
-                f'e.g. {prs[hits[0]]}, {prs[hits[1]]}) — be more specific.')
-        window = prs[:hits[0]]
+        # Multiple matches: the window ends before the OLDEST match — so
+        # `--before v2.3.0` means "before the v2.3.0 series began".
+        window = prs[:min(hits)]
         if not window:
-            raise SystemExit(f'Nothing older than {prs[hits[0]]}.')
+            raise SystemExit(f'Nothing older than {prs[min(hits)]}.')
 
     print(f'{args.ngc_image}\n')
-    where = (f'PR builds before {prs[hits[0]]}' if args.before
+    where = (f'PR builds before {prs[min(hits)]}' if args.before
              else 'Latest PR builds')
     print(f'{where} ({min(args.n, len(window))} of {len(prs)}, newest last; '
           f'arm64 required for nico-dev; --before <tag> pages back):')
