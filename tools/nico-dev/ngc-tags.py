@@ -8,18 +8,20 @@ nico-dev — List deployable NGC image tags (pick one for ngc.nico_tag).
 
 Defaults: image from $NICO_NGC_IMAGE, key from $NGC_API_KEY (names only —
 values are never printed). Shows the newest PR builds (what tracks main)
-with arm64 availability, and the newest release tags.
+with host-arch availability, and the newest release tags.
 """
 
 import argparse
 import base64
 import json
 import os
+import platform
 import re
 import sys
 import urllib.request
 from pathlib import Path
 
+NEED_ARCH = 'arm64' if platform.machine() == 'arm64' else 'amd64'
 PR_RE = re.compile(r'^v?(\d+)\.(\d+)\.(\d+)-pr-(\d+)-g[0-9a-f]+$')
 REL_RE = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
 
@@ -70,7 +72,7 @@ def tag_info(host, path, tag, token):
                      m.get('digest') for m in doc['manifests']}
             plats.pop('unknown', None)               # attestation entries
             archs = sorted(plats)
-            digest = plats.get('arm64') or next(iter(plats.values()), None)
+            digest = plats.get(NEED_ARCH) or next(iter(plats.values()), None)
             if digest:
                 doc = _get(host, path, 'manifests', digest, token)
         cfg_digest = doc.get('config', {}).get('digest')
@@ -144,10 +146,10 @@ def main():
     where = (f'PR builds before {prs[min(hits)]}' if args.before
              else 'Latest PR builds')
     print(f'{where} ({min(args.n, len(window))} of {len(prs)}, newest last; '
-          f'arm64 required for nico-dev; --before <tag> pages back):')
+          f'{NEED_ARCH} required on this host; --before <tag> pages back):')
     for t in window[-args.n:]:
         a, created = tag_info(host, path, t, token)
-        mark = ('✓ arm64' if 'arm64' in a
+        mark = (f'✓ {NEED_ARCH}' if NEED_ARCH in a
                 else f'✗ {"/".join(a)} only' if a else '? manifest unreadable')
         print(f'  {t:42s} {created:10s}  {mark}')
     if rels:

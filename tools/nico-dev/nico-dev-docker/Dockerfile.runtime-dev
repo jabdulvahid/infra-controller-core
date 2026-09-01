@@ -11,7 +11,8 @@
 #
 # Do NOT use this for production images.
 #
-FROM arm64v8/debian:12-slim
+# Multi-arch official image — docker resolves the host/colima arch
+FROM debian:12-slim
 
 ARG CI_COMMIT_SHORT_SHA
 ENV CI_COMMIT_SHORT_SHA $CI_COMMIT_SHORT_SHA

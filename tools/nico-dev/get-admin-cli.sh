@@ -3,7 +3,7 @@
 #
 #   (on the VM)  get-admin-cli.sh ~/mac/sites/<dc>/<site>
 #
-# The api container ships the admin-cli binary (Linux arm64 — hence VM,
+# The api container ships the admin-cli binary (Linux, VM arch — hence VM,
 # not Mac). This extracts it to /usr/local/bin, then runs
 # configure-clis.py --admin-cli-only HERE so the certs and the
 # run-admin-cli.sh wrapper carry VM-side paths (the wrapper bakes the
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-    echo "Error: run this ON THE VM (the extracted binary is Linux arm64)." >&2
+    echo "Error: run this ON THE VM (the extracted binary is a Linux ELF)." >&2
     echo "Mac-native CLIs are the build path: build-nico-clis.py (how-to §10)." >&2
     exit 1
 fi

@@ -4,7 +4,7 @@ nico-dev — Deploy a pre-built nico image straight from NGC (no source build)
 
 One command for the NGC-first user (user design 2026-08-26): ensures the
 local registry exists (users who never ran a build have none), logs docker
-into nvcr.io, pulls the arm64 image, retags it into the local registry, and
+into nvcr.io, pulls the host-arch image, retags it into the local registry, and
 invokes the deploy underneath.
 
   ./deploy-nico-from-ngc.py <site> v2.2.0-pr-441-gc594e35f3
@@ -22,12 +22,15 @@ Notes:
 
 import argparse
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
 DEFAULT_NGC_IMAGE = os.environ.get('NICO_NGC_IMAGE', '')
 REGISTRY_PORT = 5000
+# VM arch == host arch: Apple Silicon pulls arm64, Intel pulls amd64.
+DOCKER_ARCH = 'arm64' if platform.machine() == 'arm64' else 'amd64'
 
 
 def run(cmd, label, input_text=None, check=True):
@@ -112,12 +115,12 @@ def main():
         'docker login (check the key: needs registry-read on the image org/team '
         '— see how-to.md)', input_text=token)
 
-    print('Step 3: Pull (linux/arm64)...')
-    r = run(['docker', 'pull', '--platform', 'linux/arm64', ngc_ref],
+    print(f'Step 3: Pull (linux/{DOCKER_ARCH})...')
+    r = run(['docker', 'pull', '--platform', f'linux/{DOCKER_ARCH}', ngc_ref],
             'docker pull', check=False)
     if r.returncode != 0:
         print('Error: pull failed. If the error says "no matching manifest",\n'
-              'this tag has no arm64 build; if "manifest unknown", the tag\n'
+              f'this tag has no {DOCKER_ARCH} build; if "manifest unknown", the tag\n'
               'does not exist (tags/list two-step in how-to.md lists them);\n'
             'if "unauthorized", the key lacks the org/role.', file=sys.stderr)
         sys.exit(1)
@@ -142,7 +145,7 @@ def main():
         src = f'{ngc_base}/{image}:{args.ngc_tag}'
         dst = f'localhost:{REGISTRY_PORT}/{image}:{local_tag}'
         print(f'  [{i}/{len(rest_images)}] {image}')
-        r = run(['docker', 'pull', '--platform', 'linux/arm64', src],
+        r = run(['docker', 'pull', '--platform', f'linux/{DOCKER_ARCH}', src],
                 f'pull {image}', check=False)
         if r.returncode != 0:
             print(f'\n  WARNING: {src} not pullable — falling back to '

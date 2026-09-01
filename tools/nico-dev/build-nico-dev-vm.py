@@ -27,6 +27,7 @@ in-process dylib, not shell-executable — verified 2026-08-28).
 
 import argparse
 import os
+import platform
 import plistlib
 import shutil
 import struct
@@ -37,12 +38,16 @@ import time
 from pathlib import Path
 
 UBUNTU_RELEASE = '26.04'
+# Host arch drives everything: Apple Silicon → arm64 guest, Intel → amd64.
+HOST_ARCH = platform.machine()                    # 'arm64' | 'x86_64'
+IMG_ARCH = 'arm64' if HOST_ARCH == 'arm64' else 'amd64'   # Ubuntu image name
+QEMU_ARCH = 'aarch64' if HOST_ARCH == 'arm64' else 'x86_64'
 CLOUD_IMG_URL = (f'https://cloud-images.ubuntu.com/releases/{UBUNTU_RELEASE}/'
-                 f'release/ubuntu-{UBUNTU_RELEASE}-server-cloudimg-arm64.img')
+                 f'release/ubuntu-{UBUNTU_RELEASE}-server-cloudimg-{IMG_ARCH}.img')
 CACHE_DIR = Path.home() / '.cache' / 'nico-dev'
-DISK_SIZE_MIB = 120 * 1024        # 120G, applied by UTM via `guest size`
-VM_CPUS = 6
-VM_MEM_MB = 12288
+DEF_DISK_GB = 120
+DEF_CPUS = 6
+DEF_MEM_MB = 12288
 VMNET_PLIST = '/Library/Preferences/SystemConfiguration/com.apple.vmnet.plist'
 DEFAULT_HOST_NUM = 126        # nico-dev convention: <subnet>.126
 
@@ -145,7 +150,7 @@ def stage_image(work, args):
     else:
         shutil.copy2(cached, disk)
         print(f'  Disk ready: {disk} ✓')
-    qcow2_grow(disk, DISK_SIZE_MIB << 20)
+    qcow2_grow(disk, (args.disk_gb * 1024) << 20)
     return disk
 
 
@@ -217,7 +222,9 @@ write_files:
       network:
         version: 2
         ethernets:
-          enp0s1:
+          nic0:
+            match:
+              driver: virtio_net
             dhcp4: false
             addresses: [{static_ip}/24]
             routes:
@@ -273,7 +280,7 @@ def stage_vm(disk, iso, args):
                                 text=True).stdout.strip().lower()
             if st == 'stopped':
                 print(f'  Bundle disk: {bundle_disk}')
-                qcow2_grow(bundle_disk, DISK_SIZE_MIB << 20)
+                qcow2_grow(bundle_disk, (args.disk_gb * 1024) << 20)
             else:
                 print(f'  VM is "{st}" — NOT touching the bundle disk '
                       f'(stop the VM and rerun to grow it)')
@@ -281,8 +288,8 @@ def stage_vm(disk, iso, args):
         script = f'''
 tell application "UTM"
     set vm to make new virtual machine with properties ¬
-        {{backend:qemu, configuration:{{name:"{args.name}", architecture:"aarch64", ¬
-          memory:{VM_MEM_MB}, cpu cores:{VM_CPUS}, ¬
+        {{backend:qemu, configuration:{{name:"{args.name}", architecture:"{QEMU_ARCH}", ¬
+          memory:{args.mem_mb}, cpu cores:{args.cpus}, ¬
           directory share mode:VirtFS, ¬
           displays:{{{{hardware:"virtio-gpu-pci"}}}}, ¬
           serial ports:{{{{interface:ptty}}}}, ¬
@@ -339,6 +346,14 @@ def main():
                    help='Mac folder for the VirtFS share (default: your home)')
     p.add_argument('--host-num', type=int, default=DEFAULT_HOST_NUM,
                    help=f'last octet of the static IP (default {DEFAULT_HOST_NUM})')
+    p.add_argument('--cpus', type=int, default=DEF_CPUS,
+                   help=f'VM CPU cores (default {DEF_CPUS})')
+    p.add_argument('--mem-mb', type=int, default=DEF_MEM_MB,
+                   help=f'VM memory in MB (default {DEF_MEM_MB}; measured working '
+                        'set ~5G — 8192 is enough to RUN the sim)')
+    p.add_argument('--disk-gb', type=int, default=DEF_DISK_GB,
+                   help=f'VM disk virtual size in GB, sparse '
+                        f'(default {DEF_DISK_GB})')
     p.add_argument('--ip', default=None,
                    help='full static IP, overriding vmnet detection + '
                         '--host-num. MUST be on this Mac\'s UTM shared-'
@@ -367,8 +382,8 @@ def main():
     work = Path(args.work_dir or Path.home() / 'UTM-disks' / args.name)
     print('nico-dev — Build base VM')
     print(f'  name     : {args.name}')
-    print(f'  ubuntu   : {UBUNTU_RELEASE} cloud image (arm64)')
-    print(f'  disk     : {DISK_SIZE_MIB} MiB sparse, {VM_CPUS} cpus, {VM_MEM_MB}MB')
+    print(f'  ubuntu   : {UBUNTU_RELEASE} cloud image ({IMG_ARCH})')
+    print(f'  disk     : {args.disk_gb}G sparse, {args.cpus} cpus, {args.mem_mb}MB')
     print(f'  share    : {args.share}')
     print(f'  user     : {args.user}')
     print(f'  work dir : {work}')
