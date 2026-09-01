@@ -291,8 +291,6 @@ tell application "UTM"
         {{backend:qemu, configuration:{{name:"{args.name}", architecture:"{QEMU_ARCH}", ¬
           memory:{args.mem_mb}, cpu cores:{args.cpus}, ¬
           directory share mode:VirtFS, ¬
-          displays:{{{{hardware:"virtio-gpu-pci"}}}}, ¬
-          serial ports:{{{{interface:ptty}}}}, ¬
           drives:{{{{removable:false, source:POSIX file "{disk}"}}, ¬
                    {{removable:false, source:POSIX file "{iso}"}}}}}}}}
     get name of vm
@@ -302,6 +300,28 @@ end tell'''
         print(f'  VM created: {r.stdout.strip()} ✓')
         print(f'  (UTM imported COPIES of disk+seed into the VM bundle — '
               f'{Path(disk).parent} is now only a rerun cache)')
+
+        # Display + serial: REJECTED in the creation record (-1700, found
+        # live 2026-09-01 — the 'serial ports' term even resolves to a
+        # different property there). Attempt post-create via update
+        # configuration; NON-FATAL — a console is a nicety, ssh is the
+        # product. Falls back to printing the GUI steps.
+        extras = f'''
+tell application "UTM"
+    set theVM to virtual machine named "{args.name}"
+    set config to configuration of theVM
+    set config to {{displays:{{{{hardware:"virtio-gpu-pci"}}}}, ¬
+                   serial ports:{{{{interface:ptty}}}}}} & config
+    update configuration theVM with config
+end tell'''
+        r = run(['osascript', '-e', extras], 'display+serial add',
+                capture=True, check=False)
+        if r.returncode == 0:
+            print('  Display + serial console added ✓')
+        else:
+            print('  (could not add display/serial via scripting — for a '
+                  'console window, add a Display device in\n   UTM → '
+                  'Settings → Devices → New; ssh is unaffected)')
     # No drive resize here: UTM scripting can't resize an existing drive
     # (guest size ignored at make-time; absent from fetched drive records;
     # -10006 on update — 20260828-#3). The disk is grown at stage image.
