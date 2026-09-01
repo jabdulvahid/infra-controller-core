@@ -1,4 +1,5 @@
-# dev-up.py config — copy, edit, run:  python3 dev-up.py --config my-vm.yaml
+# dev-up.py config — copy to devup-<your-site>.yaml, EDIT, then:
+#   dev-up.py --config devup-<your-site>.yaml
 # Keys = dev-up.py option names (underscores). Anything here can still be
 # overridden on the command line; anything omitted uses the built-in default.
 
@@ -9,10 +10,14 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # uid: 1000                       # default: your Mac UID (share ownership match)
 # host_num: 126                   # last octet of the VM IP; two VMs can't share one
 
-dc: dc1                           # datacenter name
-site: dev1                        # site name
-underlay: 11                      # first IP octet — becomes a Mac-routed
-overlay: 12                       #   prefix; avoid octets your Mac uses
+# ── Your site identity — EDIT THESE ────────────────────────────────────
+dc: dc1                           # datacenter name (yours to choose)
+site: dev1                        # site name (yours to choose)
+underlay: 11                      # first IP octets — they become Mac-routed
+overlay: 12                       #   prefixes. Pick octets nothing on your
+                                  #   Mac uses (VPN/LAN!); dev-up preflight
+                                  #   warns if the Mac already routes them.
+# To find a deployable NGC tag for nico_tag below:  ngc-tags.py --config <this file>
 
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
 # NGC pre-built (quickest onboarding — no source build, no Rust):
