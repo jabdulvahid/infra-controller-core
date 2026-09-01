@@ -317,19 +317,27 @@ def main():
         import yaml
         cfg_path = Path(conf_args.config).expanduser()
         cfg = yaml.safe_load(cfg_path.read_text()) or {}
-        # NGC settings live in an `ngc:` group; expand to the flat options.
-        ngc = cfg.pop('ngc', None)
-        if ngc is not None:
-            sub = {'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image',
-                   'token_env': 'token_env'}
-            if not isinstance(ngc, dict) or set(ngc) - set(sub):
-                raise SystemExit(f'Error: ngc: in {cfg_path} must be a map '
-                                 f'with keys: {", ".join(sub)}')
-            if 'tag' in cfg:
-                raise SystemExit(f'Error: {cfg_path} sets BOTH deploy modes '
-                                 f'— `tag:` (source build) and `ngc:` '
-                                 f'(pre-built). Choose one.')
-            cfg.update({sub[k]: v for k, v in ngc.items()})
+        # Config principle (Jasmeer, 2026-09-01): related some_xxx options
+        # live under a `some:` group in the yaml. Groups expand to the
+        # flat option names here; add new families to this table.
+        groups = {
+            'ngc': {'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image',
+                    'token_env': 'token_env'},
+            'vm': {'cpus': 'vm_cpus', 'mem_mb': 'vm_mem_mb',
+                   'disk_gb': 'vm_disk_gb'},
+        }
+        for gname, sub in groups.items():
+            g = cfg.pop(gname, None)
+            if g is None:
+                continue
+            if not isinstance(g, dict) or set(g) - set(sub):
+                raise SystemExit(f'Error: {gname}: in {cfg_path} must be a '
+                                 f'map with keys: {", ".join(sub)}')
+            cfg.update({sub[k]: v for k, v in g.items()})
+        if 'ngc_tag' in cfg and 'tag' in cfg:
+            raise SystemExit(f'Error: {cfg_path} sets BOTH deploy modes '
+                             f'— `tag:` (source build) and `ngc:` '
+                             f'(pre-built). Choose one.')
         valid = {a.dest for a in p._actions}
         unknown = sorted(set(cfg) - valid)
         if unknown:

@@ -11,11 +11,12 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # host_num: 126                   # last octet of the VM IP; two VMs can't share one
 
 # ── VM sizing (defaults shown; override per machine) ───────────────────
-# vm_cpus: 6
-# vm_mem_mb: 12288                # a CEILING, not committed memory — the
+# vm:
+#   cpus: 6
+#   mem_mb: 12288                 # a CEILING, not committed memory — the
 #                                 #   running stack uses ~5G; 8192 is enough
 #                                 #   to RUN the sim on a 16GB Mac
-# vm_disk_gb: 120                 # sparse — grows with use, ~25G after
+#   disk_gb: 120                  # sparse — grows with use, ~25G after
 #                                 #   an NGC bring-up
 
 # ── Your site identity — EDIT THESE ────────────────────────────────────
