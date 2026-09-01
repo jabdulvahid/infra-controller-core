@@ -340,11 +340,11 @@ end tell'''
      Path needs you (macOS does not allow scripts to set it).''')
     print('''  2. Devices → New → Display  (OPTIONAL, recommended)
      What you get: a TEXT login console on double-click (Ubuntu server
-     runs a getty on tty1/framebuffer automatically — no graphics
-     stack involved) — rescue access when ssh is unreachable. Verified
-     the right device empirically (20260901-#7): the Built-in Terminal
-     serial window stays blank AND closing it STOPS the VM. Habit
-     regardless: hide console windows (Cmd-H), don't close them.''')
+     runs a getty on tty1 automatically) — rescue access when ssh is
+     unreachable. ⚠ Set "Emulated Display Card" to virtio-gpu-pci —
+     UTM's default (virtio-ramfb) has no Ubuntu console driver and
+     stays BLANK (20260901-#7, qemu-args diff). Habit: hide console
+     windows (Cmd-H), don't close them.''')
 
 
 def stage_boot(static_ip, args):
