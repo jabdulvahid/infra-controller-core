@@ -32,10 +32,17 @@ echo "Extracting tools/nico-dev into ${TOP}..."
 git checkout FETCH_HEAD -- tools/nico-dev
 git reset -q tools/nico-dev
 
-EXCLUDE="$(git rev-parse --git-common-dir)/info/exclude"
-if ! grep -qx 'tools/nico-dev/' "$EXCLUDE" 2>/dev/null; then
-    echo 'tools/nico-dev/' >> "$EXCLUDE"
-    echo "Added tools/nico-dev/ to $(basename "$EXCLUDE") (local-only ignore)."
+# Do NOT exclude when tools/nico-dev is TRACKED here (the maintainer's
+# own fork checkout on the nico-dev branch) — an exclude there hides
+# tracked-file work from add -A (bit its own maintainer, 2026-09-01).
+if git ls-files --error-unmatch tools/nico-dev >/dev/null 2>&1; then
+    echo "tools/nico-dev is tracked in this checkout — skipping the ignore."
+else
+    EXCLUDE="$(git rev-parse --git-common-dir)/info/exclude"
+    if ! grep -qx 'tools/nico-dev/' "$EXCLUDE" 2>/dev/null; then
+        echo 'tools/nico-dev/' >> "$EXCLUDE"
+        echo "Added tools/nico-dev/ to $(basename "$EXCLUDE") (local-only ignore)."
+    fi
 fi
 
 SHA="$(git rev-parse --short FETCH_HEAD)"
