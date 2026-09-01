@@ -332,6 +332,12 @@ end tell'''
     # No drive resize here: UTM scripting can't resize an existing drive
     # (guest size ignored at make-time; absent from fetched drive records;
     # -10006 on update — 20260828-#3). The disk is grown at stage image.
+    if not sys.stdin.isatty():
+        print('  (non-interactive run: skipping the Settings pause — no '
+              'share Path set.\n   Fine for smoke/throwaway VMs; a real '
+              'dev VM needs Sharing → Path set\n   in UTM Settings before '
+              'prepare-vm runs.)')
+        return
     print(f'''
   MANUAL STEP — you are about to open UTM Settings anyway:
     UTM → {args.name} → Settings
