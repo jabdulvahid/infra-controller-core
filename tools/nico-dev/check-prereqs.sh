@@ -21,7 +21,7 @@ echo "── nico-dev prerequisites (base) ──"
 
 case "$(uname -m)" in
   arm64)  ok "Apple Silicon (arm64)" ;;
-  x86_64) ok "Intel Mac (x86_64) — supported; note: first source build is slow on older CPUs" ;;
+  x86_64) ok "Intel Mac (x86_64) — best-effort, NOT a supported target (arch plumbing shared with the Linux port); expect slowness" ;;
   *)      bad "unsupported arch: $(uname -m)" "nico-dev supports arm64 and x86_64 Macs" ;;
 esac
 
