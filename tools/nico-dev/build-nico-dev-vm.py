@@ -229,13 +229,15 @@ final_message: "nico-dev base VM ready: ssh {args.user}@{static_ip}"
     # enp0s1-named stanza only worked by colliding-and-merging with the
     # fallback's id). Bonus: applies at EARLY boot, so ssh/.{static_ip}
     # is up in the first minute — before package installs — even on slow
-    # networks. driver-match keeps it name-agnostic across arches.
+    # networks. Match by NAME GLOB en* — predictable naming makes
+    # every ethernet en* on every arch/card; driver-matching broke on
+    # x86 where UTM's default NIC is e1000, not virtio (20260901-#9).
     (seed_dir / 'network-config').write_text(f'''\
 version: 2
 ethernets:
   nic0:
     match:
-      driver: virtio_net
+      name: en*
     dhcp4: false
     addresses: [{static_ip}/24]
     routes:
