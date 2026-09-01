@@ -42,6 +42,7 @@ UBUNTU_RELEASE = '26.04'
 HOST_ARCH = platform.machine()                    # 'arm64' | 'x86_64'
 IMG_ARCH = 'arm64' if HOST_ARCH == 'arm64' else 'amd64'   # Ubuntu image name
 QEMU_ARCH = 'aarch64' if HOST_ARCH == 'arm64' else 'x86_64'
+SERIAL_TTY = 'ttyAMA0' if HOST_ARCH == 'arm64' else 'ttyS0'
 CLOUD_IMG_URL = (f'https://cloud-images.ubuntu.com/releases/{UBUNTU_RELEASE}/'
                  f'release/ubuntu-{UBUNTU_RELEASE}-server-cloudimg-{IMG_ARCH}.img')
 CACHE_DIR = Path.home() / '.cache' / 'nico-dev'
@@ -218,6 +219,7 @@ growpart:
 runcmd:
   - systemctl enable --now qemu-guest-agent
   - systemctl enable --now docker
+  - systemctl enable --now serial-getty@{SERIAL_TTY}.service || true
 final_message: "nico-dev base VM ready: ssh {args.user}@{static_ip}"
 ''')
     # Static IP as the seed's network-config — cloud-init renders THIS
