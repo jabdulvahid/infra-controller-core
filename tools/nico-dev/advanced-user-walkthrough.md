@@ -8,8 +8,15 @@ pushed is world-readable, hence the scrub gate below.
 
 Jasmeer drafted each step; Claude reviewed.
 
-**REWORKED 2026-09-01 — the worktree model (supersedes the sequence
-below; README carries the user-facing version; validation run pending):**
+**REWORKED 2026-09-01 — the worktree model. VALIDATED SAME DAY:** fresh
+teardown → worktree + graft → devup-vm1.yaml (ngc: group, vm: mem_mb
+8192) → dev-up end to end, from home. Proved live: seed network-config
+(ssh <2 min), cloud-init wait banner (the apt race fix, observed
+working), curl/step retries + settle pauses, new sizing tiers, the 8GB
+run tier (full stack up), and two arch-pass regressions caught+fixed
+in-flight (20260901-#4 netplan stanza loss, #6 kea triplet — healed via
+--from ngc + rollout restart without teardown). Registry: 20260901-#1..#6.
+(Original notes below, kept for the drafting history:)
 1. `mkdir -p ~/nico-tests/vm1/shared` — a folder per VM.
 2. Primary nico clone anywhere (e.g. ~/projects/infra-controller) — no
    longer required to live in a share.
