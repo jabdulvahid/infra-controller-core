@@ -357,16 +357,18 @@ else
 fi
 
 RAM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
-if [[ "${RAM_GB}" -lt 15 ]]; then
-    echo "  WARNING: RAM is ${RAM_GB}GB — 16GB recommended (k8s + fabric + Nico pods)"
+# Tiers (measured 2026-09-01: running stack uses ~5G): 8G runs the sim,
+# 12G is the comfortable dev default. Warn only below the run tier.
+if [[ "${RAM_GB}" -lt 7 ]]; then
+    echo "  WARNING: RAM is ${RAM_GB}GB — 8GB minimum to run, 12GB recommended"
     BELOW=1
 else
-    echo "  RAM    : ${RAM_GB}GB ✓"
+    echo "  RAM    : ${RAM_GB}GB ✓ (8GB runs the sim; 12GB comfortable)"
 fi
 
 CPUS=$(nproc)
-if [[ "${CPUS}" -lt 8 ]]; then
-    echo "  WARNING: CPUs is ${CPUS} — 8 recommended"
+if [[ "${CPUS}" -lt 4 ]]; then
+    echo "  WARNING: CPUs is ${CPUS} — 4 minimum, 6 recommended"
     BELOW=1
 else
     echo "  CPUs   : ${CPUS} ✓"
@@ -396,6 +398,15 @@ fi
 echo ""
 
 # ── System packages ───────────────────────────────────────────────────────────
+# The seed network-config brings ssh up EARLY — cloud-init may still be
+# mid-install (20260901-#5: apt lock held by its apt-get). Wait it out.
+if command -v cloud-init >/dev/null 2>&1; then
+    CI_STATE="$(cloud-init status 2>/dev/null || true)"
+    if echo "${CI_STATE}" | grep -q 'running'; then
+        echo "=== Waiting for first-boot cloud-init to finish (package installs) ==="
+        cloud-init status --wait || true
+    fi
+fi
 echo "=== Installing system packages ==="
 sudo apt-get update -q
 sudo apt-get install -y -q \
