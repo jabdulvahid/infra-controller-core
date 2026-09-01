@@ -215,28 +215,32 @@ packages:
 growpart:
   mode: auto
   devices: ['/']
-write_files:
-  - path: /etc/netplan/60-nico-dev-static.yaml
-    permissions: '0600'
-    content: |
-      network:
-        version: 2
-        ethernets:
-          nic0:
-            match:
-              driver: virtio_net
-            dhcp4: false
-            addresses: [{static_ip}/24]
-            routes:
-              - to: default
-                via: {gateway}
-            nameservers:
-              addresses: [{gateway}]
 runcmd:
-  - netplan apply
   - systemctl enable --now qemu-guest-agent
   - systemctl enable --now docker
 final_message: "nico-dev base VM ready: ssh {args.user}@{static_ip}"
+''')
+    # Static IP as the seed's network-config — cloud-init renders THIS
+    # instead of its fallback DHCP stanza (20260901-#4: a write_files
+    # netplan under a different stanza id LOSES to the fallback — networkd
+    # applies only the first matching .network file in sort order; the old
+    # enp0s1-named stanza only worked by colliding-and-merging with the
+    # fallback's id). Bonus: applies at EARLY boot, so ssh/.{static_ip}
+    # is up in the first minute — before package installs — even on slow
+    # networks. driver-match keeps it name-agnostic across arches.
+    (seed_dir / 'network-config').write_text(f'''\
+version: 2
+ethernets:
+  nic0:
+    match:
+      driver: virtio_net
+    dhcp4: false
+    addresses: [{static_ip}/24]
+    routes:
+      - to: default
+        via: {gateway}
+    nameservers:
+      addresses: [{gateway}]
 ''')
 
     iso = work / f'{args.name}-seed.iso'
