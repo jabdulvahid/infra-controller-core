@@ -89,6 +89,32 @@ def preflight(args):
     return probs
 
 
+def octet_warnings(args):
+    """Non-fatal: does the Mac already route the chosen octets somewhere?
+    A corp VPN or LAN using <underlay>.x/<overlay>.x means the site VIPs
+    become unreachable (or worse, you talk to something real). Probes one
+    representative address per prefix; a specific (non-default) route that
+    is NOT our own VM route is a clash."""
+    warns = []
+    for kind, probe in (('underlay', f'{args.underlay}.133.1.17'),
+                        ('overlay', f'{args.overlay}.150.0.1')):
+        r = subprocess.run(['route', '-n', 'get', probe],
+                           capture_output=True, text=True)
+        dest = gw = ''
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line.startswith('destination:'):
+                dest = line.split(':', 1)[1].strip()
+            elif line.startswith('gateway:'):
+                gw = line.split(':', 1)[1].strip()
+        if dest and dest != 'default' and gw != args.ip:
+            warns.append(
+                f'{kind} octet {getattr(args, kind)}: your Mac already '
+                f'routes {probe} ({dest} via {gw or "link"}) — likely a '
+                f'VPN/LAN clash; consider a different --{kind}')
+    return warns
+
+
 def stale_known_hosts(ip):
     """Hosts (the IP + any /etc/hosts names for it) with known_hosts
     entries. When the run CREATES the VM, any such entry is guaranteed
@@ -335,6 +361,8 @@ def main():
         for pr in probs:
             print(f'  ✗ {pr}', file=sys.stderr)
         raise SystemExit(1)
+    for w in octet_warnings(args):
+        print(f'  ⚠ {w}')
 
     # Fresh-VM runs: pre-existing known_hosts entries for the VM's IP (or
     # its /etc/hosts names) are guaranteed stale — scrub instead of letting
