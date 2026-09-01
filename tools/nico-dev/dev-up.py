@@ -153,7 +153,8 @@ def build_steps(args):
           + (['--ip', args.ip_explicit] if args.ip_explicit else [])],
          'The vm step is rerun-safe and self-healing (issues 20260828-#2..#4).\n'
          'Common: share Path not set in UTM (GUI step), ssh timeout →\n'
-         'utmctl attach ' + args.name + ' for the serial console.'),
+         'utmctl attach ' + args.name + ' prints the serial PTY path\n'
+         '(attach itself is unimplemented); then: screen <pty> 115200.'),
 
         ('prep', 'Mac', 'Prepare the VM (mounts, tools, ssh keys)',
          [['bash', NICO_DEV / 'prepare-vm.sh', 'init',
