@@ -436,7 +436,7 @@ echo "  fuse user_allow_other ✓"
 echo ""
 echo "=== Installing Docker ==="
 if ! command -v docker &>/dev/null; then
-    curl -fsSL https://get.docker.com | sudo bash
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 https://get.docker.com | sudo bash
     sudo usermod -aG docker "${REAL_USER}"
     sudo systemctl enable --now docker
     echo "  Docker installed ✓"
@@ -468,7 +468,7 @@ if ! command -v clab &>/dev/null; then
     # Download to a file and CHECK it — `bash -c "$(curl -sL …)"` with a failed
     # curl becomes `bash -c ""` (exit 0) and reports success while installing
     # nothing. That exact silent failure shipped a clab-less VM once.
-    curl -fsSL https://get.containerlab.dev -o /tmp/clab-install.sh
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 https://get.containerlab.dev -o /tmp/clab-install.sh
     if [[ ! -s /tmp/clab-install.sh ]]; then
         echo "  ERROR: could not download the ContainerLab installer" >&2
         exit 1
@@ -487,7 +487,7 @@ echo "  ContainerLab installed ✓ ($(clab version 2>/dev/null | grep -m1 -oE 'v
 echo ""
 echo "=== Installing Helm ==="
 if ! command -v helm &>/dev/null; then
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o /tmp/get-helm-3
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o /tmp/get-helm-3
     if [[ ! -s /tmp/get-helm-3 ]]; then
         echo "  ERROR: could not download the Helm installer" >&2
         exit 1
@@ -505,9 +505,9 @@ echo "  Helm installed ✓ ($(helm version --short 2>/dev/null || echo present))
 echo ""
 echo "=== Installing kubectl ==="
 if ! command -v kubectl &>/dev/null; then
-    KUBE_VER=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+    KUBE_VER=$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 https://dl.k8s.io/release/stable.txt)
     KARCH=$(uname -m); [ "$KARCH" = "aarch64" ] && KARCH=arm64 || KARCH=amd64
-    curl -fsSL -o /tmp/kubectl \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/kubectl \
         "https://dl.k8s.io/release/${KUBE_VER}/bin/linux/${KARCH}/kubectl"
     sudo install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
     rm /tmp/kubectl
