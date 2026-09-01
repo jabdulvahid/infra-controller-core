@@ -117,7 +117,8 @@ one; `--dry-run` prints the plan):
    before boot.
 4. **boot** — `utmctl start`, then waits for SSH (first boot runs
    cloud-init package installs: expect ~3–5 min; 15-min budget, after which
-   it points you at `utmctl attach <name>` for the serial console).
+   it points you at the serial console: `utmctl attach <name>` prints the
+   PTY path — attach itself is unimplemented — then `screen <pty> 115200`).
 
 Done looks like: `Base VM ready: ssh nico@192.168.64.126`.
 

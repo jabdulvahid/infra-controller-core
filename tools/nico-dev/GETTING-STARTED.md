@@ -70,7 +70,7 @@ is healthy.
 
 | Symptom | Cause → fix |
 |---|---|
-| No SSH at all, ever | Your Mac's UTM subnet differs from the baked IP. Serial console: `/Applications/UTM.app/Contents/MacOS/utmctl attach <vm>` → adjust `/etc/netplan` to your host's vmnet subnet |
+| No SSH at all, ever | Your Mac's UTM subnet differs from the baked IP. Serial console: `utmctl attach <vm>` prints the PTY path (attach itself is unimplemented) → `screen <pty> 115200` → adjust `/etc/netplan` to your host's vmnet subnet |
 | GUI/VIP times out from the Mac | The route (step 3) is missing — re-add it |
 | GUI/VIP **connection refused**, pods all Running | Clone cold-start quirk: `kubectl rollout restart deployment/nico-api -n nico-system`, wait ~30 s |
 | Pods stuck Pending/ImagePull | Shouldn't happen — all images are baked in. If it does, report it |
