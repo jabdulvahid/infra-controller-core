@@ -338,14 +338,13 @@ end tell'''
      What you get: the VM mounts this folder — your repos, site config,
      and tools all flow through it. Mode is already VirtFS; only the
      Path needs you (macOS does not allow scripts to set it).''')
-    print('''  2. Devices → New → Serial → Mode: Built-in Terminal  (OPTIONAL)
-     What you get: a TEXT console window on double-click — rescue
-     access when ssh is unreachable. ⚠ WARNING (20260901-#7): CLOSING
-     that window STOPS THE VM — hide it (Cmd-H) or minimize, never
-     close. Safer rescue path, no window to mis-close: a pty serial
-     (Mode: Pseudo-TTY) read from your terminal via
-     `utmctl attach <vm>` (prints the PTY path) → `screen <pty> 115200`
-     — quitting screen never touches the VM.''')
+    print('''  2. Devices → New → Display  (OPTIONAL, recommended)
+     What you get: a TEXT login console on double-click (Ubuntu server
+     runs a getty on tty1/framebuffer automatically — no graphics
+     stack involved) — rescue access when ssh is unreachable. Verified
+     the right device empirically (20260901-#7): the Built-in Terminal
+     serial window stays blank AND closing it STOPS the VM. Habit
+     regardless: hide console windows (Cmd-H), don't close them.''')
 
 
 def stage_boot(static_ip, args):
