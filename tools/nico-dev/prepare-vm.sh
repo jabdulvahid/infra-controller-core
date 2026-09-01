@@ -495,8 +495,9 @@ echo ""
 echo "=== Installing kubectl ==="
 if ! command -v kubectl &>/dev/null; then
     KUBE_VER=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
+    KARCH=$(uname -m); [ "$KARCH" = "aarch64" ] && KARCH=arm64 || KARCH=amd64
     curl -fsSL -o /tmp/kubectl \
-        "https://dl.k8s.io/release/${KUBE_VER}/bin/linux/arm64/kubectl"
+        "https://dl.k8s.io/release/${KUBE_VER}/bin/linux/${KARCH}/kubectl"
     sudo install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
     rm /tmp/kubectl
     echo "  kubectl installed ✓"

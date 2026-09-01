@@ -19,9 +19,11 @@ bad()  { printf '  \342\234\227 %s\n     fix: %s\n' "$1" "$2"; FAIL=1; }
 
 echo "── nico-dev prerequisites (base) ──"
 
-[ "$(uname -m)" = "arm64" ] \
-  && ok "Apple Silicon (arm64)" \
-  || bad "this Mac is $(uname -m)" "nico-dev needs an Apple Silicon Mac (M1+)"
+case "$(uname -m)" in
+  arm64)  ok "Apple Silicon (arm64)" ;;
+  x86_64) ok "Intel Mac (x86_64) — supported; note: first source build is slow on older CPUs" ;;
+  *)      bad "unsupported arch: $(uname -m)" "nico-dev supports arm64 and x86_64 Macs" ;;
+esac
 
 AVAIL_GB=$(df -g "$HOME" | awk 'NR==2 {print $4}')
 NEED=40; [ "$BUILD" = 1 ] && NEED=100

@@ -11,13 +11,14 @@ Usage:
   python3 build-dev-nico-mac.py <site> --tag latest --push-only
 
 Build sequence (ARM64, native on Apple Silicon):
-  1. build-container-aarch64   dev/docker/Dockerfile.build-container-aarch64
+  1. build-container-<arch>    dev/docker/Dockerfile.build-container-{aarch64|x86_64}
   2. runtime-dev               nico-dev-docker/Dockerfile.runtime-dev  (no fluent-bit)
   3. nico:<tag>                nico-dev-docker/Dockerfile.nico-dev     (no CI gates)
   4. Push all three to localhost:<port>
 """
 
 import argparse
+import platform
 import shutil
 import subprocess
 import sys
@@ -98,6 +99,12 @@ def docker_push(tag):
     print(f'  {tag} pushed ✓')
 
 
+# Host arch drives the whole build: Apple Silicon → aarch64/arm64,
+# Intel → x86_64/amd64. The repo carries build containers for both.
+MACHINE = 'aarch64' if platform.machine() == 'arm64' else 'x86_64'
+DOCKER_ARCH = 'arm64' if platform.machine() == 'arm64' else 'amd64'
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('site', help='Site folder or site yaml path')
@@ -138,8 +145,8 @@ def main():
         sys.exit(1)
 
     push_reg    = f'localhost:{reg_port}'
-    build_ctr   = f'{push_reg}/carbide-build:aarch64'
-    runtime_ctr = f'{push_reg}/carbide-runtime:aarch64'
+    build_ctr   = f'{push_reg}/carbide-build:{MACHINE}'
+    runtime_ctr = f'{push_reg}/carbide-runtime:{MACHINE}'
     nico_img    = f'{push_reg}/nico:{args.tag}'
 
     # Docker reachable? (colima not started is the usual cause on Mac)
@@ -182,12 +189,12 @@ def main():
             shutil.copy2(this_dir / name, repo_dev_dir / name)
 
         try:
-            print('\nStep 2: Build build-container-aarch64...')
+            print(f'\nStep 2: Build build-container-{MACHINE}...')
             docker_build(
                 tag=build_ctr,
-                dockerfile=docker_dir / 'Dockerfile.build-container-aarch64',
+                dockerfile=docker_dir / f'Dockerfile.build-container-{MACHINE}',
                 context=repo_path,
-                label='build-container-aarch64 (Rust compiler)',
+                label=f'build-container-{MACHINE} (Rust compiler)',
             )
 
             print('\nStep 3: Build runtime-dev...')
@@ -248,14 +255,14 @@ def main():
             'nico-rest-api', 'nico-rest-workflow', 'nico-rest-site-manager',
             'nico-rest-site-agent', 'nico-rest-db', 'nico-rest-cert-manager',
         ]
-        print(f'\nStep 4b: Building NICo REST images (Go, arm64) → {push_reg}...')
+        print(f'\nStep 4b: Building NICo REST images (Go, {DOCKER_ARCH}) → {push_reg}...')
         for i, image in enumerate(rest_images, 1):
             print(f'\n  [{i}/{len(rest_images)}] {image}:{args.tag}')
             r = subprocess.run(
-                ['docker', 'buildx', 'build', '--platform', 'linux/arm64',
+                ['docker', 'buildx', 'build', '--platform', f'linux/{DOCKER_ARCH}',
                  '--push',
                  '--build-arg', 'TARGETOS=linux',
-                 '--build-arg', 'TARGETARCH=arm64',
+                 '--build-arg', f'TARGETARCH={DOCKER_ARCH}',
                  '-t', f'{push_reg}/{image}:{args.tag}',
                  '-f', f'docker/production/Dockerfile.{image}', '.'],
                 cwd=rest_dir)
