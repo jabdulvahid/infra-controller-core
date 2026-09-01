@@ -89,7 +89,8 @@ be simulated locally): UTM's shared-network subnet is vmnet-assigned per
 host (persisted in com.apple.vmnet.plist). Ours is 192.168.64.0/24; a Mac
 with a conflict (e.g. Wi-Fi on that range) gets a different subnet and
 the image's BAKED STATIC IP is then off-subnet — no SSH, looks bricked.
-Escape hatch: `utmctl attach <vm>` (serial console) → fix netplan to the
+Escape hatch: `utmctl attach <vm>` prints the serial PTY (attach is
+unimplemented) → `screen <pty> 115200` → fix netplan to the
 host's actual subnet. Belongs in the one-pager's troubleshooting box.
 
 ## Resume note

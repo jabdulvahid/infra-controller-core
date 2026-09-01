@@ -336,7 +336,8 @@ end tell'''
      What you get: a console window when you double-click the VM in
      UTM — handy when ssh is unreachable (boot or network issues).
      Without it the VM is headless: ssh only. A New → Serial device
-     additionally enables `utmctl attach` from the terminal.''')
+     additionally enables a serial console from the terminal
+     (utmctl attach prints its PTY path; then: screen <pty> 115200).''')
 
 
 def stage_boot(static_ip, args):
@@ -354,7 +355,9 @@ def stage_boot(static_ip, args):
         time.sleep(10)
     else:
         raise SystemExit(f'Error: ssh not reachable at {static_ip} after 15 min '
-                         f'— check the UTM console (utmctl attach {args.name})')
+                         f'— serial console: utmctl attach {args.name} prints '
+                         f'the PTY path (attach itself is unimplemented), '
+                         f'then: screen <pty> 115200')
     print(f'''
 {'=' * 60}
   Base VM ready:  ssh {args.user}@{static_ip}   (key auth, or the password)
