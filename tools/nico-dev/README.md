@@ -115,6 +115,15 @@ modes, and gives the exact resume command (`dev-up.py --config ...
 
 ## After bring-up
 
+- **Admin CLI, no build needed** (novice path — the binary ships inside
+  the api container; it's Linux arm64, so this runs on the VM):
+  ```bash
+  ssh <user>@<vm-ip>
+  ~/mac/<repo>/tools/nico-dev/get-admin-cli.sh ~/mac/sites/<dc>/<site>
+  ~/mac/sites/<dc>/<site>/run-admin-cli.sh version
+  ```
+  (extracts the binary to /usr/local/bin, issues client certs via the
+  cluster's vault, and writes a VM-side run-admin-cli.sh wrapper)
 - `ndev.py <share>/sites/<dc>/<site>` — site status; `fabric verify` for
   the full fabric health check (run VM-side for fabric/DPU detail)
 - The dev loop on your branch: edit → `build-dev-nico-mac.py <site> --tag t2`
