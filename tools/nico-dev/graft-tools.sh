@@ -34,7 +34,10 @@ done
 # Stable channel: newest validated-* tag on the fork; falls back to the
 # branch tip when none exist yet.
 if [[ "$MODE" == "stable" ]]; then
-    LATEST=$(git ls-remote --tags "$FORK_URL" 'refs/tags/validated-*' 2>/dev/null              | awk -F/ '{print $NF}' | sort | tail -1)
+    # ls-remote lists annotated tags twice — the tag AND its peeled form
+    # (name^{}), which is not a fetchable refspec and sorts last
+    # (20260901-#8, found on the x86 maiden bootstrap). Drop peeled rows.
+    LATEST=$(git ls-remote --tags "$FORK_URL" 'refs/tags/validated-*' 2>/dev/null              | awk -F/ '{print $NF}' | grep -v '\^{}$' | sort | tail -1)
     if [[ -n "$LATEST" ]]; then
         REF="$LATEST"
         echo "Channel: STABLE ($REF) — use --edge for the branch tip."
