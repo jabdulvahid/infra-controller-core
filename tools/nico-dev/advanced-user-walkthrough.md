@@ -24,6 +24,10 @@ below; README carries the user-facing version; validation run pending):**
    mode; ngc-tags.py picks the NGC tag (dates, arm64, --before paging);
    preflight warns on octet clashes with the Mac's routing table.
 6. `dev-up.py --config devup-<site>.yaml`.
+7. Admin CLI without building (novice path conclusion):
+   VM-side `get-admin-cli.sh <site>` — extracts the arm64 binary
+   from the api container + VM-side certs/wrapper. VERIFIED
+   LIVE 2026-09-01 on the vm1 env.
 Rulings baked in en route: tools distributed by graft (fork branch =
 distribution channel, not a source repo); primary-clone freedom; source
 mode builds the WORKTREE branch; upstream clone (NVIDIA/infra-controller)
