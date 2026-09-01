@@ -69,8 +69,15 @@ SSH=(ssh -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes
      -i "$PRIV" -o ConnectTimeout=10 "nico@$IP")
 
 echo "━━ smoke: cloud-init must reach done ━━"
-"${SSH[@]}" 'timeout 900 cloud-init status --wait >/dev/null; cloud-init status' \
-    | grep -q 'done' || { echo "✗ SMOKE FAIL: cloud-init not done" >&2; exit 1; }
+CI_OUT=$("${SSH[@]}" 'timeout 900 cloud-init status --wait >/dev/null 2>&1; cloud-init status --long' || true)
+if ! echo "$CI_OUT" | grep -q 'done'; then
+    echo "✗ SMOKE FAIL: cloud-init not done. Status:" >&2
+    echo "$CI_OUT" | sed 's/^/    /' >&2
+    echo "  Recent cloud-init errors/warnings:" >&2
+    "${SSH[@]}" 'sudo grep -iE "error|warn|fail" /var/log/cloud-init.log | tail -10' \
+        2>/dev/null | sed 's/^/    /' >&2 || true
+    exit 1
+fi
 echo "  cloud-init done ✓"
 
 echo "━━ smoke: static IP + arch ━━"
