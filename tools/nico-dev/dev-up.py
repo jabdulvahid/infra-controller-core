@@ -29,6 +29,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 NICO_DEV = Path(__file__).resolve().parent
@@ -298,6 +299,12 @@ def main():
     p.add_argument('--token-env', default='NGC_API_KEY', metavar='VAR',
                    help='NAME of the env var holding your NGC API key '
                         '(default: NGC_API_KEY; the value is never printed)')
+    p.add_argument('--step-delay', type=int, default=10, metavar='SECS',
+                   help='settle pause between steps (default 10; 0 disables) '
+                        '— nico-sim lesson: give bridges/DHCP/pods a beat')
+    p.add_argument('--retries', type=int, default=1, metavar='N',
+                   help='retry a failed step command N times, 15s apart, '
+                        'before giving up (default 1; steps are idempotent)')
     p.add_argument('--config', default=None, metavar='FILE',
                    help='yaml file supplying any of these options as '
                         'defaults (keys = option names with underscores); '
@@ -411,11 +418,23 @@ def main():
         print('\n(dry run — nothing executed)')
         return
 
+    first = True
     for key, where, desc, cmds, recovery in steps[start:stop + 1]:
+        if not first and args.step_delay > 0:
+            print(f'  (settling {args.step_delay}s before the next step...)')
+            time.sleep(args.step_delay)
+        first = False
         n = keys.index(key) + 1
         print(f'━━ Step {n}/{len(keys)}: {key} [{where}] — {desc} ━━')
         for cmd in cmds:
             rc = sh(cmd)
+            attempt = 0
+            while rc != 0 and attempt < args.retries:
+                attempt += 1
+                print(f'  ✗ exit {rc} — retrying in 15s '
+                      f'({attempt}/{args.retries}; steps are idempotent)...')
+                time.sleep(15)
+                rc = sh(cmd)
             if rc != 0:
                 if args.config:
                     resume = f'{sys.argv[0]} --config {args.config} --from {key}'
