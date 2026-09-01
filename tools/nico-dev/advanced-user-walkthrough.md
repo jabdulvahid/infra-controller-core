@@ -8,6 +8,27 @@ pushed is world-readable, hence the scrub gate below.
 
 Jasmeer drafted each step; Claude reviewed.
 
+**REWORKED 2026-09-01 — the worktree model (supersedes the sequence
+below; README carries the user-facing version; validation run pending):**
+1. `mkdir -p ~/nico-tests/vm1/shared` — a folder per VM.
+2. Primary nico clone anywhere (e.g. ~/projects/infra-controller) — no
+   longer required to live in a share.
+3. `git worktree add -b vm1-work ~/nico-tests/vm1/shared/infra-controller
+   origin/main` — one branch per VM, disposable.
+4. Graft the tools into the worktree: `curl -fsSL <raw fork
+   URL>/graft-tools.sh | bash` (or the 4 git commands it wraps —
+   fetch FETCH_HEAD checkout of tools/nico-dev, reset, common-dir
+   exclude). Untracked + ignored = PR-safe. Rerun = update.
+5. `cd tools/nico-dev`, PATH export, check-prereqs.sh; copy
+   devup-example.yaml → devup-<site>.yaml, EDIT THESE block, one deploy
+   mode; ngc-tags.py picks the NGC tag (dates, arm64, --before paging);
+   preflight warns on octet clashes with the Mac's routing table.
+6. `dev-up.py --config devup-<site>.yaml`.
+Rulings baked in en route: tools distributed by graft (fork branch =
+distribution channel, not a source repo); primary-clone freedom; source
+mode builds the WORKTREE branch; upstream clone (NVIDIA/infra-controller)
+is the no-clone-yet starting point.
+
 **Status: EXECUTED AND PASSED 2026-08-31** — fresh clone of the pushed
 branch into ~/nico-tests/vm1/shared, config file (devup-vm1.yaml, NGC
 mode ngc: group), one dev-up command; dev-up.py's maiden end-to-end
