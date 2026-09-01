@@ -20,13 +20,15 @@ mkdir -p ~/nico-tests/vm1/shared
 cd ~/nico-tests/vm1/shared
 git clone -b nico-dev https://github.com/jabdulvahid/infra-controller-core.git
 cd infra-controller-core/tools/nico-dev
+export PATH="$PATH:$(pwd)"   # all tools callable by name (add to your
+                             # shell profile to make it permanent)
 ```
 
 **2. Check prerequisites** (Apple Silicon Mac; UTM; disk):
 
 ```bash
-bash check-prereqs.sh            # just run the sim
-bash check-prereqs.sh --build    # also build nico from source
+check-prereqs.sh            # just run the sim
+check-prereqs.sh --build    # also build nico from source
 ```
 
 Fix any ✗ (each line says how). Note: the first VM-building run pops a
@@ -39,7 +41,7 @@ names, two IP octets, and your deploy mode:
 ```bash
 cp devup-example.yaml my-vm.yaml
 vi my-vm.yaml
-python3 dev-up.py --config my-vm.yaml
+dev-up.py --config my-vm.yaml
 ```
 
 Any option can still be overridden on the command line
@@ -75,7 +77,7 @@ each is also independently runnable — see [how-to.md](how-to.md).
 
 ## After bring-up
 
-- `ndev.py <share>/sites/<dc>/<site>` — site status; `fabric verify` for the
+- `ndev.py <share>/sites/<dc>/<site>` (callable by name with the PATH export) — site status; `fabric verify` for the
   full fabric health check
 - Dev cycle (rebuild + redeploy), native Mac CLIs, MAT fleet runs,
   golden-image baking: all in [how-to.md](how-to.md)

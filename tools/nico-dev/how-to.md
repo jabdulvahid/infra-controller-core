@@ -40,6 +40,9 @@ over the unchanged unit scripts:
 python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/dev-up.py --name nico-dev-1
 ```
 
+All scripts are directly executable — add `tools/nico-dev` to PATH and
+drop the `python3`/`bash` prefixes shown in this doc.
+
 Steps `vm → prep → site → fabric → cp → build → registry → nico → route`
 (`--list` shows them). Three interactive moments remain by design: the UTM
 share **Path** (GUI, not scriptable — 20260828-#2) + Enter, the VM
