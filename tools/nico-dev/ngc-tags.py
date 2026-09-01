@@ -24,8 +24,7 @@ PR_RE = re.compile(r'^v?(\d+)\.(\d+)\.(\d+)-pr-(\d+)-g[0-9a-f]+$')
 REL_RE = re.compile(r'^v(\d+)\.(\d+)\.(\d+)$')
 
 
-def fetch_tags(image, key):
-    host, path = image.split('/', 1)
+def get_token(host, path, key):
     basic = base64.b64encode(f'$oauthtoken:{key}'.encode()).decode()
     req = urllib.request.Request(
         f'https://{host}/proxy_auth?scope=repository:{path}:pull',
@@ -34,10 +33,56 @@ def fetch_tags(image, key):
     if not token:
         raise SystemExit('Error: could not get a registry token — check the '
                          'key (needs registry-read on the image org/team).')
+    return token
+
+
+def fetch_tags(host, path, token):
     req = urllib.request.Request(
         f'https://{host}/v2/{path}/tags/list',
         headers={'Authorization': f'Bearer {token}'})
     return json.load(urllib.request.urlopen(req)).get('tags', [])
+
+
+MANIFEST_ACCEPT = ', '.join([
+    'application/vnd.oci.image.index.v1+json',
+    'application/vnd.docker.distribution.manifest.list.v2+json',
+    'application/vnd.oci.image.manifest.v1+json',
+    'application/vnd.docker.distribution.manifest.v2+json',
+])
+
+
+def _get(host, path, kind, ref, token):
+    req = urllib.request.Request(
+        f'https://{host}/v2/{path}/{kind}/{ref}',
+        headers={'Authorization': f'Bearer {token}',
+                 'Accept': MANIFEST_ACCEPT})
+    return json.load(urllib.request.urlopen(req))
+
+
+def tag_info(host, path, tag, token):
+    """(architectures, build date) for a tag, via manifest (index or
+    single) → image config blob's `created` timestamp."""
+    try:
+        doc = _get(host, path, 'manifests', tag, token)
+        archs, digest = [], None
+        if 'manifests' in doc:                       # multi-arch index
+            plats = {m.get('platform', {}).get('architecture', '?'):
+                     m.get('digest') for m in doc['manifests']}
+            plats.pop('unknown', None)               # attestation entries
+            archs = sorted(plats)
+            digest = plats.get('arm64') or next(iter(plats.values()), None)
+            if digest:
+                doc = _get(host, path, 'manifests', digest, token)
+        cfg_digest = doc.get('config', {}).get('digest')
+        created = ''
+        if cfg_digest:
+            cfg = _get(host, path, 'blobs', cfg_digest, token)
+            if not archs:
+                archs = [cfg.get('architecture', '?')]
+            created = (cfg.get('created') or '')[:10]
+        return archs, created
+    except Exception:
+        return [], ''
 
 
 def main():
@@ -70,7 +115,9 @@ def main():
         raise SystemExit(f'Error: env var {args.token_env} is empty or unset '
                          f'(the NGC API key).')
 
-    tags = set(fetch_tags(args.ngc_image, key))
+    host, path = args.ngc_image.split('/', 1)
+    token = get_token(host, path, key)
+    tags = set(fetch_tags(host, path, token))
 
     prs = sorted(
         (t for t in tags if PR_RE.match(t)),
@@ -81,11 +128,12 @@ def main():
 
     print(f'{args.ngc_image}\n')
     print(f'Latest {min(args.n, len(prs))} PR builds (newest last — these '
-          f'track main):')
+          f'track main; arm64 required for nico-dev):')
     for t in prs[-args.n:]:
-        arm = '✓ arm64' if (f'{t}-arm64' in tags or t.endswith('-arm64')) \
-              else '? arm64 unverified (docker manifest inspect to confirm)'
-        print(f'  {t:42s} {arm}')
+        a, created = tag_info(host, path, t, token)
+        mark = ('✓ arm64' if 'arm64' in a
+                else f'✗ {"/".join(a)} only' if a else '? manifest unreadable')
+        print(f'  {t:42s} {created:10s}  {mark}')
     if rels:
         print(f'\nLatest release: {rels[-1]}'
               + (f'   (previous: {", ".join(rels[-4:-1][::-1])})'
