@@ -98,6 +98,9 @@ def main():
                    help='devup yaml — reads ngc.nico_image / ngc.token_env')
     p.add_argument('-n', type=int, default=10,
                    help='how many PR builds to show (default 10)')
+    p.add_argument('--before', metavar='TAG', default=None,
+                   help='page back: show the window ending just BEFORE this '
+                        'tag (exact or unique substring, e.g. pr-441)')
     args = p.parse_args()
 
     if args.config:
@@ -126,10 +129,25 @@ def main():
         (t for t in tags if REL_RE.match(t)),
         key=lambda t: tuple(int(x) for x in REL_RE.match(t).groups()))
 
+    window = prs
+    if args.before:
+        hits = [i for i, t in enumerate(prs) if args.before in t]
+        if not hits:
+            raise SystemExit(f'Error: no PR build matches "{args.before}".')
+        if len(hits) > 1 and args.before not in (prs[i] for i in hits):
+            raise SystemExit(
+                f'Error: "{args.before}" is ambiguous ({len(hits)} matches, '
+                f'e.g. {prs[hits[0]]}, {prs[hits[1]]}) — be more specific.')
+        window = prs[:hits[0]]
+        if not window:
+            raise SystemExit(f'Nothing older than {prs[hits[0]]}.')
+
     print(f'{args.ngc_image}\n')
-    print(f'Latest {min(args.n, len(prs))} PR builds (newest last — these '
-          f'track main; arm64 required for nico-dev):')
-    for t in prs[-args.n:]:
+    where = (f'PR builds before {prs[hits[0]]}' if args.before
+             else 'Latest PR builds')
+    print(f'{where} ({min(args.n, len(window))} of {len(prs)}, newest last; '
+          f'arm64 required for nico-dev; --before <tag> pages back):')
+    for t in window[-args.n:]:
         a, created = tag_info(host, path, t, token)
         mark = ('✓ arm64' if 'arm64' in a
                 else f'✗ {"/".join(a)} only' if a else '? manifest unreadable')
