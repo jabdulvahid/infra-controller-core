@@ -260,6 +260,7 @@ def vm_exists(name):
 
 def stage_vm(disk, iso, args):
     print('\n── Stage: vm (UTM AppleScript create) ──')
+    devices_added = False
     # `qemu configuration` has NO share-path property (sdef: only
     # `directory share mode`; a `directory shares` list exists only on
     # apple configuration — passing it here is the -1700 coercion error,
@@ -316,21 +317,26 @@ tell application "UTM"
 end tell'''
         r = run(['osascript', '-e', extras], 'display+serial add',
                 capture=True, check=False)
-        if r.returncode == 0:
+        devices_added = (r.returncode == 0)
+        if devices_added:
             print('  Display + serial console added ✓')
-        else:
-            print('  (could not add display/serial via scripting — for a '
-                  'console window, add a Display device in\n   UTM → '
-                  'Settings → Devices → New; ssh is unaffected)')
     # No drive resize here: UTM scripting can't resize an existing drive
     # (guest size ignored at make-time; absent from fetched drive records;
     # -10006 on update — 20260828-#3). The disk is grown at stage image.
     print(f'''
-  ONE MANUAL STEP (AppleScript cannot set the share path):
-    UTM → {args.name} → Settings → Sharing → Path → Browse →
-    select  {args.share}
-  (Share mode is already VirtFS. Do it now — before boot — so §2's
-  prepare-vm.sh finds the share. The VM works without it until then.)''')
+  MANUAL STEP — you are about to open UTM Settings anyway:
+    UTM → {args.name} → Settings
+
+  1. Sharing → Path → Browse → select  {args.share}     (REQUIRED)
+     What you get: the VM mounts this folder — your repos, site config,
+     and tools all flow through it. Mode is already VirtFS; only the
+     Path needs you (macOS does not allow scripts to set it).''')
+    if not devices_added:
+        print('''  2. Devices → New → Display  (OPTIONAL, recommended)
+     What you get: a console window when you double-click the VM in
+     UTM — handy when ssh is unreachable (boot or network issues).
+     Without it the VM is headless: ssh only. A New → Serial device
+     additionally enables `utmctl attach` from the terminal.''')
 
 
 def stage_boot(static_ip, args):
