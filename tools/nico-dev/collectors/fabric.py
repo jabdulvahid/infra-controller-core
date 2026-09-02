@@ -99,6 +99,18 @@ def collect(site):
     clab_name = site['clab_name']
     dc_name   = site['dc_name']
 
+    # Off-host: the fabric is the VM's docker. Never consult the host's —
+    # on a Linux host with same-named leftovers (nico-sim's clab-dc1-*) it
+    # reported a stale fabric as ✓ 11/11 (20260902-#8).
+    if not site.get('_on_vm', True):
+        return {
+            'containers': [], 'switches': [], 'bridges': [],
+            'total_switches': 0, 'running_switches': 0, 'leafs': [],
+            'spines': [], 'ss_bgp_total': 0, 'ss_bgp_estab': 0,
+            'offhost': True,
+            'error': 'fabric is VM-side — run ndev on the VM for switch/BGP detail',
+        }
+
     all_containers = _get_containers(clab_name)
     bridges        = _get_bridges(dc_name)
 

@@ -73,6 +73,23 @@ def _load_ips(site_folder):
     return {}
 
 
+def _on_vm(site_folder, sim):
+    """Which side is ndev running on? The site yaml records BOTH views of the
+    share — nico_vm_folder (guest path) and nico_mac_folder (host path) — and
+    the resolved site folder lives under exactly one of them. The platform is
+    NOT the tell: a Linux host looks just like the VM, and with same-named
+    leftovers in the host's docker it happily reported someone else's fabric
+    (20260902-#8). Unknown layout → assume VM (the historical default)."""
+    import os
+    import sys
+    sf = os.path.realpath(site_folder) + '/'
+    for key, answer in (('nico_vm_folder', True), ('nico_mac_folder', False)):
+        root = sim.get(key)
+        if root and sf.startswith(os.path.realpath(os.path.expanduser(root)).rstrip('/') + '/'):
+            return answer
+    return sys.platform != 'darwin'
+
+
 def collect(site_arg):
     """
     Return a dict with all site-level facts derived from the nico-dev site yaml.
@@ -107,6 +124,7 @@ def collect(site_arg):
         '_site_yaml':   site_yaml,
         '_kubeconfig':  _find_kubeconfig(sim, site_folder),
         '_ips':         _load_ips(site_folder),
+        '_on_vm':       _on_vm(site_folder, sim),   # False = off-host (Mac/Linux host)
 
         'dc_name':      dc_name,
         'sitename':     sitename,
