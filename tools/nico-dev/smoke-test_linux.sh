@@ -78,10 +78,12 @@ echo "━━ smoke: static IP + arch + share ━━"
 GUEST_ARCH=$("${SSH[@]}" uname -m)
 [[ "$GUEST_ARCH" == "$(uname -m)" ]] \
     || { echo "✗ SMOKE FAIL: guest arch $GUEST_ARCH != host $(uname -m)" >&2; exit 1; }
-# the virtiofs device must be visible (mount itself is prepare-vm's job)
-"${SSH[@]}" 'grep -qs share /sys/bus/virtio/devices/*/mount_tag' \
-    || { echo "✗ SMOKE FAIL: virtiofs share tag not visible in the guest" >&2; exit 1; }
-echo "  $IP on NIC ✓   guest arch $GUEST_ARCH ✓   share tag visible ✓"
+# the virtiofs share must actually MOUNT (its tag lives in
+# /sys/fs/virtiofs/*/tag, not 9p's mount_tag — first Linux smoke found the
+# wrong probe). A real mount is the authoritative check.
+"${SSH[@]}" 'sudo mkdir -p /mnt/smoke && sudo mount -t virtiofs share /mnt/smoke && ls /mnt/smoke >/dev/null && sudo umount /mnt/smoke' \
+    || { echo "✗ SMOKE FAIL: virtiofs share does not mount in the guest" >&2; exit 1; }
+echo "  $IP on NIC ✓   guest arch $GUEST_ARCH ✓   virtiofs share mounts ✓"
 
 PASS=1
 echo ""
