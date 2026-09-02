@@ -129,9 +129,25 @@ implementation for your host. What differs on Linux:
 - **Prereqs**: `sudo apt install libvirt-daemon-system libvirt-clients
   virtinst cloud-image-utils qemu-utils virtiofsd` + `sudo usermod -aG
   libvirt,kvm $USER` (relogin). `check-prereqs.sh --build` grades the box.
+- **Graft with `--edge`** until a `validated-*` tag that includes the
+  Linux port exists — the stable channel predates it and would hand you
+  Mac-only tools ("UTM not found").
 - **No GUI step**: the share path is set by `virt-install`; the run never
   pauses. Share transport is virtiofs (mounted at the same `/mnt/mac` →
-  `~/mac` — the name is historical, kept on purpose).
+  `~/mac` — the name is historical, kept on purpose). virtiofs passes real
+  uids through, and the VM user is created with YOUR uid, so files the
+  guest writes into the share are yours on the host (the `~/mac` view is
+  mounted with `create-for-user`, so even sudo-run deploy scripts write
+  as you).
+- **Firewall**: a `ufw` default-deny host is fine as-is. The VM reaches
+  the host registry on `192.168.64.1:5000` through Docker's own
+  published-port rules, and libvirt inserts its own accept rules for the
+  `nico-nat` subnet (DHCP/DNS). A `timed out` on the registry step, as
+  opposed to `connection refused`, is the sign of a firewall that does
+  block it: `sudo ufw route allow in on virbr-nico to any port 5000 proto tcp`.
+- **Docker flavour**: Docker with the containerd image store pushes OCI
+  manifests into the local registry (the "Not all multiplatform-content
+  is present" Info lines are normal — only your host's arch was pulled).
 - **Networking**: the builder creates a dedicated libvirt NAT network
   `nico-nat` @ `192.168.64.0/24` (bridge `virbr-nico`) — identical
   addressing to the Mac, never touching your existing networks — and a
@@ -152,7 +168,8 @@ implementation for your host. What differs on Linux:
 ## After bring-up
 
 - **Admin CLI, no build needed** (novice path — the binary ships inside
-  the api container; it's Linux arm64, so this runs on the VM):
+  the api container; it's a Linux binary for the VM's arch, so this runs
+  on the VM):
   ```bash
   ssh <user>@<vm-ip>
   ~/mac/<repo>/tools/nico-dev/get-admin-cli.sh ~/mac/sites/<dc>/<site>
@@ -160,8 +177,14 @@ implementation for your host. What differs on Linux:
   ```
   (extracts the binary to /usr/local/bin, issues client certs via the
   cluster's vault, and writes a VM-side run-admin-cli.sh wrapper)
-- `ndev.py <share>/sites/<dc>/<site>` — site status; `fabric verify` for
-  the full fabric health check (run VM-side for fabric/DPU detail)
+- `ndev.py <share>/sites/<dc>/<site>` — site status. Run on the host it
+  shows the cluster (via kubeconfig) and reports fabric/BGP/DPU as
+  `n/a (VM-side)`; run it on the VM (`~/mac/sites/<dc>/<site>`) for those,
+  and `fabric verify` for the full fabric health check
+- **Admin UI from a headless Linux host**: tunnel from your laptop,
+  `ssh -L 8443:<underlay>.133.1.17:443 <linux-host>` → `https://localhost:8443/admin`
+  (if the login flow redirects to the VIP itself, use
+  `sshuttle -r <linux-host> <underlay>.133.1.0/27` instead)
 - The dev loop on your branch: edit → `build-dev-nico-mac.py <site> --tag t2`
   → `redeploy-dev-nico.py <site> --tag t2` (minutes per cycle)
 - Native Mac CLIs, MAT fleet runs, golden-image baking: [how-to.md](how-to.md)
