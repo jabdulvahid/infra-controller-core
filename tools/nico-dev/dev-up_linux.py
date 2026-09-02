@@ -36,6 +36,7 @@ from pathlib import Path
 NICO_DEV = Path(__file__).resolve().parent
 # When invoked via the platform dispatcher, show ITS name in hints.
 ENTRY = os.environ.get('NICO_DEV_ENTRY', sys.argv[0])
+BRIDGE = 'virbr-nico'          # nico-nat's host bridge (build-nico-dev-vm_linux)
 
 # Output styling — colour only on a terminal; NO_COLOR / FORCE_COLOR honoured.
 _TTY = ((sys.stdout.isatty() or os.environ.get('FORCE_COLOR'))
@@ -108,12 +109,12 @@ def preflight(args):
         check(img, f'NGC image {img}',
               'no NGC image: set ngc.nico_image in the config '
               'or export NICO_NGC_IMAGE')
-        check(subprocess.run(['docker', 'info'],
-                             capture_output=True).returncode == 0,
-              'docker daemon reachable (the ngc step retags via the host registry)',
-              'docker daemon not reachable (the ngc step needs '
-              'the host registry): sudo systemctl start docker; '
-              'sudo usermod -aG docker $USER')
+    # every mode needs the host registry (registry step) → docker daemon
+    check(subprocess.run(['docker', 'info'],
+                         capture_output=True).returncode == 0,
+          'docker daemon reachable (runs the host registry the VM pulls from)',
+          'docker daemon not reachable (the registry step needs it): '
+          'sudo systemctl start docker; sudo usermod -aG docker $USER')
     check(subprocess.run(['virsh', '-c', 'qemu:///system', 'list'],
                          capture_output=True).returncode == 0,
           'libvirt reachable without sudo (qemu:///system)',
@@ -230,9 +231,16 @@ def build_steps(args):
          'Needs the docker daemon and DISK: the builder cache grows fast —\n'
          '`docker builder prune -af`. First build 20-40 min, later 2-5 min.'),
 
-        ('registry', 'VM', 'Verify registry reachable from the VM',
-         [vm_ssh(args, f'python3 {ndev_vm}/ndev.py {site_vm} registry verify')],
-         'If containerd shows ✗: the config_path fix in how-to §7.'),
+        ('registry', 'Host+VM', 'Start the host registry, verify it from the VM',
+         [[sys.executable, NICO_DEV / 'ensure-registry.py'],
+          vm_ssh(args, f'python3 {ndev_vm}/ndev.py {site_vm} registry verify')],
+         f'"{args.ip.rsplit(".", 1)[0]}.1:5000 timed out" (not refused) = the '
+         f'host FIREWALL drops VM→host traffic:\n'
+         f'  sudo ufw allow in on {BRIDGE} to any port 5000   (or the iptables '
+         f'INPUT equivalent)\n'
+         f'"connection refused" = no registry container: docker ps -a; '
+         f'ensure-registry.py.\n'
+         f'If containerd shows ✗: the config_path fix in how-to §7.'),
 
         ('nico', 'VM', 'Deploy the nico stack',
          [vm_ssh(args, f'sudo python3 {ndev_vm}/deploy-dev-nico.py'
