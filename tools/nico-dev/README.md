@@ -112,8 +112,9 @@ let a script do; instructions are printed), then: VM built from the
 Ubuntu cloud image (~90 s), tools and mounts, site config, fabric,
 Kubernetes, images (NGC pull, or your source build), deploy, and finally
 a Mac `sudo` prompt to route the service VIPs. Done looks like a URL:
-`https://<underlay>.133.1.17/admin`. NGC lane at the office: **~30 min
-total, zero compilation.**
+`https://<underlay>.133.1.17/admin`. NGC lane, zero compilation: **~30 min
+on a Mac at the office; 13 min on a Linux host on the corp network**
+(measured 2026-09-02, empty host to Done).
 
 **If a step fails:** the runner stops, prints that step's known failure
 modes, and gives the exact resume command (`dev-up.py --config ...
@@ -129,9 +130,6 @@ implementation for your host. What differs on Linux:
 - **Prereqs**: `sudo apt install libvirt-daemon-system libvirt-clients
   virtinst cloud-image-utils qemu-utils virtiofsd` + `sudo usermod -aG
   libvirt,kvm $USER` (relogin). `check-prereqs.sh --build` grades the box.
-- **Graft with `--edge`** until a `validated-*` tag that includes the
-  Linux port exists — the stable channel predates it and would hand you
-  Mac-only tools ("UTM not found").
 - **No GUI step**: the share path is set by `virt-install`; the run never
   pauses. Share transport is virtiofs (mounted at the same `/mnt/mac` →
   `~/mac` — the name is historical, kept on purpose). virtiofs passes real
