@@ -107,11 +107,12 @@ def preflight(args):
         check(img, f'NGC image {img}',
               'no NGC image: set ngc.nico_image in the config '
               'or export NICO_NGC_IMAGE')
-        check(subprocess.run(['docker', 'info'],
-                             capture_output=True).returncode == 0,
-              'docker daemon reachable (the ngc step retags via the Mac registry)',
-              'docker daemon not reachable (the ngc step needs '
-              'the Mac registry): colima start --cpu 4 --memory 8')
+    # every mode needs the Mac registry (registry step) → docker daemon
+    check(subprocess.run(['docker', 'info'],
+                         capture_output=True).returncode == 0,
+          'docker daemon reachable (runs the Mac registry the VM pulls from)',
+          'docker daemon not reachable (the registry step needs it): '
+          'colima start --cpu 4 --memory 8')
     check(Path('/Applications/UTM.app/Contents/MacOS/utmctl').exists(),
           'UTM installed', 'UTM not found at /Applications/UTM.app')
     return checks
@@ -222,8 +223,11 @@ def build_steps(args):
          'the builder cache grows ~100GB/week — `docker builder prune -af`\n'
          '(20260827-#1). First build 20-40 min, later 2-5 min. how-to §6.'),
 
-        ('registry', 'VM', 'Verify registry reachable from the VM',
-         [vm_ssh(args, f'python3 {ndev_vm}/ndev.py {site_vm} registry verify')],
+        ('registry', 'Mac+VM', 'Start the Mac registry, verify it from the VM',
+         [[sys.executable, NICO_DEV / 'ensure-registry.py'],
+          vm_ssh(args, f'python3 {ndev_vm}/ndev.py {site_vm} registry verify')],
+         '"connection refused" = no registry container: docker ps -a; '
+         'colima running? ensure-registry.py.\n'
          'If containerd shows ✗: the config_path fix in how-to §7.'),
 
         ('nico', 'VM', 'Deploy the nico stack',
