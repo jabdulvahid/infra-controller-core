@@ -12,7 +12,7 @@
 #                 [--static-ip 192.168.64.126]
 #
 #            Share name defaults to "share", mount points are fixed:
-#              /mnt/mac  (9p)  and  ~/mac  (bindfs)
+#              /mnt/mac  (9p on UTM, virtiofs on libvirt)  and  ~/mac  (bindfs)
 #
 #   <share-name>  — Run on the VM (called automatically by init, or manually).
 #
@@ -60,17 +60,31 @@ if [[ "${1:-}" == "init" ]]; then
     echo "  (you will be prompted for the VM user password)"
     echo ""
 
-    # Mount the 9p share on the VM, then run this script from within it.
+    # The HOST decides the share filesystem — explicitly, no guest probing
+    # (the guest is Ubuntu on both platforms and cannot tell hypervisors
+    # apart): UTM shares are 9p (VirtFS); libvirt shares are virtiofs.
+    case "$(uname -s)" in
+        Darwin) SHARE_FS="9p" ;;
+        Linux)  SHARE_FS="virtiofs" ;;
+        *) echo "Error: unsupported host platform $(uname -s)" >&2; exit 1 ;;
+    esac
+    case "${SHARE_FS}" in
+        9p)       MOUNT_CMD="sudo mount -t 9p -o trans=virtio,version=9p2000.L,rw '${SHARE_NAME}' /mnt/mac" ;;
+        virtiofs) MOUNT_CMD="sudo mount -t virtiofs '${SHARE_NAME}' /mnt/mac" ;;
+    esac
+    echo "  share fs   : ${SHARE_FS}"
+
+    # Mount the share on the VM, then run this script from within it.
     # The script's location inside the share is DISCOVERED, not hardcoded —
     # nico-dev may live at <repo>/tools/nico-dev, nico-dev, or anywhere else.
     # -t allocates a TTY so sudo password prompts work interactively.
     ssh -t "${VM_USER}@${VM_IP}" \
         "sudo mkdir -p /mnt/mac && \
-         (mountpoint -q /mnt/mac || sudo mount -t 9p -o trans=virtio,version=9p2000.L,rw '${SHARE_NAME}' /mnt/mac) && \
+         (mountpoint -q /mnt/mac || ${MOUNT_CMD}) && \
          REMOTE_SCRIPT=\$(find /mnt/mac -maxdepth 4 -type f -name prepare-vm.sh 2>/dev/null | head -1) && \
          if [ -z \"\$REMOTE_SCRIPT\" ]; then echo 'ERROR: prepare-vm.sh not found in the share — is the nico-dev folder inside the shared directory?' >&2; exit 1; fi && \
          echo \"  running: \$REMOTE_SCRIPT\" && \
-         bash \"\$REMOTE_SCRIPT\" '${SHARE_NAME}'"
+         bash \"\$REMOTE_SCRIPT\" '${SHARE_NAME}' --fs '${SHARE_FS}'"
 
     echo ""
     echo "Step 2: Setting up passwordless SSH from Mac to VM..."
@@ -318,7 +332,15 @@ fi
 REAL_USER="${USER}"
 REAL_HOME="${HOME}"
 SHARE_NAME="${1:-}"
-MOUNT_9P="/mnt/mac"
+SHARE_FS=""
+shift || true
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --fs) SHARE_FS="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+MOUNT_9P="/mnt/mac"            # mount point name is historical — used on both platforms
 MOUNT_USER="${REAL_HOME}/mac"
 
 echo "=== nico-dev base VM setup ==="
@@ -338,7 +360,15 @@ if [[ -z "${SHARE_NAME}" ]]; then
         exit 1
     fi
 fi
-echo "  share: ${SHARE_NAME} → ${MOUNT_9P} → ${MOUNT_USER}"
+# ── Require the share filesystem — explicit, decided by the host ──────────────
+case "${SHARE_FS}" in
+    9p|virtiofs) ;;
+    "") echo "Error: --fs <9p|virtiofs> is required (init passes it: 9p on a Mac/UTM" >&2
+        echo "       host, virtiofs on a Linux/libvirt host). Run via 'prepare-vm.sh init'" >&2
+        echo "       or pass --fs explicitly." >&2; exit 1 ;;
+    *)  echo "Error: unsupported --fs '${SHARE_FS}' (9p|virtiofs)" >&2; exit 1 ;;
+esac
+echo "  share: ${SHARE_NAME} (${SHARE_FS}) → ${MOUNT_9P} → ${MOUNT_USER}"
 echo ""
 
 # ── Hardware preflight (advisory — recommended, not required) ─────────────────
@@ -579,10 +609,13 @@ echo "=== Mounting shared folder ==="
 sudo mkdir -p "${MOUNT_9P}"
 mkdir -p "${MOUNT_USER}"
 
-# Mount 9p share at /mnt/mac
+# Mount the share at /mnt/mac — filesystem chosen by the host (explicit)
 if ! mountpoint -q "${MOUNT_9P}"; then
-    sudo mount -t 9p -o trans=virtio,version=9p2000.L,rw "${SHARE_NAME}" "${MOUNT_9P}"
-    echo "  ${SHARE_NAME} → ${MOUNT_9P} mounted ✓"
+    case "${SHARE_FS}" in
+        9p)       sudo mount -t 9p -o trans=virtio,version=9p2000.L,rw "${SHARE_NAME}" "${MOUNT_9P}" ;;
+        virtiofs) sudo mount -t virtiofs "${SHARE_NAME}" "${MOUNT_9P}" ;;
+    esac
+    echo "  ${SHARE_NAME} → ${MOUNT_9P} mounted (${SHARE_FS}) ✓"
 else
     echo "  ${MOUNT_9P} already mounted ✓"
 fi
@@ -610,13 +643,16 @@ fi
 echo ""
 echo "=== Making mounts persistent ==="
 
-# 9p entry
-FSTAB_9P="${SHARE_NAME}  ${MOUNT_9P}  9p  trans=virtio,version=9p2000.L,rw,nofail,_netdev  0  0"
+# share entry (filesystem per host platform)
+case "${SHARE_FS}" in
+    9p)       FSTAB_9P="${SHARE_NAME}  ${MOUNT_9P}  9p  trans=virtio,version=9p2000.L,rw,nofail,_netdev  0  0" ;;
+    virtiofs) FSTAB_9P="${SHARE_NAME}  ${MOUNT_9P}  virtiofs  defaults,nofail,_netdev  0  0" ;;
+esac
 if ! grep -qF "${MOUNT_9P}" /etc/fstab; then
     echo "${FSTAB_9P}" | sudo tee -a /etc/fstab > /dev/null
-    echo "  9p entry added to /etc/fstab ✓"
+    echo "  ${SHARE_FS} entry added to /etc/fstab ✓"
 else
-    echo "  9p entry already in /etc/fstab ✓"
+    echo "  share entry already in /etc/fstab ✓"
 fi
 
 # bindfs entry
