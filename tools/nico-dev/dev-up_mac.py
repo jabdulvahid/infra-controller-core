@@ -36,6 +36,20 @@ NICO_DEV = Path(__file__).resolve().parent
 # When invoked via the platform dispatcher, show ITS name in hints.
 ENTRY = os.environ.get('NICO_DEV_ENTRY', sys.argv[0])
 
+# Output styling — colour only on a terminal; NO_COLOR / FORCE_COLOR honoured.
+_TTY = ((sys.stdout.isatty() or os.environ.get('FORCE_COLOR'))
+        and not os.environ.get('NO_COLOR'))
+
+
+def paint(code, s):
+    return f'\033[{code}m{s}\033[0m' if _TTY else s
+
+
+def green(s): return paint('32', s)
+def red(s): return paint('31', s)
+def yellow(s): return paint('33', s)
+def bold(s): return paint('1', s)
+
 # Self-locating defaults: when this script lives inside the share tree,
 # every layout flag is derivable from its own path.
 #   <share>/<repo>/tools/nico-dev  → fork-branch layout (repo = source too)
@@ -70,26 +84,37 @@ def vm_ssh(args, remote_cmd):
 
 def preflight(args):
     """Cheap Mac-side validation of resolved options — runs before ANY
-    step (and in --dry-run), so bad values fail here, not mid-run."""
-    probs = []
-    if args.ssh_key and not Path(args.ssh_key).expanduser().exists():
-        probs.append(f'ssh_key file not found: {args.ssh_key}')
-    if not Path(args.share).expanduser().is_dir():
-        probs.append(f'share folder does not exist: {args.share}')
+    step (and in --dry-run), so bad values fail here, not mid-run.
+    Returns [(ok, text)] — EVERY check, pass or fail, so the dry-run
+    shows what was verified, not just what broke."""
+    checks = []
+
+    def check(ok, good, bad):
+        checks.append((bool(ok), good if ok else bad))
+
+    if args.ssh_key:
+        check(Path(args.ssh_key).expanduser().exists(),
+              f'ssh key {args.ssh_key}',
+              f'ssh_key file not found: {args.ssh_key}')
+    check(Path(args.share).expanduser().is_dir(),
+          f'share folder {args.share}',
+          f'share folder does not exist: {args.share}')
     if args.ngc_tag:
-        if not os.environ.get(args.token_env):
-            probs.append(f'env var {args.token_env} is empty or unset '
-                         f'(the NGC API key)')
-        if not (args.ngc_image or os.environ.get('NICO_NGC_IMAGE')):
-            probs.append('no NGC image: set ngc.nico_image in the config '
-                         'or export NICO_NGC_IMAGE')
-        if subprocess.run(['docker', 'info'],
-                          capture_output=True).returncode != 0:
-            probs.append('docker daemon not reachable (the ngc step needs '
-                         'the Mac registry): colima start --cpu 4 --memory 8')
-    if not Path('/Applications/UTM.app/Contents/MacOS/utmctl').exists():
-        probs.append('UTM not found at /Applications/UTM.app')
-    return probs
+        check(os.environ.get(args.token_env),
+              f'NGC API key present in env var {args.token_env}',
+              f'env var {args.token_env} is empty or unset (the NGC API key)')
+        img = args.ngc_image or os.environ.get('NICO_NGC_IMAGE')
+        check(img, f'NGC image {img}',
+              'no NGC image: set ngc.nico_image in the config '
+              'or export NICO_NGC_IMAGE')
+        check(subprocess.run(['docker', 'info'],
+                             capture_output=True).returncode == 0,
+              'docker daemon reachable (the ngc step retags via the Mac registry)',
+              'docker daemon not reachable (the ngc step needs '
+              'the Mac registry): colima start --cpu 4 --memory 8')
+    check(Path('/Applications/UTM.app/Contents/MacOS/utmctl').exists(),
+          'UTM installed', 'UTM not found at /Applications/UTM.app')
+    return checks
 
 
 def octet_warnings(args):
@@ -384,40 +409,65 @@ def main():
     start = keys.index(args.from_step) if args.from_step else 0
     stop = keys.index(args.until_step) if args.until_step else len(keys) - 1
 
-    probs = preflight(args)
-    if probs:
-        for pr in probs:
-            print(f'  ✗ {pr}', file=sys.stderr)
-        raise SystemExit(1)
-    for w in octet_warnings(args):
-        print(f'  ⚠ {w}')
+    mode = (f'NGC pre-built, tag {args.ngc_tag}' if args.ngc_tag
+            else f'source build, tag {args.tag}')
+    print(bold(f'nico-dev — bring-up: {args.name} @ {args.ip}'))
+    print(f'  site {args.dc}/{args.site} (underlay {args.underlay}, '
+          f'overlay {args.overlay}) — {mode}')
 
+    # ── Preflight: every check listed, ✓ or ✗; warnings ⚠ ──────────────
+    print(f'\n{bold("Preflight")}')
+    checks = preflight(args)
+    for ok, text in checks:
+        print(f'  {green("✓") if ok else red("✗")} {text}')
+    warns = octet_warnings(args)
+    for w in warns:
+        print(f'  {yellow("⚠")} {w}')
+    if not warns:
+        print(f'  {green("✓")} octets {args.underlay}/{args.overlay} not '
+              f'already routed on this host')
     # Fresh-VM runs: pre-existing known_hosts entries for the VM's IP (or
     # its /etc/hosts names) are guaranteed stale — scrub instead of letting
     # step ssh die on a host-key mismatch mid-run.
+    failed = sum(1 for ok, _ in checks if not ok)
     if keys[start] == 'vm':
         stale = stale_known_hosts(args.ip)
-        if stale and args.dry_run:
-            print(f'  (would remove stale known_hosts entries for: '
-                  f'{", ".join(stale)} — a NEW VM gets a new host key)')
-        elif stale:
-            for h in stale:
-                subprocess.run(['ssh-keygen', '-R', h], capture_output=True)
-            print(f'  removed stale known_hosts entries: {", ".join(stale)}')
+        if stale:
+            scrub = not args.dry_run and not failed     # only if we'll proceed
+            verb = 'removing' if scrub else 'would remove'
+            print(f'  {yellow("⚠")} stale known_hosts entries for '
+                  f'{", ".join(stale)} — {verb} (a NEW VM gets a new host key)')
+            if scrub:
+                for h in stale:
+                    subprocess.run(['ssh-keygen', '-R', h], capture_output=True)
+        else:
+            print(f'  {green("✓")} no stale known_hosts entries for {args.ip}')
+    if failed and not args.dry_run:
+        raise SystemExit(red(f'\n✗ {failed} preflight problem(s) — fix the '
+                             f'✗ lines above and rerun.'))
 
-    print(f'nico-dev — bring-up: {args.name} @ {args.ip}')
-    mode = (f'NGC pre-built, tag {args.ngc_tag}' if args.ngc_tag
-            else f'source build, tag {args.tag}')
-    print(f'  site {args.dc}/{args.site} (underlay {args.underlay}, '
-          f'overlay {args.overlay}) — {mode}')
-    print(f'  steps: {" → ".join(keys[start:stop + 1])}\n')
+    # ── Plan ───────────────────────────────────────────────────────────
+    plan = steps[start:stop + 1]
+    print(f'\n{bold("Plan")} — {len(plan)} steps: '
+          f'{" → ".join(keys[start:stop + 1])}')
 
     if args.dry_run:
-        for key, where, desc, cmds, _ in steps[start:stop + 1]:
-            print(f'━━ {key} [{where}] — {desc}')
+        for key, where, desc, cmds, _ in plan:
+            n = keys.index(key) + 1
+            print(f'\n{bold(f"{n}/{len(keys)} {key}")} [{where}] — {desc}')
             for cmd in cmds:
-                print(f'  $ {" ".join(shlex.quote(str(c)) for c in cmd)}')
-        print('\n(dry run — nothing executed)')
+                print(f'    $ {" ".join(shlex.quote(str(c)) for c in cmd)}')
+        print('\n' + '━' * 64)
+        if failed:
+            print(red(f'✗ NOT READY — {failed} preflight problem(s); fix the '
+                      f'✗ lines above, then rerun --dry-run.'))
+            raise SystemExit(1)
+        note = f' ({len(warns)} warning(s) above — read them)' if warns else ''
+        go = ' '.join(shlex.quote(a) for a in
+                      [ENTRY] + [a for a in sys.argv[1:] if a != '--dry-run'])
+        print(green(f'✓ READY — preflight passed, {len(plan)} steps planned'
+                    f'{note}. Nothing was executed. Go:'))
+        print(f'    {go}')
         return
 
     first = True
@@ -427,7 +477,7 @@ def main():
             time.sleep(args.step_delay)
         first = False
         n = keys.index(key) + 1
-        print(f'━━ Step {n}/{len(keys)}: {key} [{where}] — {desc} ━━')
+        print(f'\n{bold(f"━━ Step {n}/{len(keys)}: {key}")} [{where}] — {desc} ━━')
         for cmd in cmds:
             rc = sh(cmd)
             attempt = 0
@@ -444,8 +494,9 @@ def main():
                     resume = (f'{ENTRY} --name {args.name} --from {key}'
                               + (f' --tag {args.tag}'
                                  if key in ('build', 'nico') else ''))
+                hdr = red(f'✗ Step "{key}" failed (exit {rc}).')
                 print(f'''
-✗ Step "{key}" failed (exit {rc}).
+{hdr}
 
 Recovery:
 {recovery}
@@ -456,7 +507,7 @@ Then resume with:
         print()
 
     print('=' * 60)
-    print(f'  Done. GUI: https://{args.underlay}.133.1.17/admin')
+    print(green(f'  ✓ Done. GUI: https://{args.underlay}.133.1.17/admin'))
     print(f'  KUBECONFIG=%s/sites/{args.dc}/{args.site}/{args.dc}-{args.site}.kubeconfig.yaml'
           % str(Path(args.share).expanduser()))
     print('=' * 60)

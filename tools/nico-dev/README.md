@@ -100,9 +100,11 @@ set `ip` — the VM address derives from your Mac's own UTM subnet;
 dev-up.py --config devup-mysite.yaml
 ```
 
-`--dry-run` first prints the exact, preflight-validated plan without
-running anything; `--list` names the steps; any command-line flag beats
-the config file.
+`--dry-run` first: it lists every preflight check (✓/✗/⚠), the numbered
+plan with the exact commands, and ends with a verdict — green **READY**
+plus the command to run, or red **NOT READY** with the ✗ lines to fix.
+Nothing is executed. `--list` names the steps; any command-line flag
+beats the config file.
 
 **What to expect:** an early pause to set the UTM share **Path** in the
 GUI (point it at `~/nico-tests/vm1/shared` — the one thing macOS won't
