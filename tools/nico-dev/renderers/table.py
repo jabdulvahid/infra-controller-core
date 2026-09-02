@@ -41,7 +41,10 @@ def render_info(site, fabric=None, dpu=None, cluster=None, bgp=None):
     lines.append(f'  {"kubeconfig":<18} {site["_kubeconfig"] or dim("not found")}')
     lines.append('')
 
-    if fabric:
+    if fabric and fabric.get('offhost'):
+        lines.append(f'  {"fabric":<18} '
+                     + dim('n/a (VM-side — run ndev on the VM)'))
+    elif fabric:
         sw_ok  = fabric['running_switches']
         sw_tot = fabric['total_switches']
         bgp_h  = _health(fabric['ss_bgp_estab'], fabric['ss_bgp_total'], 'BGP peers')
@@ -55,7 +58,7 @@ def render_info(site, fabric=None, dpu=None, cluster=None, bgp=None):
         lines.append(f'  {"":18} {"└── leafs":25} {len(leafs)}  ({leaf_names})')
 
     if dpu and dpu['running'] is None:
-        # Off-host (Mac): the DPU container is only visible from the VM.
+        # Off-host (Mac or Linux host): the DPU container is only visible from the VM.
         lines.append(f'  {"DPU stand-in":<18} '
                      + dim('n/a (VM-side — run ndev on the VM)'))
     elif dpu:

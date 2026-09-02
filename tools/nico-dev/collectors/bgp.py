@@ -101,6 +101,16 @@ def collect(site):
     """Collect BGP state from all fabric BGP speakers (switches + dpu-*)."""
     clab_name = site['clab_name']
 
+    # Off-host: never consult the host's docker — a Linux host with
+    # same-named leftovers (nico-sim's clab-dc1-*) reported THEIR sessions
+    # as this site's "✓ 62/62" (20260902-#8).
+    if not site.get('_on_vm', True):
+        return {
+            'nodes': {}, 'total_sessions': 0, 'established': 0,
+            'not_established': 0, 'switch_count': 0, 'offhost': True,
+            'error': 'BGP is VM-side — run ndev on the VM',
+        }
+
     r = subprocess.run(
         ['docker', 'ps', '--filter', f'name=clab-{clab_name}-',
          '--format', '{{.Names}}'],

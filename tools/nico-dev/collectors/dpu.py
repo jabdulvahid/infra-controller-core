@@ -64,10 +64,11 @@ def collect(site):
 
     container_name = f'clab-{clab_name}-dpu-1'
 
-    # Off-host (Mac): the clab containers live in the VM's docker, not the
-    # Mac's — "not found" here means "can't see", not "stopped". Report n/a
-    # like the fabric collector does (20260826-#5 polish, closed 20260831).
-    if sys.platform == 'darwin':
+    # Off-host: the clab containers live in the VM's docker, not the host's
+    # — "not found" here means "can't see", not "stopped" (20260826-#5), and
+    # a same-named leftover on a Linux host would be the WRONG container
+    # (20260902-#8). The site collector decides which side we are on.
+    if not site.get('_on_vm', True):
         return {
             'name': container_name, 'running': None,
             'fabric_ip': ips.get('dpu_lcp_ip', ''),
