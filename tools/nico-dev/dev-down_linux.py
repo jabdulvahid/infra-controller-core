@@ -112,9 +112,10 @@ def main():
             print(f'  shared infra removed: network {NET_NAME}, pool {POOL} ✓')
 
     print(f'''
-Done. Not touched (yours to keep or remove):
-  share/site folder{"  " + ledger["share"] if ledger.get("share") else ""}
-  git worktree (git worktree remove <path>)''')
+Done. dev-down never touches your data — left exactly as they were:
+  share folder    {ledger.get("share", "(see your config)")}
+  site folder     <share>/sites/<dc>/<site>   (delete yourself if unwanted)
+  git worktree    remove yourself if unwanted: git worktree remove <path>''')
 
 
 if __name__ == '__main__':
