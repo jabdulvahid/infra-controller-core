@@ -492,15 +492,36 @@ def main():
     registry = f'{reg_host}:{reg_port}'
     nico_tag = cfg.get('registry', {}).get('nico_tag', 'latest')
     print(f'\nPreflight: checking registry {registry} has nico:{nico_tag}...')
+    # Accept EVERY manifest flavour: Docker with the containerd image store
+    # (Linux hosts) pushes OCI manifests, and registry:2 answers a request
+    # whose Accept lacks the OCI type with 404 "manifest unknown" — which
+    # looked like "image not found" on the first Linux bring-up (20260902-#6).
+    accept = ', '.join([
+        'application/vnd.oci.image.manifest.v1+json',
+        'application/vnd.oci.image.index.v1+json',
+        'application/vnd.docker.distribution.manifest.v2+json',
+        'application/vnd.docker.distribution.manifest.list.v2+json'])
+    reach = subprocess.run(['curl', '-sf', '-m', '10', f'http://{registry}/v2/'],
+                           capture_output=True, text=True)
+    if reach.returncode != 0:
+        print(f'  Error: cannot reach registry {registry} from here (curl exit '
+              f'{reach.returncode})', file=sys.stderr)
+        print('  ensure-registry.py starts it; from a Linux host a timeout means '
+              'the firewall drops host↔registry traffic.', file=sys.stderr)
+        sys.exit(1)
     r = subprocess.run(
-        ['curl', '-sf',
-         f'http://{registry}/v2/nico/manifests/{nico_tag}',
-         '-H', 'Accept: application/vnd.docker.distribution.manifest.v2+json'],
+        ['curl', '-sf', '-m', '10', '-o', '/dev/null',
+         f'http://{registry}/v2/nico/manifests/{nico_tag}', '-H', f'Accept: {accept}'],
         capture_output=True, text=True
     )
     if r.returncode != 0:
-        print(f'  Error: cannot reach {registry} or image nico:{nico_tag} not found', file=sys.stderr)
-        print(f'  Run build-dev-nico-mac.py to build and push the image first.', file=sys.stderr)
+        tags = subprocess.run(['curl', '-s', '-m', '10',
+                               f'http://{registry}/v2/nico/tags/list'],
+                              capture_output=True, text=True).stdout.strip()
+        print(f'  Error: image nico:{nico_tag} not in registry {registry}', file=sys.stderr)
+        print(f'  tags present: {tags or "(none)"}', file=sys.stderr)
+        print(f'  Run build-dev-nico-mac.py (source) or deploy-nico-from-ngc.py '
+              f'(NGC) to push it first.', file=sys.stderr)
         sys.exit(1)
     print(f'  registry {registry}/nico:{nico_tag} ✓')
 
