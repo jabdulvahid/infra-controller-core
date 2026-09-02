@@ -1,6 +1,7 @@
-# nico-dev — a complete Infra Controller dev environment on a Mac
+# nico-dev — a complete Infra Controller dev environment on a Mac or Linux host
 
-One UTM virtual machine on an Apple Silicon Mac, carrying a Kubernetes
+One VM — UTM on an Apple Silicon Mac, or libvirt/KVM on a Linux host —
+carrying a Kubernetes
 cluster, the full nico stack, a simulated FRR datacenter fabric, and the
 MAT fleet simulator. Built for the laptop-only dev loop: edit on the Mac,
 build on the Mac, deploy into the VM, watch machines come Ready.
@@ -115,6 +116,36 @@ total, zero compilation.**
 **If a step fails:** the runner stops, prints that step's known failure
 modes, and gives the exact resume command (`dev-up.py --config ...
 --from <step>`). Every step is safe to rerun.
+
+## Linux hosts (libvirt/KVM)
+
+Same commands, same config file, same addressing — `dev-up.py`,
+`smoke-test.sh`, `check-prereqs.sh`, `build-nico-dev-vm.py` and
+`dev-down.py` are platform dispatchers that run the `_linux` (or `_mac`)
+implementation for your host. What differs on Linux:
+
+- **Prereqs**: `sudo apt install libvirt-daemon-system libvirt-clients
+  virtinst cloud-image-utils qemu-utils virtiofsd` + `sudo usermod -aG
+  libvirt,kvm $USER` (relogin). `check-prereqs.sh --build` grades the box.
+- **No GUI step**: the share path is set by `virt-install`; the run never
+  pauses. Share transport is virtiofs (mounted at the same `/mnt/mac` →
+  `~/mac` — the name is historical, kept on purpose).
+- **Networking**: the builder creates a dedicated libvirt NAT network
+  `nico-nat` @ `192.168.64.0/24` (bridge `virbr-nico`) — identical
+  addressing to the Mac, never touching your existing networks — and a
+  `nico-dev` storage pool for VM disks (system QEMU can't read `$HOME`).
+  Both are created loudly and recorded; `--subnet` overrides if that
+  range is taken (`check-prereqs.sh` checks).
+- **Console**: `virsh console <vm>` (a getty is enabled in the seed).
+- **Route**: `sudo ip route replace <underlay>.133.1.0/27 via <vm-ip>`
+  (dev-up does it; not persistent across host reboots).
+- **Several sites on one box**: give each a distinct `host_num`, octets,
+  and `name` (default `nico-<dc>-<site>` coming in Phase 3). Everything
+  created is namespaced and listed in `~/.nico-dev/vms/<vm>.yaml`.
+- **Teardown**: `dev-down.py --config devup-mysite.yaml` — the one
+  command: domain, its volumes, its route, its ledger entry. Your site
+  folder and worktree are never deleted. `--remove-infra` drops
+  `nico-nat`/pool when no nico VMs remain.
 
 ## After bring-up
 

@@ -55,6 +55,13 @@ command -v cloud-localds >/dev/null 2>&1 \
 command -v qemu-img >/dev/null 2>&1 \
   && ok "qemu-img present" \
   || bad "qemu-img not found" "sudo apt install qemu-utils"
+# virtiofs: the share transport on Linux (9p is wrong under system-mode
+# QEMU — guest-written files would be owned by libvirt-qemu on the host)
+if [ -x /usr/libexec/virtiofsd ] || [ -x /usr/lib/qemu/virtiofsd ] || command -v virtiofsd >/dev/null 2>&1; then
+  ok "virtiofsd present (share transport)"
+else
+  bad "virtiofsd not found" "sudo apt install virtiofsd"
+fi
 
 # Subnet plan: nico-nat wants 192.168.64.0/24 — is it already taken?
 SUBNET_IN_ROUTES=$(ip route 2>/dev/null | grep -c '192\.168\.64\.' || true)
