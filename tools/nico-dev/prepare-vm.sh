@@ -620,11 +620,27 @@ else
     echo "  ${MOUNT_9P} already mounted ✓"
 fi
 
-# Bindfs remount at ~/mac with correct user ownership
+# Bindfs remount at ~/mac with correct user ownership — the ownership
+# model differs per share filesystem, so the options are an EXPLICIT branch:
+#   9p (UTM/Mac):   the share shows Mac files as root inside the guest and
+#                   writes root's files back as the Mac user → map root↔user
+#                   both ways (--map's reverse rule: user's creations are
+#                   stored as root, which 9p turns into the Mac user).
+#   virtiofs (Linux/libvirt): REAL uids pass through, and the VM user's uid
+#                   equals the host user's by design. --map=root/user would
+#                   store the user's creations as ROOT on the host, locking
+#                   the host user out of its own site folder (20260902-#7).
+#                   Instead: no map; everything created through ~/mac (also
+#                   by sudo-run deploy scripts) is created AS the user, so
+#                   the host sees its own uid on every file.
+REAL_GROUP="$(id -gn "${REAL_USER}")"
+case "${SHARE_FS}" in
+    9p)       BINDFS_OPTS="map=root/${REAL_USER}:@root/@${REAL_GROUP}" ;;
+    virtiofs) BINDFS_OPTS="create-for-user=${REAL_USER},create-for-group=${REAL_GROUP}" ;;
+esac
 if ! mountpoint -q "${MOUNT_USER}"; then
-    sudo bindfs --map=root/"${REAL_USER}":@root/@"${REAL_USER}" \
-        "${MOUNT_9P}" "${MOUNT_USER}"
-    echo "  ${MOUNT_9P} → ${MOUNT_USER} (bindfs) mounted ✓"
+    sudo bindfs -o "${BINDFS_OPTS}" "${MOUNT_9P}" "${MOUNT_USER}"
+    echo "  ${MOUNT_9P} → ${MOUNT_USER} (bindfs, ${BINDFS_OPTS}) mounted ✓"
 else
     echo "  ${MOUNT_USER} already mounted ✓"
 fi
@@ -656,7 +672,7 @@ else
 fi
 
 # bindfs entry
-FSTAB_BINDFS="${MOUNT_9P}  ${MOUNT_USER}  fuse.bindfs  map=root/${REAL_USER}:@root/@${REAL_USER},nofail,x-systemd.requires=${MOUNT_9P}  0  0"
+FSTAB_BINDFS="${MOUNT_9P}  ${MOUNT_USER}  fuse.bindfs  ${BINDFS_OPTS},nofail,x-systemd.requires=${MOUNT_9P}  0  0"
 if ! grep -qF "${MOUNT_USER}" /etc/fstab; then
     echo "${FSTAB_BINDFS}" | sudo tee -a /etc/fstab > /dev/null
     echo "  bindfs entry added to /etc/fstab ✓"
