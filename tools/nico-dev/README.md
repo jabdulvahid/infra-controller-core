@@ -89,6 +89,13 @@ vi devup-mysite.yaml
   **your worktree's branch** and deploys it; the full dev loop
   (20–40 min first build, minutes after).
 
+**Sizing** (`vm:` block): for **build-and-play** — deploy from NGC, use the
+site, no redeploys — 6 CPUs and 8 GB RAM are enough. For **code
+development** — source builds and redeploy cycles — give the VM **8+ CPUs
+and 16 GB+ RAM**: a fully deployed site commits ~90% of a 6-CPU node's
+CPU requests, and a rolling redeploy needs headroom for the surge pod
+(issues.md 20260903-#2). vCPUs are a ceiling, not a reservation.
+
 Octets become Mac-routed prefixes — pick ones your Mac doesn't use
 (VPN/LAN); dev-up preflight warns if the Mac already routes them. Do NOT
 set `ip` — the VM address derives from your Mac's own UTM subnet;
