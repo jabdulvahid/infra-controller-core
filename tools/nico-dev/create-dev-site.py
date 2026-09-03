@@ -55,11 +55,12 @@ def parse_args():
                    help='Mac registry host as seen from VM (default: 192.168.64.1)')
     p.add_argument('--registry-port',  type=int, default=5000,
                    help='Mac registry port (default: 5000)')
-    p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'evict-old'],
+    p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'scale-down-first'],
                    default='wait',
                    help='redeploy policy when a rollout cannot schedule its surge '
-                        'pod on a CPU-saturated node (default wait; evict-old '
-                        'deletes one old pod of that deployment) — 20260903-#2')
+                        'pod on a CPU-saturated node (default wait; scale-down-first '
+                        'temporarily rolls that deployment with maxSurge 0 / '
+                        'maxUnavailable 1 so an old pod goes first) — 20260903-#2')
     p.add_argument('--dry-run',        action='store_true',
                    help='Show what would be created without writing files')
     return p.parse_args()

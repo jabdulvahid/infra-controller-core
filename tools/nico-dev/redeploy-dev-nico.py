@@ -55,7 +55,7 @@ def _kubectl_json(args, env):
 
 def watch_rollout(ns, env, policy, timeout=600, poll=10):
     """Wait for every Deployment in ns to finish rolling; diagnose a surge
-    pod stuck on 'Insufficient cpu' and, with policy evict-old, free room by
+    pod stuck on 'Insufficient cpu' and, with policy scale-down-first, free room by
     deleting ONE old pod of that deployment (20260903-#2).
 
     Acts on the scheduler's verdict only — on a cluster with room the
@@ -65,12 +65,22 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
     import time
     start = time.time()
     warned = set()
-    # per-deployment eviction bookkeeping: (count, last eviction time). The
-    # OLD ReplicaSet recreates every pod we delete (maxUnavailable 0 keeps
-    # it whole until the new pod is Ready), so evictions must be rate-limited
-    # and capped, and must only ever target OLD ReplicaSets — the first
-    # version of this loop evicted new and old pods alternately (ping-pong).
-    evictions = {}
+    # scale-down-first: deployments whose strategy we patched, with the
+    # original strategy to restore. Deleting old pods (the first approach)
+    # was a coin toss — the OLD ReplicaSet recreates each deleted pod and its
+    # replacement kept winning the scheduler race against the surge pod.
+    # Switching the strategy to maxSurge 0 / maxUnavailable 1 makes the
+    # controller remove an old pod FIRST, so the new one always fits.
+    patched = {}
+
+    def restore_strategies():
+        import json
+        for dep, orig in patched.items():
+            subprocess.run(['kubectl', 'patch', 'deploy', dep, '-n', ns, '--type', 'merge',
+                            '-p', json.dumps({'spec': {'strategy': orig}})],
+                           env=env, capture_output=True)
+            print(f'  restored {dep} rollout strategy to the chart\'s ({orig})')
+
     while True:
         got = _kubectl_json(['get', 'deploy', '-n', ns], env)
         if got is None:
@@ -93,10 +103,12 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
                 pending.append(d['metadata']['name'])
         if not pending:
             print(f'  all deployments in {ns} rolled out ✓')
+            restore_strategies()
             return True
         if time.time() - start > timeout:
             print(f'Error: rollout still incomplete after {timeout}s: '
                   f'{", ".join(pending)}', file=sys.stderr)
+            restore_strategies()
             return False
 
         # Surge pods the scheduler refuses for lack of CPU
@@ -128,7 +140,7 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
                     if cur is None or revision(rs['metadata']['name']) > revision(cur):
                         newest_rs[o['name']] = rs['metadata']['name']
 
-        replicas_of = {d['metadata']['name']: d.get('spec', {}).get('replicas', 1) for d in deps}
+        strategy_of = {d['metadata']['name']: d.get('spec', {}).get('strategy', {}) for d in deps}
 
         for pod in pods:
             if pod['status'].get('phase') != 'Pending':
@@ -147,29 +159,28 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
             if pod_rs != newest_rs.get(dep):
                 continue
             name = pod['metadata']['name']
-            if policy == 'evict-old':
-                count, last = evictions.get(dep, (0, 0))
-                if count >= replicas_of.get(dep, 1) or time.time() - last < 30:
-                    continue          # cap reached or still settling from the last one
-                old = [p for p in pods
-                       if deploy_of(p)[0] == dep and deploy_of(p)[1] != pod_rs
-                       and p['status'].get('phase') == 'Running']
-                if old:
-                    victim = old[0]['metadata']['name']
-                    print(f'  ⚠ {name} Pending: Insufficient cpu — evict-old: '
-                          f'deleting old pod {victim} of {dep} to free CPU '
-                          f'({count + 1}/{replicas_of.get(dep, 1)})')
-                    subprocess.run(['kubectl', 'delete', 'pod', '-n', ns, victim,
-                                    '--wait=false'], env=env, capture_output=True)
-                    evictions[dep] = (count + 1, time.time())
+            if policy == 'scale-down-first':
+                if dep in patched:
+                    continue          # already switched; the controller is on it
+                import json
+                patched[dep] = strategy_of.get(dep, {})
+                print(f'  ⚠ {name} Pending: Insufficient cpu — scale-down-first: '
+                      f'switching {dep} to maxSurge 0 / maxUnavailable 1 for this '
+                      f'rollout (old pod goes first, new one fits; chart strategy '
+                      f'restored afterwards)')
+                subprocess.run(['kubectl', 'patch', 'deploy', dep, '-n', ns, '--type', 'merge',
+                                '-p', json.dumps({'spec': {'strategy': {
+                                    'type': 'RollingUpdate',
+                                    'rollingUpdate': {'maxSurge': 0, 'maxUnavailable': 1}}}})],
+                               env=env, capture_output=True)
             elif name not in warned:
                 warned.add(name)
                 print(f'  ⚠ {name} Pending: Insufficient cpu — the node has no room '
                       f'for {dep}\'s surge pod (single node, requests ~fully '
                       f'committed).\n    Unstick by hand:  kubectl -n {ns} delete pod '
                       f'<an old {dep} pod>\n    Or set redeploy.on_insufficient_cpu: '
-                      f'evict-old in the site yaml (or --on-insufficient-cpu evict-old). '
-                      f'Waiting…')
+                      f'scale-down-first in the site yaml (or --on-insufficient-cpu '
+                      f'scale-down-first). Waiting…')
         time.sleep(poll)
 
 
@@ -183,7 +194,7 @@ def main():
     p.add_argument('--force', action='store_true',
                    help='Proceed even if this tag is already the deployed one '
                         '(only useful with imagePullPolicy Always)')
-    p.add_argument('--on-insufficient-cpu', choices=['wait', 'evict-old'], default=None,
+    p.add_argument('--on-insufficient-cpu', choices=['wait', 'scale-down-first'], default=None,
                    help='override the site yaml nico-system.redeploy.on_insufficient_cpu '
                         '(default from the site yaml, else wait)')
     args = p.parse_args()
@@ -252,14 +263,14 @@ def main():
     policy = (args.on_insufficient_cpu
               or cfg.get('nico-system', {}).get('redeploy', {}).get('on_insufficient_cpu')
               or 'wait')
-    if policy not in ('wait', 'evict-old'):
-        print(f'Error: redeploy.on_insufficient_cpu must be wait or evict-old, got {policy!r}',
+    if policy not in ('wait', 'scale-down-first'):
+        print(f'Error: redeploy.on_insufficient_cpu must be wait or scale-down-first, got {policy!r}',
               file=sys.stderr)
         sys.exit(1)
     print(f'  on Insufficient cpu: {policy}')
 
     # Apply without --wait; we watch the rollout ourselves so a stuck surge
-    # pod gets diagnosed (and, with evict-old, unstuck) instead of a silent
+    # pod gets diagnosed (and, with scale-down-first, unstuck) instead of a silent
     # ten-minute helm timeout.
     r = subprocess.run([
         'helm', 'upgrade', 'nico', helm_dir,

@@ -198,7 +198,7 @@ implementation for your host. What differs on Linux:
   → `redeploy-dev-nico.py <site> --tag t2` (minutes per cycle). **Bump the
   tag every time** — both scripts refuse a same-tag rebuild/redeploy because
   the cluster would silently keep the old image. On a 6-CPU VM a rollout can
-  stick on `Insufficient cpu`; set `redeploy: { on_insufficient_cpu: evict-old }`
+  stick on `Insufficient cpu`; set `redeploy: { on_insufficient_cpu: scale-down-first }`
   in your devup yaml (or size the VM for development, see step 4)
 - Native Mac CLIs, MAT fleet runs, golden-image baking: [how-to.md](how-to.md)
 - Inside the VM, `~/mac/<repo>` is a git *worktree* whose metadata lives
