@@ -93,8 +93,14 @@ python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/build-nico-
   **your Mac UID** so VirtFS share files are owned by you on both sides
   (the classic 9p 0600-permission bummer never happens; pass `--uid 1000`
   for the Ubuntu-classic UID).
-- Default footprint: 120 G sparse disk, 6 CPUs, 12 GB RAM (constants at the
-  top of the script if you want the §1-manual 8/16 sizing).
+- Default footprint: 120 G sparse disk, 6 CPUs, 12 GB RAM. **Sizing
+  recommendation:** for *build-and-play* (deploy from NGC, use the site) 6+
+  CPUs and 8 GB+ RAM are enough; for *code development* (source builds and
+  redeploy cycles) use **8+ CPUs and 16 GB+ RAM** — a fully deployed site
+  commits ~90% of a 6-CPU node's CPU requests and a rolling redeploy then
+  has no room for its surge pod (issues.md 20260903-#2). Set them in the
+  `vm:` block of your devup yaml (`--cpus/--mem-mb` on the script). vCPUs
+  and RAM are ceilings, not reservations.
 
 What it does, in four stages (`--stage image|seed|vm|boot` stops after any
 one; `--dry-run` prints the plan):
