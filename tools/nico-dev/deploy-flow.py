@@ -15,15 +15,17 @@ for further add-ons.
   deploy-flow.py <site> --uninstall              # remove the flow release
   deploy-flow.py <site> --dry-run
 
+Targets the CURRENT chart generation (single-container flow pod; upstream
+#5325, 2026-08-31). An older checkout is refused with "refresh the worktree"
+— the script implements the chart, it does not emulate past ones.
+
 What Flow needs that a base nico-dev site does not have (all created here):
-  1. images     nico-flow (plus nico-psm/nico-nsm on checkouts older than
-                #5325, 2026-08-31 — read from the chart's values.yaml) at the
-                SAME tag as NICo REST (they ship on the REST release line)
+  1. images     nico-flow at the SAME tag as NICo REST (it ships on the REST
+                release line — setup.sh 7h)
   2. prereqs    the flow database + user on nico-pg-cluster and its DB
-                credentials synced by ESO into the flow namespace (psm/nsm
-                DBs + Vault tokens too on the older chart) — all rendered by
-                the nico-prereqs chart when flow.enabled=true (a helm upgrade
-                with --reuse-values)
+                credentials synced by ESO into the flow namespace — rendered
+                by the nico-prereqs chart when flow.enabled=true (a helm
+                upgrade with --reuse-values)
   3. temporal   a `flow` Temporal namespace
   4. certs      flow-certificate (vault-nico-issuer) and temporal-client-certs
                 (nico-rest-ca-issuer), pre-applied so the pod never races them
@@ -58,21 +60,26 @@ _spec.loader.exec_module(site_images)
 RELEASE, NS = 'flow', 'flow'
 
 
-def flow_images(chart):
-    """The containers the CHECKOUT's chart deploys → image names.
+IMAGES = site_images.IMAGE_NAMES['flow']            # ['nico-flow']
 
-    Upstream removed PSM/NSM from the flow pod on 2026-08-31 (#5325): newer
-    checkouts have only `images.flow`, older ones flow+psm+nsm. Read the
-    chart's values.yaml instead of assuming either shape."""
+
+def check_chart_generation(chart, prereqs_dir):
+    """This script implements the CURRENT chart: a single-container flow pod
+    (upstream #5325, 2026-08-31, removed PSM/NSM and the vault-token hook).
+    A checkout from before that is not supported here — the fix is to
+    refresh the worktree, not to teach the script an older chart shape.
+    Returns a problem string or None."""
     vals = yaml.safe_load((chart / 'values.yaml').read_text()) or {}
-    keys = list((vals.get('images') or {}).keys()) or ['flow']
-    return [f'nico-{k}' for k in keys]
-
-
-def needs_vault_tokens(prereqs_dir):
-    """Older prereqs charts write psm/nsm Vault tokens via a hook job; the
-    template is gone in checkouts past #5325."""
-    return (prereqs_dir / 'templates' / 'flow-vault-tokens-job.yaml').exists()
+    keys = set((vals.get('images') or {}).keys())
+    old_hook = (prereqs_dir / 'templates' / 'flow-vault-tokens-job.yaml').exists()
+    if keys - {'flow'} or old_hook:
+        return ('this checkout predates upstream #5325 (2026-08-31): the flow chart '
+                f'still has containers {sorted(keys)}'
+                + (' and helm-prereqs still has flow-vault-tokens-job.yaml' if old_hook else '')
+                + ' — refresh the worktree (git pull / rebase onto origin/main) and rerun')
+    if keys != {'flow'}:
+        return f'unexpected flow chart images {sorted(keys)} — newer than this script knows; check ADDONS.md'
+    return None
 DOCKER_ARCH = 'arm64' if platform.machine() in ('arm64', 'aarch64') else 'amd64'
 
 
@@ -214,9 +221,8 @@ def main():
     for path in (chart, prereqs_dir, sa_chart):
         if not path.is_dir():
             sys.exit(f'Error: {path} not in the checkout')
-    images = flow_images(chart)                 # what THIS checkout's chart deploys
-    vault_tokens = needs_vault_tokens(prereqs_dir)
-    components = [i.removeprefix('nico-') for i in images]
+    images = IMAGES
+    chart_problem = check_chart_generation(chart, prereqs_dir)
 
     # tag: default = what nico-rest runs (flow ships on the REST release line)
     rest_tag = helm_values('nico-rest', 'nico-rest', env).get('global', {}).get('image', {}).get('tag', '')
@@ -232,8 +238,6 @@ def main():
     print(f'  tag        : {tag}' + ('' if tag == rest_tag else f'   (nico-rest runs {rest_tag or "?"})'))
     print(f'  images     : {", ".join(images)} — '
           f'{"build from checkout" if args.build else "pull from NGC" if args.ngc else "must already be in the registry"}')
-    print(f'  chart shape: {len(images)} container(s); vault-token hook: '
-          f'{"yes (pre-#5325 chart)" if vault_tokens else "no"}')
     print(f'  flowEnv    : {args.flow_env}')
 
     # ── uninstall ─────────────────────────────────────────────────────────
@@ -254,6 +258,8 @@ def main():
     # ── preflight ─────────────────────────────────────────────────────────
     print('\nPreflight')
     probs = []
+    if chart_problem:
+        probs.append(chart_problem)
     if subprocess.run(['docker', 'info'], capture_output=True).returncode != 0 and (args.build or args.ngc):
         probs.append('docker daemon not reachable (needed to build or pull images)')
     # one bounded connectivity probe first — an unreachable API otherwise
@@ -281,7 +287,7 @@ def main():
     for pr in probs:
         print(f'  ✗ {pr}')
     if not probs:
-        print('  ✓ core release, issuers, nico-prereqs, temporal present')
+        print('  ✓ current chart generation; core release, issuers, nico-prereqs, temporal present')
     if probs and not args.dry_run:
         sys.exit(1)
 
@@ -289,8 +295,7 @@ def main():
         print('\nPlan (dry run — nothing executed):')
         print(f'  1. images   {"buildx " + ", ".join(images) if args.build else "pull " + ", ".join(images) + " from NGC" if args.ngc else "verify " + ", ".join(images) + " in registry"} @ {tag}')
         print(f'  2. prereqs  helm upgrade nico-prereqs --reuse-values --set flow.enabled=true '
-              f'(DB + ESO sync for {", ".join(components)}'
-              f'{"; psm/nsm vault tokens" if vault_tokens else ""})')
+              f'(flow database + ESO credential sync)')
         print(f'  3. temporal namespace flow')
         print(f'  4. certs    pre-apply flow-certificate + temporal-client-certs, wait Ready')
         print(f'  5. chart    helm upgrade --install flow {chart} -n flow --set global.image.repository={registry} --set global.image.tag={tag} --set flowEnv={args.flow_env}')
@@ -328,25 +333,17 @@ def main():
     rev = next((l.split(':', 1)[1].strip() for l in r.stdout.splitlines()
                 if l.startswith('REVISION:')), '?')
     print(f'  nico-prereqs upgraded (revision {rev}) with flow.enabled=true ✓')
-    # The ESO ClusterExternalSecrets target the flow namespace by name, so it
-    # must exist before the credential secrets can land. Pre-#5325 charts had
-    # the vault-token hook job create it; now the flow chart's own
-    # namespace.yaml does — apply that first (helm adopts it later).
+    # The ESO ClusterExternalSecret targets the flow namespace by name, so it
+    # must exist before the credential secret can land: apply the chart's own
+    # namespace.yaml first (helm adopts it at install).
     r = run(['helm', 'template', RELEASE, str(chart), '--namespace', NS,
              '--show-only', 'templates/namespace.yaml'], env=env)
     kubectl(['apply', '-f', '-'], env, stdin=r.stdout)
-    if vault_tokens:
-        for s in ('psm-vault-token', 'nsm-vault-token'):
-            if not wait_for(f'secret {s}', lambda s=s: kubectl(['get', 'secret', s, '-n', NS], env,
-                                                               check=False).returncode == 0, 300):
-                print('  diagnose: kubectl logs -n nico-system job/flow-vault-tokens', file=sys.stderr)
-                sys.exit(1)
-    for svc in components:
-        s = f'{svc}.nico.nico-pg-cluster.credentials'
-        if not wait_for(f'secret {s}', lambda s=s: kubectl(['get', 'secret', s, '-n', NS], env,
-                                                           check=False).returncode == 0, 300):
-            print(f'  diagnose: kubectl describe clusterexternalsecret {svc}-db-eso', file=sys.stderr)
-            sys.exit(1)
+    s = 'flow.nico.nico-pg-cluster.credentials'
+    if not wait_for(f'secret {s}', lambda: kubectl(['get', 'secret', s, '-n', NS], env,
+                                                    check=False).returncode == 0, 300):
+        print('  diagnose: kubectl describe clusterexternalsecret flow-db-eso', file=sys.stderr)
+        sys.exit(1)
 
     # ── 3. temporal namespace `flow` (reuse nico-dev's helper, unmodified) ─
     import importlib.util
@@ -389,8 +386,7 @@ def main():
     print('\n' + '=' * 60)
     print(f'  ✓ NICo Flow deployed (tag {tag}) — namespace {NS}')
     kubectl(['get', 'pods', '-n', NS, '-o', 'wide'], env, capture=False)
-    print(f'  gRPC: flow.{NS}.svc.cluster.local:50051'
-          + ('  psm:50052  nsm:50053' if 'nico-psm' in images else ''))
+    print(f'  gRPC: flow.{NS}.svc.cluster.local:50051')
     print(f'  Remove: {sys.argv[0]} {args.site} --uninstall')
     print('=' * 60)
 

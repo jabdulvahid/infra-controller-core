@@ -49,12 +49,16 @@ Upstream commit `856d2e227` (2026-08-31, "remove NSM/PSM from deployment,
 remains. The user's worktree (`main`, 2026-09-01) has that shape; the fork
 branch's copy of the charts predates it. The first run therefore waited
 five minutes for a `psm-vault-token` secret that no template produces.
-`deploy-flow.py` now reads the **checkout's** chart: image names from
-`values.yaml::images`, vault-token wait only if the hook template exists,
-DB-credential waits per component, and it pre-applies the chart's
-`namespace.yaml` itself (the hook job used to create the namespace).
-Lesson for every add-on: derive shape from the chart you are about to
-install, never from the copy you read when writing the script.
+Ruling (Jasmeer): the script implements the **current** chart; it does not
+emulate older ones. Supporting both shapes would mean coding for an
+imaginary tree that is part today, part last month. So `deploy-flow.py`
+targets the single-container Flow, pre-applies the chart's `namespace.yaml`
+itself (the deleted hook job used to create the namespace), and its
+preflight **refuses** a checkout that still has the PSM/NSM containers or
+the vault-token template, with one instruction: refresh the worktree.
+Lesson for every add-on: write against `origin/main`'s chart (the fork
+branch's own `helm/` copy lags and misled this script), and gate on the
+chart generation rather than adapting to it.
 
 ## Verdict for Flow
 
