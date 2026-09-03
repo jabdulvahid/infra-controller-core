@@ -422,7 +422,7 @@ spec:
     except (ValueError, OSError):
         mac_site = f'{mac_root}/sites/{sitename}'
     print(f'\n  Next (Mac) — build images, verify registry, deploy Nico:')
-    print(f'    python3 {mac_dev}/build-dev-nico-mac.py {mac_site} --tag <tag>')
+    print(f'    python3 {mac_dev}/build-dev-nico.py {mac_site} --tag <tag>')
     print(f'    python3 {mac_dev}/ndev.py {mac_site} registry verify')
     print(f'    python3 {mac_dev}/deploy-dev-nico.py {mac_site} --tag <tag>')
     print(f'{"="*55}')

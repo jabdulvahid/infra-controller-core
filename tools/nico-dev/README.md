@@ -187,7 +187,7 @@ implementation for your host. What differs on Linux:
   `ssh -L 8443:<underlay>.133.1.17:443 <linux-host>` → `https://localhost:8443/admin`
   (if the login flow redirects to the VIP itself, use
   `sshuttle -r <linux-host> <underlay>.133.1.0/27` instead)
-- The dev loop on your branch: edit → `build-dev-nico-mac.py <site> --tag t2`
+- The dev loop on your branch: edit → `build-dev-nico.py <site> --tag t2`
   → `redeploy-dev-nico.py <site> --tag t2` (minutes per cycle)
 - Native Mac CLIs, MAT fleet runs, golden-image baking: [how-to.md](how-to.md)
 - Inside the VM, `~/mac/<repo>` is a git *worktree* whose metadata lives

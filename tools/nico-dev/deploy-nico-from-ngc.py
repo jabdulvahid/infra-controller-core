@@ -44,7 +44,7 @@ def run(cmd, label, input_text=None, check=True):
 
 def ensure_registry(port):
     """Start the local registry container if not already running (an NGC-first
-    user has never run build-dev-nico-mac.py, which normally creates it)."""
+    user has never run build-dev-nico.py, which normally creates it)."""
     r = subprocess.run(['docker', 'inspect', 'registry', '--format',
                         '{{.State.Running}}'], capture_output=True, text=True)
     if r.returncode == 0 and r.stdout.strip() == 'true':
@@ -152,7 +152,7 @@ def main():
                   f'building the REST images from the checkout\n'
                   f'  (they may not exactly match the core image\'s '
                   f'commit).')
-            run([sys.executable, str(here / 'build-dev-nico-mac.py'), site,
+            run([sys.executable, str(here / 'build-dev-nico.py'), site,
                  '--tag', local_tag, '--rest-only'],
                 'REST image build (rest-api/ buildx)')
             fell_back = True

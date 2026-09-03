@@ -217,7 +217,7 @@ def build_steps(args):
          'kubeadm/containerd issues: how-to §5. Rerun is idempotent.'),
 
         ('build', 'Mac', 'Build nico images → local registry',
-         [[sys.executable, NICO_DEV / 'build-dev-nico-mac.py',
+         [[sys.executable, NICO_DEV / 'build-dev-nico.py',
            site_mac, '--tag', args.tag]],
          'Needs colima running (`colima start --cpu 4 --memory 8`) and DISK:\n'
          'the builder cache grows ~100GB/week — `docker builder prune -af`\n'
