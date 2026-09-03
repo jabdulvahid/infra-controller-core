@@ -55,6 +55,11 @@ def parse_args():
                    help='Mac registry host as seen from VM (default: 192.168.64.1)')
     p.add_argument('--registry-port',  type=int, default=5000,
                    help='Mac registry port (default: 5000)')
+    p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'evict-old'],
+                   default='wait',
+                   help='redeploy policy when a rollout cannot schedule its surge '
+                        'pod on a CPU-saturated node (default wait; evict-old '
+                        'deletes one old pod of that deployment) — 20260903-#2')
     p.add_argument('--dry-run',        action='store_true',
                    help='Show what would be created without writing files')
     return p.parse_args()
@@ -107,6 +112,8 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('NICO_MAC_FOLDER',   args.nico_mac_folder),
         ('NICO_REPO_FOLDER',  args._repo_folder),
         ('NICO_DEV_FOLDER',   args._dev_folder),
+        # Redeploy policy on a CPU-saturated node (20260903-#2)
+        ('REDEPLOY_ON_INSUFFICIENT_CPU', args.redeploy_on_insufficient_cpu),
         # Registry
         ('192.168.64.1',      args.registry_host),
         ('port: 5000',        f'port: {args.registry_port}'),
