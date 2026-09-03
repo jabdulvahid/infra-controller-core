@@ -203,7 +203,8 @@ def build_steps(args):
                  f' --nico-vm-folder /home/{args.user}/mac'
                  f' --nico-mac-folder {share}'
                  f' --nico-repo-folder {args.repo}'
-                 f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev')],
+                 f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev'
+                 f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}')],
          f'Inspect {site_mac}/{args.site}.yaml — all later steps read it. how-to §3.'),
 
         ('fabric', 'VM', 'Deploy the ContainerLab fabric + verify',
@@ -311,6 +312,11 @@ def main():
     p.add_argument('--site', default='dev')
     p.add_argument('--underlay', type=int, default=11)
     p.add_argument('--overlay', type=int, default=12)
+    p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'evict-old'],
+                   default='wait',
+                   help='redeploy policy when a rollout cannot schedule its surge pod '
+                        'on a CPU-saturated node (site step passthrough; config: '
+                        'redeploy.on_insufficient_cpu) — 20260903-#2')
     p.add_argument('--repo', default=DEF_REPO,
                    help='nico repo folder name inside the share '
                         f'(default: {DEF_REPO})')
@@ -364,6 +370,7 @@ def main():
                     'token_env': 'token_env'},
             'vm': {'cpus': 'vm_cpus', 'mem_mb': 'vm_mem_mb',
                    'disk_gb': 'vm_disk_gb'},
+            'redeploy': {'on_insufficient_cpu': 'redeploy_on_insufficient_cpu'},
         }
         for gname, sub in groups.items():
             g = cfg.pop(gname, None)
