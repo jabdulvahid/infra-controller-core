@@ -36,7 +36,11 @@ IMAGE_NAMES = {
     'core': 'nico',
     'rest': ['nico-rest-api', 'nico-rest-workflow', 'nico-rest-site-manager',
              'nico-rest-site-agent', 'nico-rest-db', 'nico-rest-cert-manager'],
-    'flow': ['nico-flow', 'nico-psm', 'nico-nsm'],
+    # Flow: one container since upstream #5325 (2026-08-31) removed PSM/NSM
+    # from the flow pod; nico-psm / nico-nsm are still published but no
+    # longer deployed. deploy-flow.py reads the checkout's chart for the
+    # actual set, so older checkouts keep working.
+    'flow': ['nico-flow'],
 }
 NGC_CORE_IMAGE_DEFAULT = 'nvmetal-carbide'
 
