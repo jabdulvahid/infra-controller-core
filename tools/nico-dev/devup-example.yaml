@@ -11,11 +11,16 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # host_num: 126                   # last octet of the VM IP; two VMs can't share one
 
 # ── VM sizing (defaults shown; override per machine) ───────────────────
+# Two tiers (both are CEILINGS — vCPUs and RAM are not reserved on the host):
+#   build-and-play  (deploy from NGC, use the site, no redeploys):
+#                    cpus: 6   mem_mb: 8192   — the running stack uses ~5G
+#   code development (source builds + redeploy cycles):
+#                    cpus: 8+  mem_mb: 16384+ — a full site commits ~90% of a
+#                    6-CPU node's CPU requests; a rolling redeploy needs room
+#                    for the surge pod or it sticks (issues.md 20260903-#2)
 # vm:
 #   cpus: 6
-#   mem_mb: 12288                 # a CEILING, not committed memory — the
-#                                 #   running stack uses ~5G; 8192 is enough
-#                                 #   to RUN the sim on a 16GB Mac
+#   mem_mb: 12288
 #   disk_gb: 120                  # sparse — grows with use, ~25G after
 #                                 #   an NGC bring-up
 
