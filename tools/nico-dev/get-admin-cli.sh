@@ -28,9 +28,15 @@ KUBECONFIG_FILE="$(ls "$SITE"/*.kubeconfig.yaml 2>/dev/null | head -1)"
 export KUBECONFIG="$KUBECONFIG_FILE"
 
 echo "Step 1: Extracting nico-admin-cli from the api container..."
+# A RUNNING api pod only: the label also matches the Completed
+# nico-api-migrate job pod, and .items[0] is whichever sorts first — exec
+# into a Completed pod fails with "pod does not exist" (seen 2026-09-03 on a
+# golden-image clone).
 POD="$(kubectl -n nico-system get pods -l app.kubernetes.io/name=nico-api \
+       --field-selector status.phase=Running \
        -o jsonpath='{.items[0].metadata.name}')"
-[[ -n "$POD" ]] || { echo "Error: no nico-api pod found — is nico deployed?" >&2; exit 1; }
+[[ -n "$POD" ]] || { echo "Error: no RUNNING nico-api pod found — is nico deployed and settled? (kubectl -n nico-system get pods | grep nico-api)" >&2; exit 1; }
+echo "  using pod $POD"
 TMP="$(mktemp)"
 # exec+cat instead of `kubectl cp` — no tar dependency in the container
 kubectl -n nico-system exec "$POD" -- cat /opt/carbide/nico-admin-cli > "$TMP"

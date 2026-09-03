@@ -10,7 +10,7 @@
 #   sudo bash /usr/local/lib/nico-dev/first-boot.sh
 #
 # What it does:
-#   1. Sets VM hostname
+#   1. Keeps the VM hostname (it is the kubeadm node name — not renamable)
 #   2. Installs your SSH public key (optional)
 #   3. Mounts the Mac shared folder (9p) at /mnt/mac and ~/mac
 #   4. Copies the template site yaml to your mac share, updating folder paths
@@ -102,7 +102,15 @@ echo
 echo "── Configuration ────────────────────────────────────────────"
 echo
 ask_ssh_key SSH_PUBKEY
-ask "VM hostname"               "nico-dev"        HOSTNAME
+# The hostname is NOT a choice on a golden image: the baked single-node
+# kubeadm cluster carries it in the Node object, the kubelet client cert
+# (system:node:<name>) and the etcd member. Renaming the VM leaves kubelet
+# introducing itself as a node the API server refuses (NotReady, etcd
+# crashloop, exec "pod does not exist") — 20260903-#4, found on the first
+# clone of nico-dev-golden-20260903 when the old example answer "nico-dev"
+# no longer matched the builder's name.
+HOSTNAME="$(hostname)"
+echo "  VM hostname     : $HOSTNAME  (fixed — bound to the kubeadm node name)"
 # Auto-detect the UTM share from the virtio 9p device(s): each offered
 # share exposes its name in /sys/bus/virtio/devices/*/mount_tag. Empty
 # Path / wrong share mode in UTM = NO device = precise early diagnosis
@@ -162,14 +170,17 @@ if [[ "${confirm,,}" == "n" ]]; then
 fi
 echo
 
-# ── Step 2: Set hostname ──────────────────────────────────────────────────────
-echo "Step 2: Setting hostname to '$HOSTNAME'..."
-OLD_HOSTNAME=$(hostname)
-hostnamectl set-hostname "$HOSTNAME"
-if [[ "$OLD_HOSTNAME" != "$HOSTNAME" ]]; then
-    sed -i "s/${OLD_HOSTNAME}/${HOSTNAME}/g" /etc/hosts
+# ── Step 2: Hostname — kept ───────────────────────────────────────────────────
+# Deliberately no rename (see the note at the prompt): the name is the
+# kubeadm node name. Verify the binding instead so a mismatch is loud.
+echo "Step 2: Hostname '$HOSTNAME' kept (kubeadm node name)..."
+NODE_IN_CLUSTER=$(kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+if [[ -n "$NODE_IN_CLUSTER" && "$NODE_IN_CLUSTER" != "$HOSTNAME" ]]; then
+    echo "ERROR: this VM is named '$HOSTNAME' but the baked cluster's node is '$NODE_IN_CLUSTER'." >&2
+    echo "  Fix: sudo hostnamectl set-hostname $NODE_IN_CLUSTER && sudo systemctl restart kubelet, then rerun." >&2
+    exit 1
 fi
-echo "  Hostname: $OLD_HOSTNAME → $HOSTNAME ✓"
+echo "  Hostname: $HOSTNAME ✓"
 echo
 
 # ── Step 3: Install SSH key ───────────────────────────────────────────────────
