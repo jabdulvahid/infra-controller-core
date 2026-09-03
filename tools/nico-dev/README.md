@@ -152,6 +152,10 @@ implementation for your host. What differs on Linux:
   `nico-dev` storage pool for VM disks (system QEMU can't read `$HOME`).
   Both are created loudly and recorded; `--subnet` overrides if that
   range is taken (`check-prereqs.sh` checks).
+- **CLIs without toolchains**: `build-nico-clis.py` builds `nico-admin-cli`
+  and `nicocli` inside rust/golang containers on a Linux host (the ELF runs
+  on the host directly), so rustup and Go are not needed on the box; the
+  Mac keeps host builds because it needs Mach-O binaries.
 - **Console**: `virsh console <vm>` (a getty is enabled in the seed).
 - **Route**: `sudo ip route replace <underlay>.133.1.0/27 via <vm-ip>`
   (dev-up does it; not persistent across host reboots).
