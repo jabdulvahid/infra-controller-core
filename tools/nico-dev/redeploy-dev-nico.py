@@ -64,8 +64,13 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
     """
     import time
     start = time.time()
-    evicted = set()
     warned = set()
+    # per-deployment eviction bookkeeping: (count, last eviction time). The
+    # OLD ReplicaSet recreates every pod we delete (maxUnavailable 0 keeps
+    # it whole until the new pod is Ready), so evictions must be rate-limited
+    # and capped, and must only ever target OLD ReplicaSets — the first
+    # version of this loop evicted new and old pods alternately (ping-pong).
+    evictions = {}
     while True:
         got = _kubectl_json(['get', 'deploy', '-n', ns], env)
         if got is None:
@@ -107,6 +112,24 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
                             return o2['name'], o['name']
             return None, None
 
+        def revision(rs_name):
+            ann = rs_by_name.get(rs_name, {}).get('metadata', {}).get('annotations', {})
+            try:
+                return int(ann.get('deployment.kubernetes.io/revision', '0'))
+            except ValueError:
+                return 0
+
+        # the deployment's CURRENT ReplicaSet = highest revision among its RSs
+        newest_rs = {}
+        for rs in rs_by_name.values():
+            for o in rs['metadata'].get('ownerReferences', []):
+                if o['kind'] == 'Deployment':
+                    cur = newest_rs.get(o['name'])
+                    if cur is None or revision(rs['metadata']['name']) > revision(cur):
+                        newest_rs[o['name']] = rs['metadata']['name']
+
+        replicas_of = {d['metadata']['name']: d.get('spec', {}).get('replicas', 1) for d in deps}
+
         for pod in pods:
             if pod['status'].get('phase') != 'Pending':
                 continue
@@ -115,25 +138,30 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
                         if c.get('type') == 'PodScheduled' and c.get('status') == 'False'), '')
             if 'Insufficient cpu' not in msg:
                 continue
-            dep, new_rs = deploy_of(pod)
+            dep, pod_rs = deploy_of(pod)
             if not dep:
+                continue
+            # Only the NEW ReplicaSet's pod is the stuck surge pod. A Pending
+            # pod of an OLD ReplicaSet is that RS replacing something we (or
+            # the rollout) removed — never act on it.
+            if pod_rs != newest_rs.get(dep):
                 continue
             name = pod['metadata']['name']
             if policy == 'evict-old':
-                old = []
-                for p in pods:
-                    d2, rs2 = deploy_of(p)
-                    if (d2 == dep and rs2 != new_rs
-                            and p['status'].get('phase') == 'Running'
-                            and p['metadata']['name'] not in evicted):
-                        old.append(p)
+                count, last = evictions.get(dep, (0, 0))
+                if count >= replicas_of.get(dep, 1) or time.time() - last < 30:
+                    continue          # cap reached or still settling from the last one
+                old = [p for p in pods
+                       if deploy_of(p)[0] == dep and deploy_of(p)[1] != pod_rs
+                       and p['status'].get('phase') == 'Running']
                 if old:
                     victim = old[0]['metadata']['name']
                     print(f'  ⚠ {name} Pending: Insufficient cpu — evict-old: '
-                          f'deleting old pod {victim} of {dep} to free CPU')
+                          f'deleting old pod {victim} of {dep} to free CPU '
+                          f'({count + 1}/{replicas_of.get(dep, 1)})')
                     subprocess.run(['kubectl', 'delete', 'pod', '-n', ns, victim,
                                     '--wait=false'], env=env, capture_output=True)
-                    evicted.add(victim)
+                    evictions[dep] = (count + 1, time.time())
             elif name not in warned:
                 warned.add(name)
                 print(f'  ⚠ {name} Pending: Insufficient cpu — the node has no room '
