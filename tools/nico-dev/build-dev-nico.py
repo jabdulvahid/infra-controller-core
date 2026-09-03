@@ -217,8 +217,11 @@ def main():
                 dockerfile=repo_dev_dir / 'Dockerfile.nico-dev',
                 context=repo_path,
                 build_args={
+                    # ARG names are historical; values are for the HOST arch
                     'CONTAINER_BUILD_AARCH64':   build_ctr,
                     'CONTAINER_RUNTIME_AARCH64': runtime_ctr,
+                    # kea hook install path: /usr/lib/<triplet>/kea/hooks
+                    'GNU_TRIPLET':               f'{MACHINE}-linux-gnu',
                 },
                 label=f'nico:{args.tag} ({DOCKER_ARCH} dev)',
             )
