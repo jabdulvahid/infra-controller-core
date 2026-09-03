@@ -61,6 +61,18 @@ def parse_args():
                         'pod on a CPU-saturated node (default wait; scale-down-first '
                         'temporarily rolls that deployment with maxSurge 0 / '
                         'maxUnavailable 1 so an old pod goes first) — 20260903-#2')
+    # images: — recorded so every later script (redeploy, add-ons) knows how
+    # the site's images are produced without command-line flags
+    p.add_argument('--images-source-kind', choices=['ngc', 'build'], default='build',
+                   help='how the images are produced (default build)')
+    p.add_argument('--images-source-registry', default='',
+                   help='NGC base nvcr.io/<org>/<team> — every image lives there (ngc)')
+    p.add_argument('--images-source-tag', default='',
+                   help='NGC tag to deploy (ngc) / build tag (build)')
+    p.add_argument('--images-source-core-image', default='nvmetal-carbide',
+                   help="NGC's name for the core image (default nvmetal-carbide; local name is nico)")
+    p.add_argument('--images-source-token-env', default='NGC_API_KEY',
+                   help='env var NAME holding the NGC key (ngc)')
     p.add_argument('--dry-run',        action='store_true',
                    help='Show what would be created without writing files')
     return p.parse_args()
@@ -115,6 +127,13 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('NICO_DEV_FOLDER',   args._dev_folder),
         # Redeploy policy on a CPU-saturated node (20260903-#2)
         ('REDEPLOY_ON_INSUFFICIENT_CPU', args.redeploy_on_insufficient_cpu),
+        # Images — source of truth for what runs and where it came from
+        ('IMAGES_TAG',               'none'),
+        ('IMAGES_SOURCE_KIND',       args.images_source_kind),
+        ('IMAGES_SOURCE_REGISTRY',   args.images_source_registry or '""'),
+        ('IMAGES_SOURCE_TAG',        args.images_source_tag or '""'),
+        ('IMAGES_SOURCE_CORE_IMAGE', args.images_source_core_image),
+        ('IMAGES_SOURCE_TOKEN_ENV',  args.images_source_token_env),
         # Registry
         ('192.168.64.1',      args.registry_host),
         ('port: 5000',        f'port: {args.registry_port}'),

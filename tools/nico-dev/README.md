@@ -77,10 +77,12 @@ cp devup-example.yaml devup-mysite.yaml
 vi devup-mysite.yaml
 ```
 
-- **NGC pre-built** (`ngc:` block: `nico_tag`, `nico_image`, `token_env`)
-  — the quickest path: pulls ready-made images (core + REST, same tag)
-  instead of compiling. Needs an NGC API key with registry-read on the
-  image's org/team. To pick a tag:
+- **NGC pre-built** (`ngc:` block: `registry`, `tag`, `core_image`,
+  `token_env`) — the quickest path: pulls ready-made images instead of
+  compiling. The model is one registry base, one tag, a fixed set of image
+  names (core + six REST + three Flow; spelled out under `images.names` in
+  your site yaml). Needs an NGC API key with registry-read on that
+  org/team. To pick a tag:
   ```bash
   ngc-tags.py --config devup-mysite.yaml        # latest builds + dates + arm64
   ngc-tags.py --config devup-mysite.yaml --before v2.3.0   # page back
