@@ -709,18 +709,30 @@ ssh nico@192.168.64.126
 
 ### 4. Run first-boot.sh
 
+Non-interactive (preferred; scriptable):
+
 ```bash
-sudo bash /usr/local/lib/nico-dev/first-boot.sh
+sudo bash /usr/local/lib/nico-dev/first-boot.sh \
+    --ssh-key /path/to/your/id_ed25519.pub \
+    --mac-folder /Users/yourname/nico-tests/vm1/shared \
+    --yes
 ```
 
-You will be prompted for four things:
+(`--ssh-key` takes a file or the one-line key itself; `--mac-folder` is the
+folder you shared in UTM, the share root, not the repo inside it; the share
+tag is auto-detected from what UTM offers, `--share` overrides.)
+
+Or interactive: `sudo bash /usr/local/lib/nico-dev/first-boot.sh` prompts for
+whatever was not given:
 
 | Prompt | Example |
 |---|---|
 | SSH public key (optional) | paste from `cat ~/.ssh/id_ed25519.pub` on Mac |
-| VM hostname | `nico-dev` |
-| UTM share name | `share` |
-| Mac repos folder | `/Users/yourname/projects` |
+| UTM share name | `share` (auto-detected) |
+| Mac repos folder | `/Users/yourname/nico-tests/vm1/shared` |
+
+The VM's hostname is **not** asked and must not be changed: it is the kubeadm
+node name of the baked cluster (20260903-#4).
 
 The script then automatically:
 - Sets the hostname
