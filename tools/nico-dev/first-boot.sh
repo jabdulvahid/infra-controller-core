@@ -41,12 +41,63 @@ fi
 
 USERNAME=nico
 
+# ── Arguments (non-interactive mode) ─────────────────────────────────────────
+# Every prompt has a flag; with all of them (or --yes for the confirmations)
+# the script runs without a terminal. Prompts remain only as the fallback
+# for a value that was not given.
+#
+#   first-boot.sh [--ssh-key <file-or-key>] [--mac-folder <path>] [--share <tag>] [--yes]
+#
+SSH_PUBKEY=""; MAC_REPO_PATH=""; SHARE_NAME=""; ASSUME_YES=0
+usage() {
+    cat <<'EOF'
+Usage: sudo bash first-boot.sh [options]
+  --ssh-key <file|key>   public key to authorize for nico (a file path, or the
+                         one-line key itself); omit to skip / be prompted
+  --mac-folder <path>    the Mac folder shared into the VM (the share root,
+                         NOT the repo inside it), e.g. /Users/you/nico-tests/vm1/shared
+  --share <tag>          UTM share name (default: the one UTM offers, normally "share")
+  --yes                  no confirmation prompts
+  -h, --help             this text
+With --mac-folder and --yes the script needs no terminal.
+EOF
+}
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ssh-key)    SSH_PUBKEY="$2"; shift 2 ;;
+        --mac-folder) MAC_REPO_PATH="$2"; shift 2 ;;
+        --share)      SHARE_NAME="$2"; shift 2 ;;
+        --yes|-y)     ASSUME_YES=1; shift ;;
+        -h|--help)    usage; exit 0 ;;
+        *) echo "Error: unknown option $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+# --ssh-key may be a file; validate either form up front (a bad key would
+# otherwise surface much later as "passwordless SSH does not work").
+if [[ -n "$SSH_PUBKEY" ]]; then
+    [[ -f "$SSH_PUBKEY" ]] && SSH_PUBKEY="$(head -1 "$SSH_PUBKEY")"
+    if ! ssh-keygen -l -f /dev/stdin <<< "$SSH_PUBKEY" >/dev/null 2>&1; then
+        echo "Error: --ssh-key does not parse as an SSH public key" >&2; exit 2
+    fi
+fi
+if [[ -n "$MAC_REPO_PATH" && "$MAC_REPO_PATH" != /* ]]; then
+    echo "Error: --mac-folder must be an absolute Mac path (e.g. /Users/you/nico-tests/vm1/shared)" >&2; exit 2
+fi
+if [[ ! -t 0 && -z "$MAC_REPO_PATH" ]]; then
+    echo "Error: no terminal and no --mac-folder — nothing to prompt with. Pass --mac-folder (and --yes)." >&2; exit 2
+fi
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 # printf -v, never eval: pasted values (SSH keys especially) can contain
 # quotes/$()/backticks — eval would execute them as root on a stray paste.
 ask() {
     local prompt="$1" default="$2" var="$3"
+    # preset by a command-line flag → no prompt
+    if [[ -n "${!var:-}" ]]; then
+        echo "  $prompt: ${!var}  (from command line)"
+        return
+    fi
     if [[ -n "$default" ]]; then
         read -rp "  $prompt [$default]: " val
         printf -v "$var" '%s' "${val:-$default}"
@@ -67,6 +118,14 @@ ask_ssh_key() {
     # line-wrapped paste otherwise lands silently in authorized_keys and
     # only fails much later as 'passwordless SSH does not work'.
     local var="$1" val
+    if [[ -n "${!var:-}" ]]; then
+        echo "  SSH public key: $(ssh-keygen -l -f /dev/stdin <<< "${!var}" 2>/dev/null)  (from command line)"
+        return
+    fi
+    if [[ ! -t 0 ]]; then
+        printf -v "$var" '%s' ''   # non-interactive, no key given → skip
+        return
+    fi
     while true; do
         echo "  Your SSH public key (paste one line from: cat ~/.ssh/id_ed25519.pub)"
         read -rp "  (leave blank to skip — you can run 'ssh-copy-id nico@<vm-ip>' from the Mac later): " val
@@ -94,8 +153,9 @@ echo
 echo "You will need:"
 echo "  - Your SSH public key (optional — paste from: cat ~/.ssh/id_ed25519.pub)"
 echo "  - The path to your repos folder on Mac (where infra-controller-core lives)"
+echo "  (or pass them: first-boot.sh --ssh-key <file> --mac-folder <path> --yes)"
 echo
-read -rp "Press Enter to continue..."
+[[ "$ASSUME_YES" -eq 1 ]] || read -rp "Press Enter to continue..."
 echo
 
 # ── Step 1: Gather inputs ─────────────────────────────────────────────────────
@@ -163,10 +223,14 @@ echo "  Mac repos path  : $MAC_REPO_PATH"
 echo "  site yaml       : $SITE_YAML"
 echo "  kubeconfig      : $KUBECONFIG_PATH"
 echo
-read -rp "Proceed? [Y/n]: " confirm
-if [[ "${confirm,,}" == "n" ]]; then
-    echo "Aborted."
-    exit 0
+if [[ "$ASSUME_YES" -eq 1 ]]; then
+    echo "  (--yes: proceeding)"
+else
+    read -rp "Proceed? [Y/n]: " confirm
+    if [[ "${confirm,,}" == "n" ]]; then
+        echo "Aborted."
+        exit 0
+    fi
 fi
 echo
 
