@@ -46,6 +46,9 @@ def main():
     p.add_argument('site', help='Site folder or site yaml path')
     p.add_argument('--tag', required=True,
                    help='Image tag to deploy (must already be in the registry)')
+    p.add_argument('--force', action='store_true',
+                   help='Proceed even if this tag is already the deployed one '
+                        '(only useful with imagePullPolicy Always)')
     args = p.parse_args()
 
     site_yaml, site_folder = resolve_site(args.site)
@@ -84,6 +87,28 @@ def main():
     print(f'  tag        : {args.tag}')
     print(f'  kubeconfig : {kubeconfig}')
     print(f'  helm dir   : {helm_dir}')
+
+    # Same tag as deployed = no pod-template change = NO rollout, and the
+    # node keeps its cached image (imagePullPolicy IfNotPresent) — a rebuild
+    # under the same tag silently changes nothing on the cluster
+    # (20260903-#1). Refuse unless told otherwise.
+    r = subprocess.run(['helm', 'get', 'values', 'nico', '-n', 'nico-system',
+                        '-o', 'json'], env=env, capture_output=True, text=True)
+    deployed = ''
+    if r.returncode == 0:
+        try:
+            import json
+            deployed = json.loads(r.stdout).get('global', {}).get('image', {}).get('tag', '')
+        except ValueError:
+            pass
+    print(f'  deployed   : {deployed or "(unknown)"}')
+    if deployed == args.tag and not args.force:
+        print(f'\nError: tag {args.tag} is already the deployed tag — helm sees no '
+              f'change, nothing rolls out, and the node would reuse its cached\n'
+              f'  image even if you rebuilt it. Rebuild under a NEW tag '
+              f'(e.g. --tag {args.tag}-2) and redeploy that, or pass --force.',
+              file=sys.stderr)
+        sys.exit(1)
 
     r = subprocess.run([
         'helm', 'upgrade', 'nico', helm_dir,
