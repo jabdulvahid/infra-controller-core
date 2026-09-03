@@ -124,6 +124,10 @@ def main():
                         'where the core image comes pre-built but the REST '
                         'images are always built from this checkout (Go, '
                         'minutes not tens of minutes)')
+    p.add_argument('--overwrite-tag', action='store_true',
+                   help='Allow rebuilding a tag that already exists in the registry '
+                        '(the cluster will NOT pick it up without a new tag or '
+                        'imagePullPolicy Always — see the warning)')
     args = p.parse_args()
     if args.rest_only and args.skip_rest:
         p.error('--rest-only and --skip-rest are contradictory')
@@ -181,6 +185,33 @@ def main():
 
     print('\nStep 1: Ensuring registry is running...')
     ensure_registry(reg_port)
+
+    # Same-tag rebuild trap (20260903-#1): the cluster's pod template still
+    # says nico:<tag>, so a redeploy changes nothing and the node reuses its
+    # cached image (imagePullPolicy IfNotPresent). Refuse to overwrite an
+    # existing tag unless asked; the dev loop should bump the tag every time.
+    if not args.push_only:
+        r = subprocess.run(['curl', '-sf', '-m', '5',
+                            f'http://{push_reg}/v2/nico/tags/list'],
+                           capture_output=True, text=True)
+        existing = []
+        if r.returncode == 0:
+            try:
+                import json
+                existing = json.loads(r.stdout).get('tags') or []
+            except ValueError:
+                pass
+        if args.tag in existing:
+            if not args.overwrite_tag:
+                print(f'\nError: nico:{args.tag} already exists in {push_reg}.\n'
+                      f'  A rebuild under the same tag is invisible to the cluster: '
+                      f'the pod template does not change, so nothing rolls out,\n'
+                      f'  and the node keeps the cached image. Use a new tag '
+                      f'(e.g. --tag {args.tag}-2), or --overwrite-tag if you '
+                      f'really mean it.', file=sys.stderr)
+                sys.exit(1)
+            print(f'  ⚠ overwriting existing tag {args.tag} — the cluster will not '
+                  f'pull it unless the pod template changes or pull policy is Always')
 
     this_dir     = Path(__file__).parent / 'nico-dev-docker'
     docker_dir   = repo_path / 'dev' / 'docker'
