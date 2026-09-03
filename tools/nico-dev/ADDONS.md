@@ -41,6 +41,21 @@ Two facts that shape the script:
   `vault.token`); the add-on flips one flag and lets the chart render the
   rest.
 
+## Chart drift, found on the first live run
+
+Upstream commit `856d2e227` (2026-08-31, "remove NSM/PSM from deployment,
+#5325") turned the flow pod into a single container and **deleted**
+`helm-prereqs/templates/flow-vault-tokens-job.yaml`; only `flow-db-eso`
+remains. The user's worktree (`main`, 2026-09-01) has that shape; the fork
+branch's copy of the charts predates it. The first run therefore waited
+five minutes for a `psm-vault-token` secret that no template produces.
+`deploy-flow.py` now reads the **checkout's** chart: image names from
+`values.yaml::images`, vault-token wait only if the hook template exists,
+DB-credential waits per component, and it pre-applies the chart's
+`namespace.yaml` itself (the hook job used to create the namespace).
+Lesson for every add-on: derive shape from the chart you are about to
+install, never from the copy you read when writing the script.
+
 ## Verdict for Flow
 
 Easy: everything is chart-rendered and hook-driven, the production
