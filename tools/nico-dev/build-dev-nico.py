@@ -251,6 +251,11 @@ def main():
                     # ARG names are historical; values are for the HOST arch
                     'CONTAINER_BUILD_AARCH64':   build_ctr,
                     'CONTAINER_RUNTIME_AARCH64': runtime_ctr,
+                    # what `carbide-api version` reports as build_version —
+                    # the production Makefile passes the same git describe;
+                    # without it the dev image says build_version= (blank)
+                    'VERSION': git('describe', '--tags', '--always', '--dirty')
+                               or f'dev-{args.tag}',
                     # kea hook install path: /usr/lib/<triplet>/kea/hooks
                     'GNU_TRIPLET':               f'{MACHINE}-linux-gnu',
                 },
