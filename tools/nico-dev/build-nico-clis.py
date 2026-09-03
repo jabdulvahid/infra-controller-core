@@ -237,7 +237,10 @@ def container_cargo_build(repo_path, crate, binary, dest_dir, label):
          # release profile embeds debug info → a 229 MB binary vs ~40 MB
          '-e', 'CARGO_PROFILE_RELEASE_DEBUG=false',
          image, 'sh', '-c',
-         f'cargo build --release -p {crate} '
+         # same root-vs-owner git guard as the Go build (build scripts that
+         # embed git info would hit it on a Linux host)
+         "git config --global --add safe.directory '*' "
+         f'&& cargo build --release -p {crate} '
          f'&& cp /target/release/{binary} /out/ '
          # the container runs as root; on a Linux host (virtiofs/bind mounts
          # keep real uids) the delivered file would otherwise be root-owned
@@ -300,8 +303,14 @@ def build_nicocli_container(repo_path, install_dir):
          '-v', 'nico-go-build-cache:/root/.cache/go-build',
          '-v', f'{install_dir.resolve()}:/out',
          '-w', '/src/rest-api',
+         # the container is root, the tree is yours: git refuses ("dubious
+         # ownership", exit 128) and go's VCS stamping dies on it. A dev CLI
+         # needs no VCS stamp; mark the tree safe for anything else that
+         # calls git (20260902-#9).
+         '-e', 'GOFLAGS=-buildvcs=false',
          image, 'sh', '-c',
-         'make nico-cli INSTALL_DIR=/out '
+         "git config --global --add safe.directory '*' "
+         '&& make nico-cli INSTALL_DIR=/out '
          f'&& chown {HOST_UID}:{HOST_GID} /out/nicocli'],
         label='container build nicocli')
     return install_dir / 'nicocli'
