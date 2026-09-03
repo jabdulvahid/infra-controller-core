@@ -135,10 +135,12 @@ def main():
     # deploy references — zero build, version-matched with the core by
     # construction. Fallback if a tag is missing: build them from the
     # checkout (--rest-only; version skew vs the core is then possible).
-    rest_images = ['nico-rest-api', 'nico-rest-workflow',
-                   'nico-rest-site-manager', 'nico-rest-site-agent',
-                   'nico-rest-db', 'nico-rest-cert-manager']
-    ngc_base = args.ngc_image.rsplit('/', 1)[0]
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location('site_images', here / 'site_images.py')
+    site_images = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(site_images)
+    rest_images = site_images.IMAGE_NAMES['rest']      # the fixed set, one place
+    ngc_base, ngc_core_name = site_images.split_ngc_image(args.ngc_image)
     print(f'Step 5: REST images from NGC ({ngc_base}/*:{args.ngc_tag})...')
     fell_back = False
     for i, image in enumerate(rest_images, 1):
@@ -162,6 +164,16 @@ def main():
     if not fell_back:
         print(f'  REST images pulled + pushed ✓ ({len(rest_images)}, '
               f'tag {args.ngc_tag} → {local_tag})')
+
+    # Record the source in the site yaml (source of truth) BEFORE deploying,
+    # so a failed deploy still leaves the provenance behind; the deploy
+    # script records images.tag itself on success.
+    site_yamls = [f for f in Path(site).glob('*.yaml') if '.kubeconfig' not in f.name]
+    if len(site_yamls) == 1:
+        site_images.record(site_yamls[0], source={
+            'kind': 'ngc', 'registry': ngc_base, 'tag': args.ngc_tag,
+            'core_image': ngc_core_name, 'token_env': args.token_env})
+        print(f'  site yaml images.source updated ({site_yamls[0].name})')
 
     deploy = 'deploy-dev-nico.py' if args.initial else 'redeploy-dev-nico.py'
     print(f'Step 6: {deploy} --tag {local_tag}...')

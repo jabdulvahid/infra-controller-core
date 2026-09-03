@@ -42,14 +42,20 @@ underlay: 11                      # first IP octets — they become Mac-routed
 overlay: 12                       #   prefixes. Pick octets nothing on your
                                   #   Mac uses (VPN/LAN!); dev-up preflight
                                   #   warns if the Mac already routes them.
-# To find a deployable NGC tag for nico_tag below:  ngc-tags.py --config <this file>
+# To find a deployable NGC tag for ngc.tag below:  ngc-tags.py --config <this file>
 
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
-# NGC pre-built (quickest onboarding — no source build, no Rust):
+# NGC pre-built (quickest onboarding — no source build, no Rust).
+# The image model: EVERY NICo image — the core, the six REST images, the
+# three Flow images — lives in ONE NGC registry base at ONE tag under fixed
+# names (spelled out as images.names in your site yaml). Only the core has a
+# different name on NGC (nvmetal-carbide) than in the local registry (nico).
 # ngc:
-#   nico_tag: v2.2.0-pr-441-g1234567   # must exist for your arch (ngc-tags.py)
-#   nico_image: nvcr.io/<org>/<team>/<image>   # or export NICO_NGC_IMAGE
-#   token_env: NGC_API_KEY          # env var NAME holding your NGC key
+#   registry: nvcr.io/<org>/<team>     # base — all images live here
+#   tag: v2.2.0-pr-441-g1234567        # one tag for the whole release line (ngc-tags.py)
+#   core_image: nvmetal-carbide        # NGC's name for the core image (default)
+#   token_env: NGC_API_KEY             # env var NAME holding your NGC key
+#   (legacy spelling still accepted: nico_image: <registry>/<core_image>, nico_tag: <tag>)
 #
 # Source build (the default when ngc: is absent):
 # tag: main-20260830                # image label; default main-<today>

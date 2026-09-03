@@ -1178,7 +1178,12 @@ substitution: both share views, the repo and tools folders (validated to
 exist), the registry, names, and the IP plan derived from the two octets
 (`<underlay>.128–133.x` fabric prefixes, service VIPs `<underlay>.133.1.0/27`,
 overlay `<overlay>.150.0.0/16`, admin `<overlay>.135.0.0/16`, MAT underlay
-`<underlay>.140.2.0/24`), plus the redeploy policy. Underlay ≠ overlay is
+`<underlay>.140.2.0/24`), the redeploy policy, and the **`images:` block**:
+where the cluster pulls from, what is deployed (`none` until the first
+deploy), how the images are produced (`source.kind` ngc or build, the NGC
+base registry, tag, core image name and key env var, from
+`--images-source-*`), and the fixed set of image names (core + six REST +
+three Flow) so "all images" is spelled out once. Underlay ≠ overlay is
 enforced. The yaml is the single input of every later script; `--dry-run`
 prints it.
 
@@ -1234,7 +1239,10 @@ nvcr.io` with the key from the env var (stdin, never echoed), pull the core
 image for the host arch, retag to `localhost:5000/nico:ngc-<tag>`, push;
 pull the six `nico-rest-*` images at the **same tag** (fallback:
 `build-dev-nico.py --rest-only` with a version-skew warning), push; then
-call `deploy-dev-nico.py --tag ngc-<tag>` (`--initial` for a fresh site).
+record `images.source` (kind ngc, registry base, tag, core image, key env
+var) in the site yaml, then call `deploy-dev-nico.py --tag ngc-<tag>`
+(`--initial` for a fresh site), which records `images.tag` on success. The
+image names come from `site_images.py`, the one place the fixed set lives.
 The checkout is still required for the helm charts. No-downgrade rule
 applies to the tag you pick.
 
@@ -1278,7 +1286,8 @@ ReplicaSet's own replacements). The policy comes from the
 site yaml (`nico-system.redeploy.on_insufficient_cpu`, seeded by
 `devup.yaml`'s `redeploy:` group) or the flag; it acts only on the
 scheduler's verdict, so clusters with room are untouched. Re-applies the
-`allow_insecure_discovery` patch helm drops (20260825-#4), then lists pods.
+`allow_insecure_discovery` patch helm drops (20260825-#4), records the new
+tag as `images.tag` in the site yaml, then lists pods.
 
 ### CLIs
 

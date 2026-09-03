@@ -761,6 +761,15 @@ def main():
     here = Path(__file__).resolve().parent
     print(f'\n{"="*55}')
     print('  Nico deployed ✓')
+    # images.tag in the site yaml = what the cluster runs now
+    if args.tag:
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location(
+            'site_images', Path(__file__).resolve().parent / 'site_images.py')
+        _si = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_si)
+        _si.record(site_yaml, deployed_tag=args.tag)
+        print(f'  site yaml images.tag = {args.tag} ✓')
     print(f'\n  Verify:')
     print(f'    kubectl --kubeconfig {kubeconfig} get pods -n nico-system')
     if rest_enabled:

@@ -213,7 +213,14 @@ def build_steps(args):
                  f' --nico-mac-folder {share}'
                  f' --nico-repo-folder {args.repo}'
                  f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev'
-                 f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}')],
+                 f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
+                 + (f' --images-source-kind ngc'
+                    f' --images-source-registry {args.ngc_registry}'
+                    f' --images-source-tag {args.ngc_tag}'
+                    f' --images-source-core-image {args.ngc_core_image}'
+                    f' --images-source-token-env {args.token_env}'
+                    if args.ngc_tag else
+                    f' --images-source-kind build --images-source-tag {args.tag}'))],
          f'Inspect {site_mac}/{args.site}.yaml — all later steps read it. how-to §3.'),
 
         ('fabric', 'VM', 'Deploy the ContainerLab fabric + verify',
@@ -340,9 +347,15 @@ def main():
                    help='deploy this pre-built NGC image tag instead of '
                         'building from source (replaces the build+nico '
                         'steps — the quickest onboarding path)')
+    p.add_argument('--ngc-registry', default=None, metavar='BASE',
+                   help='NGC base nvcr.io/<org>/<team> — EVERY NICo image (core, '
+                        'REST, Flow) lives there at the same tag (config: ngc.registry)')
+    p.add_argument('--ngc-core-image', default=None, metavar='NAME',
+                   help="NGC's name for the core image (default nvmetal-carbide; "
+                        'config: ngc.core_image). The local registry calls it nico.')
     p.add_argument('--ngc-image', default=None, metavar='REPO',
-                   help='NGC image repository nvcr.io/<org>/<team>/<image> '
-                        '(default: $NICO_NGC_IMAGE)')
+                   help='LEGACY: full core image path nvcr.io/<org>/<team>/<image> '
+                        '(default: $NICO_NGC_IMAGE) — prefer --ngc-registry + --ngc-core-image')
     p.add_argument('--token-env', default='NGC_API_KEY', metavar='VAR',
                    help='NAME of the env var holding your NGC API key '
                         '(default: NGC_API_KEY; the value is never printed)')
@@ -376,8 +389,11 @@ def main():
         # live under a `some:` group in the yaml. Groups expand to the
         # flat option names here; add new families to this table.
         groups = {
-            'ngc': {'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image',
-                    'token_env': 'token_env'},
+            # ngc: registry (base for ALL images) + tag + core_image + token_env;
+            # nico_image/nico_tag are the legacy spelling (still accepted)
+            'ngc': {'registry': 'ngc_registry', 'tag': 'ngc_tag',
+                    'core_image': 'ngc_core_image', 'token_env': 'token_env',
+                    'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image'},
             'vm': {'cpus': 'vm_cpus', 'mem_mb': 'vm_mem_mb',
                    'disk_gb': 'vm_disk_gb'},
             'redeploy': {'on_insufficient_cpu': 'redeploy_on_insufficient_cpu'},
@@ -406,6 +422,18 @@ def main():
     if args.tag and args.ngc_tag:
         raise SystemExit('Error: both deploy modes set — --tag (source '
                          'build) and --ngc-tag (pre-built). Choose one.')
+    # NGC image model: ONE base registry holds every image at one tag; only
+    # the core image has a non-conventional name there. Accept the legacy
+    # full path (nico_image / --ngc-image / $NICO_NGC_IMAGE) by splitting it.
+    if args.ngc_tag:
+        legacy = args.ngc_image or os.environ.get('NICO_NGC_IMAGE')
+        if args.ngc_registry:
+            args.ngc_core_image = args.ngc_core_image or 'nvmetal-carbide'
+        elif legacy:
+            base, name = legacy.rsplit('/', 1)
+            args.ngc_registry, args.ngc_core_image = base, (args.ngc_core_image or name)
+        args.ngc_image = (f'{args.ngc_registry}/{args.ngc_core_image}'
+                          if args.ngc_registry else None)
     if not args.tag:
         args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
     if args.ip_explicit:

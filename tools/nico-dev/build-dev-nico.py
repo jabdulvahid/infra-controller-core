@@ -343,9 +343,16 @@ def main():
     docker_push(runtime_ctr)
     docker_push(nico_img)
 
+    # images.source in the site yaml: these images came from a local build
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location('site_images', Path(__file__).resolve().parent / 'site_images.py')
+    _si = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_si)
+    _si.record(site_yaml, source={'kind': 'build', 'tag': args.tag})
+
     print(f'\n{"="*55}')
     print('  Build + push complete ✓')
-    print(f'  tag : {args.tag}')
+    print(f'  tag : {args.tag}   (site yaml images.source = build; images.tag is set by the deploy)')
     here = Path(__file__).resolve().parent
     print(f'\n  Verify registry (host or VM):')
     print(f'    {here}/ndev.py {args.site} registry verify')

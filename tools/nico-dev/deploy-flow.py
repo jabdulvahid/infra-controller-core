@@ -49,7 +49,11 @@ except ImportError:
     sys.exit(1)
 
 HERE = Path(__file__).resolve().parent
-IMAGES = ['nico-flow', 'nico-psm', 'nico-nsm']
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location('site_images', HERE / 'site_images.py')
+site_images = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(site_images)
+IMAGES = site_images.IMAGE_NAMES['flow']
 RELEASE, NS = 'flow', 'flow'
 DOCKER_ARCH = 'arm64' if platform.machine() in ('arm64', 'aarch64') else 'amd64'
 
@@ -264,11 +268,17 @@ def main():
     if args.build:
         build_images(repo, push_reg, tag)
     elif args.ngc:
-        ngc_tag = args.ngc_tag or tag.removeprefix('ngc-')
-        base = args.ngc_image or os.environ.get('NICO_NGC_IMAGE', '').rsplit('/', 1)[0]
+        # defaults come from the site yaml's images.source (written by the
+        # NGC deploy), so no flags are needed on a site deployed from NGC
+        src_cfg = site_images.read(cfg)['source']
+        ngc_tag = args.ngc_tag or src_cfg.get('tag') or tag.removeprefix('ngc-')
+        base = (args.ngc_image or src_cfg.get('registry')
+                or os.environ.get('NICO_NGC_IMAGE', '').rsplit('/', 1)[0])
+        token_env = args.token_env if args.token_env != 'NGC_API_KEY' else (src_cfg.get('token_env') or 'NGC_API_KEY')
         if not base:
-            sys.exit('Error: NGC repository base unknown — pass --ngc-image nvcr.io/<org>/<team> or set NICO_NGC_IMAGE')
-        pull_images_from_ngc(push_reg, base, ngc_tag, tag, args.token_env)
+            sys.exit('Error: NGC registry base unknown — pass --ngc-image nvcr.io/<org>/<team> '
+                     '(or deploy the site from NGC first so images.source records it)')
+        pull_images_from_ngc(push_reg, base, ngc_tag, tag, token_env)
     missing = [i for i in IMAGES if not registry_has(push_reg, i, tag)]
     if missing:
         sys.exit(f'Error: not in {push_reg} at tag {tag}: {", ".join(missing)} — use --build or --ngc')
