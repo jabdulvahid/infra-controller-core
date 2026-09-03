@@ -226,7 +226,7 @@ def build_steps(args):
          'kubeadm/containerd issues: how-to §5. Rerun is idempotent.'),
 
         ('build', 'Host', 'Build nico images → local registry',
-         [[sys.executable, NICO_DEV / 'build-dev-nico-mac.py',
+         [[sys.executable, NICO_DEV / 'build-dev-nico.py',
            site_mac, '--tag', args.tag]],
          'Needs the docker daemon and DISK: the builder cache grows fast —\n'
          '`docker builder prune -af`. First build 20-40 min, later 2-5 min.'),

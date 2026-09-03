@@ -241,7 +241,7 @@ def main():
     print(f'  sudo python3 {vm_dev}/deploy-dev-cp.py {folder}')
     print()
     print('Then on Mac (pick a meaningful tag, e.g. v2.0.0):')
-    print(f'  python3 {mac_dev}/build-dev-nico-mac.py {mac_site} --tag <tag>')
+    print(f'  python3 {mac_dev}/build-dev-nico.py {mac_site} --tag <tag>')
     print(f'  python3 {mac_dev}/deploy-dev-nico.py {mac_site} --tag <tag>')
 
 

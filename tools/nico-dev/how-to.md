@@ -339,7 +339,7 @@ git checkout main && git merge --ff-only upstream/main
 Build ARM64 images and push to the local Docker registry:
 
 ```bash
-python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/build-dev-nico-mac.py \
+python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/build-dev-nico.py \
   <share>/sites/dev \
   --tag main-$(date +%Y%m%d)
 ```
@@ -768,7 +768,7 @@ After initial setup, the typical code-change cycle:
 
 ```bash
 # 1. Build new image on Mac (fast — uses layer + sccache)
-python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/build-dev-nico-mac.py \
+python3 ~/nico-tests/vm1/shared/infra-controller-core/tools/nico-dev/build-dev-nico.py \
   <share>/sites/dev --tag myfix
 
 # 2. Roll out to running cluster (on VM)
@@ -809,7 +809,7 @@ Practical rules:
   that — never by redeploying a pre-pull tag:
   ```bash
   git -C <repo> checkout -- <files-you-changed>       # revert the code
-  python3 build-dev-nico-mac.py <site> --tag main-$(date +%Y%m%d)
+  python3 build-dev-nico.py <site> --tag main-$(date +%Y%m%d)
   python3 redeploy-dev-nico.py  <site> --tag main-$(date +%Y%m%d)
   ```
 
@@ -829,7 +829,7 @@ kubectl delete job nico-api-migrate -n nico-system
 git -C <repo> checkout -- <files-you-changed>
 
 # 3. build + deploy a fresh tag from the CURRENT checkout
-python3 build-dev-nico-mac.py <site> --tag main-$(date +%Y%m%d)
+python3 build-dev-nico.py <site> --tag main-$(date +%Y%m%d)
 python3 redeploy-dev-nico.py  <site> --tag main-$(date +%Y%m%d)
 ```
 
@@ -1035,7 +1035,7 @@ python3 ~/mac/infra-controller-core/tools/nico-dev/ndev.py ~/mac/sites/dev dpu i
 | `create-dev-site.py` | VM | Generate site yaml |
 | `deploy-dev-fabric.py` | VM (sudo) | Create ContainerLab fabric + boot service |
 | `deploy-dev-cp.py` | VM (sudo) | kubeadm cluster + MetalLB BGP |
-| `build-dev-nico-mac.py` | Mac | Build ARM64 Nico images + push to registry |
+| `build-dev-nico.py` | Mac | Build ARM64 Nico images + push to registry |
 | `deploy-dev-nico.py` | VM (sudo) | Full Nico helm deploy (first time) |
 | `redeploy-dev-nico.py` | VM (sudo) | Rolling update to new image tag |
 | `build-nico-clis.py` | Mac | Build nico-admin-cli and machine-a-tron |
