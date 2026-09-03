@@ -1035,20 +1035,291 @@ python3 ~/mac/infra-controller-core/tools/nico-dev/ndev.py ~/mac/sites/dev dpu i
 
 ## Script reference
 
-| Script | Where to run | Purpose |
-|---|---|---|
-| `prepare-vm.sh init` | Mac | Install all VM software via SSH |
-| `create-dev-site.py` | VM | Generate site yaml |
-| `deploy-dev-fabric.py` | VM (sudo) | Create ContainerLab fabric + boot service |
-| `deploy-dev-cp.py` | VM (sudo) | kubeadm cluster + MetalLB BGP |
-| `build-dev-nico.py` | Mac | Build ARM64 Nico images + push to registry |
-| `deploy-dev-nico.py` | VM (sudo) | Full Nico helm deploy (first time) |
-| `redeploy-dev-nico.py` | VM (sudo) | Rolling update to new image tag |
-| `build-nico-clis.py` | Mac | Build nico-admin-cli and machine-a-tron |
-| `configure-clis.py` | Mac | Issue certs and generate run scripts |
-| `bake-golden-image.sh` | VM (sudo) | Prepare VM for golden image export |
-| `first-boot.sh` | VM (sudo) | Personalise a cloned golden image (once per user) |
-| `ndev.py` | Mac or VM | Site status and verification tool |
+Every script is independently runnable and idempotent or self-healing;
+`dev-up.py` is only a runner that calls them in order. "Host" means the
+machine that owns the VM (a Mac or a Linux box); "VM" means inside it. Paths
+in the site yaml exist in two views — `nico_mac_folder` (host) and
+`nico_vm_folder` (guest, `~/mac`) — and every script resolves whichever one
+it can see, which is how the same site folder works from both sides.
+
+### At a glance
+
+| Script | Runs on | Purpose | Idempotent? |
+|---|---|---|---|
+| `check-prereqs.sh [--build]` | Host | Read-only probe of everything the host needs | yes (no writes) |
+| `graft-tools.sh [--edge\|--ref X]` | Host, inside your checkout | Fetch `tools/nico-dev` as untracked, git-excluded files | yes (overwrites in place) |
+| `dev-up.py --config X [--dry-run] [--from S] [--until S]` | Host | Runner: vm → prep → site → fabric → cp → (build \| registry → ngc) → nico → route | yes (every step reruns) |
+| `build-nico-dev-vm.py` | Host | Create the base VM from the Ubuntu cloud image + cloud-init | yes (reuses disk/VM, heals) |
+| `prepare-vm.sh init --vm-ip IP` | Host → VM over ssh | Mount the share, install guest tooling, install ssh key | yes |
+| `create-dev-site.py` | VM (or host) | Render the site yaml from `nico-dev.yaml` | yes (rewrites) |
+| `deploy-dev-fabric.py` | VM, sudo | ContainerLab FRR fabric + bridges + DPU stand-in | yes (redeploys) |
+| `deploy-dev-cp.py` | VM, sudo | kubeadm single-node cluster, flannel, MetalLB BGP | yes |
+| `ensure-registry.py` | Host | Start the `registry:2` container the VM pulls from | yes |
+| `build-dev-nico.py --tag T` | Host | Build core + REST images from the checkout, push to the registry | refuses an existing tag |
+| `ngc-tags.py` | Host | List deployable NGC tags for the host arch | yes (read-only) |
+| `deploy-nico-from-ngc.py <site> <tag>` | Host | Pull core + 6 REST images from NGC, retag, push, deploy | yes |
+| `generate_dev_values.py` | Host or VM | Render helm values (+ the nico-api site config TOML) into `{site}/dev-values/` | yes (rewrites) |
+| `deploy-dev-nico.py --tag T` | Host or VM | Full helm deploy of the stack, in order, with healing | yes (`--skip-to`, `--only`) |
+| `redeploy-dev-nico.py --tag T` | Host or VM | Roll the `nico` release to a new tag, watch the rollout | refuses the deployed tag |
+| `build-nico-clis.py` | Host | Build `nico-admin-cli`, `machine-a-tron`, `nicocli` | yes (incremental) |
+| `configure-clis.py` | Host | Certs, MAT config, `run-*.sh` wrappers, `/etc/hosts` | yes (reissues) |
+| `get-admin-cli.sh` | VM | Extract `nico-admin-cli` from the api image, no build | yes |
+| `ndev.py <site> [ctx] [cmd]` | Host or VM | Status and verification | read-only |
+| `smoke-test.sh [--keep]` | Host | Throwaway VM: boot path assertions, then delete | yes |
+| `dev-down.py --config X` | Host (Linux today) | Delete the VM and everything created for it; keep your data | yes |
+| `bake-golden-image.sh` / `first-boot.sh` | VM, sudo | Golden-image lane (§11–§12) | see those sections |
+
+### Host-side entry points
+
+**`check-prereqs.sh [--build]`** — Probes, never changes: arch, the
+virtualization stack (UTM on macOS; `/dev/kvm`, sudo-less `virsh`,
+`virt-install`, `cloud-localds`, `qemu-img`, `virtiofsd` on Linux), free
+disk (40 GB run / 100 GB build), an ssh keypair, python3 + pyyaml, git, and
+on Linux whether `192.168.64.0/24` is free or already ours. `--build` adds
+docker (daemon reachable, buildx), kubectl, helm. Each ✗ line carries its
+fix. Exit 0 means the required tier passed. The one thing it cannot check
+is macOS's Automation permission for UTM; the first VM build pops that
+dialog.
+
+**`graft-tools.sh`** — Fetches `tools/nico-dev` from the fork's `nico-dev`
+branch into the current checkout with `git checkout FETCH_HEAD --` then
+`git reset -q`, and adds `tools/nico-dev/` to `.git/info/exclude`, so the
+tools are untracked and invisible to `git status`, impossible to commit by
+accident. Default source is the **stable channel**, the newest
+`validated-*` tag (peeled `^{}` refs excluded); `--edge` takes the branch
+tip; `--ref` takes anything. Rerun to update; it overwrites in place. In a
+checkout where the tools are tracked (the fork branch itself) it skips the
+exclude line.
+
+**`dev-up.py`** — Platform dispatcher (`uname` → `dev-up_mac.py` /
+`dev-up_linux.py`); the `_mac`/`_linux` files are the implementations. A
+runner only: it resolves options from `--config` (yaml keys = option names;
+`ngc:`, `vm:`, `redeploy:` groups expand to `ngc_tag`, `vm_cpus`, …), lets
+command-line flags override, runs **preflight** (ssh key, share folder,
+docker daemon, UTM or libvirt, NGC key env var and image in NGC mode,
+octet-clash warnings, stale `known_hosts` for a new VM), prints the plan,
+and executes the steps with a settle delay (`--step-delay`, default 10 s)
+and one retry 15 s apart (`--retries`). `--dry-run` shows every check
+(✓/✗/⚠), the numbered plan with exact commands, and ends with **READY** or
+**NOT READY**; nothing runs. On failure it prints that step's known
+failure modes and the exact resume command (`--from <step>`, carrying
+`--config`). Interactive moments by design: the UTM share Path pause (Mac
+only), the VM password once during prep, sudo for the route. Modes:
+`tag:` = source build (steps `build` + `nico`), `ngc:` = pre-built (step
+`ngc` replaces both). Setting both is an error.
+
+**`build-nico-dev-vm.py`** — Dispatcher to `_mac` (UTM) or `_linux`
+(libvirt). Both: download the Ubuntu cloud image once into a cache, grow it
+to `--disk-gb` (Mac: pure-Python qcow2 header patch, since UTM's qemu-img is
+a dylib; Linux: `qemu-img resize`), write a cloud-init NoCloud seed
+(`user-data`: the `nico` user with **your uid**, password, ssh key, docker,
+guest agent, serial getty; `meta-data`; `network-config`: static
+`192.168.64.<host-num>`, early boot, matched on `en*`), create the VM, boot
+it, and wait for ssh (15 min cap). Mac specifics: AppleScript creation
+record with only the proven keys, share mode VirtFS, then a **manual GUI
+step** (share Path; optional Display card `virtio-gpu-pci`), rerun heals
+the bundle disk. Linux specifics: shared infra created loudly if missing
+(NAT network `nico-nat` @ `192.168.64.0/24` on bridge `virbr-nico`; dir
+pool `nico-dev`), volumes `<vm>-root.qcow2` and `<vm>-seed.iso` uploaded
+with `virsh vol-*` (no sudo), `virt-install --import` with a **virtiofs**
+share (9p would leave guest-written files unreadable on the host), serial
+console via `virsh console`, and a **ledger** `~/.nico-dev/vms/<vm>.yaml`
+that `dev-down.py` reads. `--stage image|seed|vm|boot` stops after a stage;
+`--dry-run` prints the plan.
+
+**`ensure-registry.py [--port]`** — `docker inspect` → `start` → `run
+registry:2 --restart=always` named `registry` on port 5000. The VM's
+containerd pulls every image from `192.168.64.1:5000`; source builds and
+the NGC lane push into it. `dev-up` runs it in the `registry` step *before*
+verifying reachability from the VM (20260902-#5).
+
+**`dev-down.py --name X | --config X [--remove-infra] [--yes]`** — Linux
+edition today (Mac: delete the VM in UTM; `dev-down_mac.py` is Phase 3).
+Reads the ledger, then: `virsh destroy` + `undefine --remove-all-storage`,
+belt-and-braces `vol-delete`, removes host routes `via <vm-ip>`,
+`ssh-keygen -R <ip>`, deletes the ledger entry. Never touches your share
+folder, site folder or worktree. `--remove-infra` also removes `nico-nat`
+and the pool, but only when no `nico-*` domains remain.
+
+**`smoke-test.sh [--keep]`** — Builds a throwaway VM `nico-smoke` on
+`.124`, asserts: creation succeeds, static IP is up early, ssh answers,
+`cloud-init status` reaches `done`, guest arch equals host arch, and on
+Linux that the virtiofs share actually mounts. Then deletes it (`--keep`
+keeps it on failure for autopsy). Maintainers' rule: no push that touches
+the seed, the creation record or prepare-vm's guest section without a green
+smoke run. It does **not** exercise prepare-vm, the fabric or Kubernetes.
+
+### VM preparation
+
+**`prepare-vm.sh init --vm-ip IP [--vm-user U] [--ssh-key K] [--share
+NAME] [--static-ip IP]`** — Runs on the host, drives the VM over ssh
+(password once, before key auth exists). Decides the share filesystem from
+the host: 9p on macOS, virtiofs on Linux, passed to the guest as `--fs`
+(explicit, never guessed). Waits for first-boot cloud-init to finish before
+touching apt (the early static IP made ssh available mid-install,
+20260901-#5). In the guest: base packages (`bindfs`, iptables, dns tools…),
+docker group, fuse `user_allow_other`, LVM grow, TCP MSS clamp for QEMU NAT,
+passwordless sudo, mounts `share` → `/mnt/mac` and a bindfs view at `~/mac`
+whose ownership options depend on the filesystem (9p: `map=root/<user>`;
+virtiofs: `create-for-user=<user>`, so files the guest writes belong to you
+on the host, 20260902-#7), fstab entries for both, kubectl for the guest
+arch, helm, ContainerLab. Sizing check: warns below 8 GB RAM / 4 CPUs.
+Finally installs your public key and verifies key auth with
+`IdentitiesOnly`. `--static-ip` is the golden-image variant that switches
+the VM's address at the end.
+
+### Site, fabric, cluster
+
+**`create-dev-site.py --dc-name --site-name --underlay O --overlay O
+--folder F --nico-vm-folder --nico-mac-folder --nico-repo-folder
+--nico-dev-folder [--registry-host/-port] [--redeploy-on-insufficient-cpu]`**
+— Renders `{folder}/{site}.yaml` from the `nico-dev.yaml` template by
+substitution: both share views, the repo and tools folders (validated to
+exist), the registry, names, and the IP plan derived from the two octets
+(`<underlay>.128–133.x` fabric prefixes, service VIPs `<underlay>.133.1.0/27`,
+overlay `<overlay>.150.0.0/16`, admin `<overlay>.135.0.0/16`, MAT underlay
+`<underlay>.140.2.0/24`), plus the redeploy policy. Underlay ≠ overlay is
+enforced. The yaml is the single input of every later script; `--dry-run`
+prints it.
+
+**`deploy-dev-fabric.py <site>`** (sudo, VM) — Generates the ContainerLab
+topology and FRR configs (super-spine, spines, leafs incl. `leaf-mat`, the
+DPU stand-in), creates bridges `br-<dc>-cp` and `br-<dc>-internet`,
+enables forwarding, NAT and fabric routes on the VM, deploys ContainerLab,
+attaches the VM's control-plane interface to `br-<dc>-cp` (the VM peers
+with the DPU stand-in like a site controller host peers with its DPU), adds
+the MAT underlay route, and installs a boot service so the fabric returns
+after a VM reboot. Rerun redeploys cleanly. Verify with `ndev <site> fabric
+verify` (BGP peers, bridges, pings).
+
+**`deploy-dev-cp.py <site>`** (sudo, VM) — The VM *is* the control-plane
+node: installs kubeadm/kubelet/kubectl, configures containerd
+(SystemdCgroup, insecure registry via `config_path` + `hosts.toml` for
+`192.168.64.1:5000`, verified), system prerequisites, `kubeadm init`,
+flannel, removes the control-plane taint, waits for Ready, installs
+MetalLB and its BGP peer toward the DPU stand-in (the source of the
+service VIPs). Writes `{site}/<dc>-<site>.kubeconfig.yaml` (mode 0600)
+into the site folder so the host can use it too. Idempotent.
+
+### Images and deployment
+
+**`build-dev-nico.py <site> --tag T [--push-only] [--skip-rest]
+[--rest-only] [--overwrite-tag]`** — Formerly `build-dev-nico-mac.py` (a
+shim remains). Host-arch aware: `aarch64`/`arm64` on Apple Silicon,
+`x86_64`/`amd64` elsewhere; the images target the VM, which is always the
+host's arch. Prints the checkout (branch, sha, dirty flag: uncommitted
+changes **are** baked in). Steps: ensure registry; build the repo's
+`build-container-<arch>`; copy `nico-dev-docker/Dockerfile.runtime-dev` and
+`Dockerfile.nico-dev` into the repo temporarily (removed afterwards);
+build `runtime-dev` and `nico:<tag>` (plain cargo build with sccache, no CI
+gates; `VERSION` from `git describe`; kea hook installed under the target
+triplet, 20260902-#10); then the six REST images via `docker buildx build
+--platform linux/<arch>` (not `make docker-build`, whose manifest step
+assumes both arches); push everything to `localhost:5000`. **Refuses a tag
+that already exists** in the registry (20260903-#1: a same-tag rebuild is
+invisible to the cluster); `--overwrite-tag` overrides with a warning.
+First build 20–40 min on a Mac, less on a big Linux box; incremental
+minutes.
+
+**`ngc-tags.py [--config X] [-n N] [--before TAG]`** — Read-only. Lists the
+newest PR builds (what tracks `main`) and release tags of the NGC image,
+with per-tag creation dates and whether a manifest for the host arch
+exists. Reads the image and the key's **env var name** from `--config`
+(`ngc:` block) or `NICO_NGC_IMAGE` / `NGC_API_KEY`; never prints key
+values. `--before` pages back through history.
+
+**`deploy-nico-from-ngc.py <site> <tag> [--token-env VAR] [--ngc-image
+REPO] [--initial]`** — The zero-build lane: ensure registry, `docker login
+nvcr.io` with the key from the env var (stdin, never echoed), pull the core
+image for the host arch, retag to `localhost:5000/nico:ngc-<tag>`, push;
+pull the six `nico-rest-*` images at the **same tag** (fallback:
+`build-dev-nico.py --rest-only` with a version-skew warning), push; then
+call `deploy-dev-nico.py --tag ngc-<tag>` (`--initial` for a fresh site).
+The checkout is still required for the helm charts. No-downgrade rule
+applies to the tag you pick.
+
+**`generate_dev_values.py <site> [--output-dir]`** — Called by
+`deploy-dev-nico.py` on every run; runnable alone to inspect. From the site
+yaml it renders one values file per chart into `{site}/dev-values/`:
+`cert-manager.yaml`, `vault.yaml`, `eso.yaml`, `zalando-postgres-op.yaml`,
+`nico-prereqs.yaml`, `nico.yaml` (embedding the nico-api site config TOML:
+pools from the fabric prefixes, `lo-ip` skipping the DPU stand-in, kea
+hook path by GNU triplet, registry image/tag) and `nico-rest-dev.yaml`.
+Nothing is hardcoded here; change the site yaml, not the output.
+
+**`deploy-dev-nico.py <site> --tag T [--skip-to R] [--only R]`** — Full
+deploy, host or VM (helm/kubectl reach the cluster via the kubeconfig in
+the site folder). Preflight: cluster reachable, registry reachable from
+here (`/v2/`), image `nico:<tag>` present (all manifest media types
+accepted, 20260902-#6). Regenerates values, then installs in order:
+`local-path-provisioner → cert-manager → vault → external-secrets →
+postgres-operator → nico-prereqs → nico → rest-postgres → keycloak →
+temporal → nico-rest → nico-rest-site-agent`, healing stuck helm releases
+(pending-*/failed) before each install, waiting for the `nico-system`
+namespace if it is Terminating, and applying the `allow_insecure_discovery`
+patch MAT needs. `--skip-to`/`--only` resume or redo one release; the
+preflight verifies the skipped prerequisites are actually healthy. Never
+delete the `nico-system` namespace to recover; it holds two releases' state.
+
+**`redeploy-dev-nico.py <site> --tag T [--force] [--on-insufficient-cpu
+wait|evict-old]`** — The dev-loop step: `helm upgrade nico --reuse-values
+--set global.image.tag=T`, core release only (REST images are rebuilt by
+`build-dev-nico.py` but not rolled here). Reads the deployed tag first and
+**refuses the same tag** (20260903-#1; `--force` for pull-policy-Always
+setups). Runs helm without `--wait` and watches every Deployment in
+`nico-system` itself: a surge pod Pending with `Insufficient cpu` (a full
+site commits ~90% of a 6-CPU node, 20260903-#2) is either diagnosed with
+the manual unstick (`wait`, the default) or unstuck by deleting **one** old
+Running pod of that deployment (`evict-old`). The policy comes from the
+site yaml (`nico-system.redeploy.on_insufficient_cpu`, seeded by
+`devup.yaml`'s `redeploy:` group) or the flag; it acts only on the
+scheduler's verdict, so clusters with room are untouched. Re-applies the
+`allow_insecure_discovery` patch helm drops (20260825-#4), then lists pods.
+
+### CLIs
+
+**`build-nico-clis.py <site> [--install-to DIR] [--admin-cli-only]
+[--mat-only] [--skip-nicocli] [--repo DIR --out-dir DIR]`** — Builds three
+tools from the checkout named in the site yaml. `machine-a-tron` always in
+a rust container (`rust:<repo's rust-toolchain.toml>` + protoc/cmake/ssl,
+built once per version; named volumes make rebuilds incremental) because it
+runs on the VM; delivered to `{site}/mat/machine-a-tron` through the share.
+`nico-admin-cli` and `nicocli`: on macOS with the host's cargo and Go (Mach-O
+needed); on Linux in the same rust container and a `golang:<go.mod
+version>` container, since a Linux host runs the ELF directly. Container
+outputs are chowned to you; `GOFLAGS=-buildvcs=false` and `safe.directory`
+sidestep root-vs-owner git checks (20260902-#9). `--repo/--out-dir` build a
+feature worktree without overwriting the site's baseline binary.
+
+**`configure-clis.py <site> [--admin-cli-only] [--skip-hosts] [--dry-run]`**
+— Fetches the site CA from the `nico-roots` secret, port-forwards Vault
+and issues client certs for admin-cli and MAT (SPIFFE `machine-a-tron`)
+under `{site}/certs/{admin,mat}/`, writes `{site}/mat/mat-config.toml` and
+stages the bmc-mock server certs, generates `run-admin-cli.sh` (endpoint +
+certs baked in; **always use it rather than the bare binary**, which dials
+the in-cluster URL) and `run-mat.sh` (VM-side install + setcap), and adds
+`<api_vip> nico-api.<dc>-<site>` to `/etc/hosts` (multi-site safe).
+
+**`get-admin-cli.sh <site>`** (VM) — The no-build path: `kubectl exec`
+into the api pod, copy the `nico-admin-cli` binary it ships to
+`/usr/local/bin`, then run `configure-clis.py --admin-cli-only` VM-side so
+the wrapper carries VM paths. Version-matched with the deployed API by
+construction.
+
+### Status
+
+**`ndev.py <site> [info | fabric info|verify|shell | bgp info | dpu info |
+cluster info | registry verify] [--detail]`** — The summary shows site
+identity, fabric switch and super-spine BGP health, DPU stand-in state,
+node status and pod count, BGP sessions. Decides **which side it runs on**
+from the site yaml's two share views (not from the platform,
+20260902-#8): off-host it reports fabric, BGP and DPU as `n/a (VM-side)` and
+never consults the host's docker; on the VM it inspects the ContainerLab
+containers with `docker exec … vtysh`. `fabric verify` is the full health
+check (BGP established counts, bridges, loopback pings); `fabric shell
+<switch>` drops into `vtysh`; `registry verify` lists images and tags and,
+on the VM, checks containerd's insecure-registry config. On a golden-image
+VM `ndev` is preinstalled and the site argument is optional.
 
 ---
 
