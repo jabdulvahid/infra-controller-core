@@ -1262,15 +1262,19 @@ preflight verifies the skipped prerequisites are actually healthy. Never
 delete the `nico-system` namespace to recover; it holds two releases' state.
 
 **`redeploy-dev-nico.py <site> --tag T [--force] [--on-insufficient-cpu
-wait|evict-old]`** — The dev-loop step: `helm upgrade nico --reuse-values
+wait|scale-down-first]`** — The dev-loop step: `helm upgrade nico --reuse-values
 --set global.image.tag=T`, core release only (REST images are rebuilt by
 `build-dev-nico.py` but not rolled here). Reads the deployed tag first and
 **refuses the same tag** (20260903-#1; `--force` for pull-policy-Always
 setups). Runs helm without `--wait` and watches every Deployment in
 `nico-system` itself: a surge pod Pending with `Insufficient cpu` (a full
 site commits ~90% of a 6-CPU node, 20260903-#2) is either diagnosed with
-the manual unstick (`wait`, the default) or unstuck by deleting **one** old
-Running pod of that deployment (`evict-old`). The policy comes from the
+the manual unstick (`wait`, the default) or unstuck deterministically
+(`scale-down-first`: that deployment is switched to `maxSurge 0 /
+maxUnavailable 1` for this rollout so an old pod leaves before the new one
+is scheduled, and the chart's strategy is restored when the rollout ends;
+deleting old pods was tried first and lost the scheduler race to the old
+ReplicaSet's own replacements). The policy comes from the
 site yaml (`nico-system.redeploy.on_insufficient_cpu`, seeded by
 `devup.yaml`'s `redeploy:` group) or the flag; it acts only on the
 scheduler's verdict, so clusters with room are untouched. Re-applies the

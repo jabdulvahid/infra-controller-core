@@ -28,10 +28,12 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # When a rolling redeploy cannot schedule its surge pod ("Insufficient cpu" —
 # a fully deployed site on a 6-CPU node, issues.md 20260903-#2):
 #   wait      = report the cause + the manual unstick, keep waiting (default)
-#   evict-old = delete ONE old pod of that deployment so the rollout proceeds
+#   scale-down-first = roll that deployment with maxSurge 0 / maxUnavailable 1
+#               for this rollout (old pod out first, new one fits), then
+#               restore the chart's strategy
 # Fires only on that symptom, so it changes nothing on a cluster with room.
 # redeploy:
-#   on_insufficient_cpu: evict-old
+#   on_insufficient_cpu: scale-down-first
 
 # ── Your site identity — EDIT THESE ────────────────────────────────────
 dc: dc1                           # datacenter name (yours to choose)

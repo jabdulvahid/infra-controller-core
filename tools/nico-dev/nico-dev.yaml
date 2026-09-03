@@ -152,8 +152,10 @@ nico-system:
   # Redeploy policy when a rolling update cannot schedule its surge pod
   # ("Insufficient cpu" on a fully committed single node — issues.md
   # 20260903-#2). wait = report the cause and the manual unstick;
-  # evict-old = delete one old pod of that deployment so the rollout
-  # proceeds. Fires only on the symptom, so multi-node clusters are unaffected.
+  # scale-down-first = for that rollout only, switch the deployment to
+  # maxSurge 0 / maxUnavailable 1 (an old pod is removed first, so the new
+  # one fits), then restore the chart's strategy. Fires only on the symptom,
+  # so multi-node clusters are unaffected.
   redeploy:
     on_insufficient_cpu: REDEPLOY_ON_INSUFFICIENT_CPU
 

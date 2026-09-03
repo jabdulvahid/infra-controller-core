@@ -312,7 +312,7 @@ def main():
     p.add_argument('--site', default='dev')
     p.add_argument('--underlay', type=int, default=11)
     p.add_argument('--overlay', type=int, default=12)
-    p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'evict-old'],
+    p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'scale-down-first'],
                    default='wait',
                    help='redeploy policy when a rollout cannot schedule its surge pod '
                         'on a CPU-saturated node (site step passthrough; config: '
