@@ -244,13 +244,20 @@ def main():
                          'flow needs its temporal client cert)')
         if not helm_values('nico-prereqs', 'nico-system', env):
             probs.append('helm release nico-prereqs not found in nico-system')
+        # Flow is an add-on to a DEPLOYED core: refuse on a half-built site
+        if not helm_values('nico', 'nico-system', env):
+            probs.append('helm release nico (NICo core) not found in nico-system — '
+                         'deploy the site first (dev-up / deploy-dev-nico.py)')
+        elif kubectl(['get', 'deploy', 'nico-api', '-n', 'nico-system'], env,
+                     check=False).returncode != 0:
+            probs.append('nico-api deployment missing — core deploy incomplete')
         if kubectl(['get', 'deploy', 'temporal-admintools', '-n', 'temporal'], env,
                    check=False).returncode != 0:
             probs.append('temporal-admintools not found (REST stack incomplete)')
     for pr in probs:
         print(f'  ✗ {pr}')
     if not probs:
-        print('  ✓ issuers, nico-prereqs, temporal present')
+        print('  ✓ core release, issuers, nico-prereqs, temporal present')
     if probs and not args.dry_run:
         sys.exit(1)
 
@@ -286,9 +293,15 @@ def main():
 
     # ── 2. prereqs: flow.enabled=true on the existing nico-prereqs release ─
     print('\nEnabling flow prerequisites (nico-prereqs --set flow.enabled=true)…')
-    run(['helm', 'upgrade', 'nico-prereqs', str(prereqs_dir), '-n', 'nico-system',
-         '--reuse-values', '--set', 'flow.enabled=true', f'--set', f'flow.namespace={NS}',
-         '--timeout', '10m', '--wait'], env=env, capture=False)
+    # captured: helm prints the prereqs chart's generic NOTES ("Next step —
+    # deploy NICo Core") after every upgrade, which reads as if this script
+    # were about to deploy core. It is not. Output is shown only on failure.
+    r = run(['helm', 'upgrade', 'nico-prereqs', str(prereqs_dir), '-n', 'nico-system',
+             '--reuse-values', '--set', 'flow.enabled=true', f'--set', f'flow.namespace={NS}',
+             '--timeout', '10m', '--wait'], env=env, capture=True)
+    rev = next((l.split(':', 1)[1].strip() for l in r.stdout.splitlines()
+                if l.startswith('REVISION:')), '?')
+    print(f'  nico-prereqs upgraded (revision {rev}) with flow.enabled=true ✓')
     # the post-upgrade hook job creates the flow namespace and the vault tokens
     for s in ('psm-vault-token', 'nsm-vault-token'):
         if not wait_for(f'secret {s}', lambda s=s: kubectl(['get', 'secret', s, '-n', NS], env,
