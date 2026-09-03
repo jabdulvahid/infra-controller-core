@@ -39,6 +39,112 @@ def resolve_site(arg):
     return str(p), str(Path(p).parent)
 
 
+def _kubectl_json(args, env):
+    """kubectl ... -o json → dict, or None when kubectl fails (unreachable
+    API, bad kubeconfig). Callers must treat None as 'unknown', never as
+    'nothing there'."""
+    import json
+    r = subprocess.run(['kubectl', '--request-timeout=15s'] + args + ['-o', 'json'],
+                       env=env, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout:
+        print(f'  ! kubectl {" ".join(args)} failed: {(r.stderr or "").strip()[:200]}',
+              file=sys.stderr)
+        return None
+    return json.loads(r.stdout)
+
+
+def watch_rollout(ns, env, policy, timeout=600, poll=10):
+    """Wait for every Deployment in ns to finish rolling; diagnose a surge
+    pod stuck on 'Insufficient cpu' and, with policy evict-old, free room by
+    deleting ONE old pod of that deployment (20260903-#2).
+
+    Acts on the scheduler's verdict only — on a cluster with room the
+    condition never appears and nothing is touched, so multi-node setups
+    behave exactly as before.
+    """
+    import time
+    start = time.time()
+    evicted = set()
+    warned = set()
+    while True:
+        got = _kubectl_json(['get', 'deploy', '-n', ns], env)
+        if got is None:
+            if time.time() - start > timeout:
+                print(f'Error: could not read deployments in {ns} for {timeout}s',
+                      file=sys.stderr)
+                return False
+            time.sleep(poll)
+            continue
+        deps = got.get('items', [])
+        pending = []
+        for d in deps:
+            spec, st = d.get('spec', {}), d.get('status', {})
+            want = spec.get('replicas', 1)
+            done = (st.get('observedGeneration', 0) >= d['metadata'].get('generation', 0)
+                    and st.get('updatedReplicas', 0) == want
+                    and st.get('availableReplicas', 0) == want
+                    and st.get('replicas', 0) == want)
+            if not done:
+                pending.append(d['metadata']['name'])
+        if not pending:
+            print(f'  all deployments in {ns} rolled out ✓')
+            return True
+        if time.time() - start > timeout:
+            print(f'Error: rollout still incomplete after {timeout}s: '
+                  f'{", ".join(pending)}', file=sys.stderr)
+            return False
+
+        # Surge pods the scheduler refuses for lack of CPU
+        pods = (_kubectl_json(['get', 'pods', '-n', ns], env) or {}).get('items', [])
+        rs_by_name = {r['metadata']['name']: r for r in
+                      (_kubectl_json(['get', 'rs', '-n', ns], env) or {}).get('items', [])}
+
+        def deploy_of(pod):
+            for o in pod['metadata'].get('ownerReferences', []):
+                if o['kind'] == 'ReplicaSet':
+                    for o2 in rs_by_name.get(o['name'], {}).get('metadata', {}).get('ownerReferences', []):
+                        if o2['kind'] == 'Deployment':
+                            return o2['name'], o['name']
+            return None, None
+
+        for pod in pods:
+            if pod['status'].get('phase') != 'Pending':
+                continue
+            conds = pod['status'].get('conditions', [])
+            msg = next((c.get('message', '') for c in conds
+                        if c.get('type') == 'PodScheduled' and c.get('status') == 'False'), '')
+            if 'Insufficient cpu' not in msg:
+                continue
+            dep, new_rs = deploy_of(pod)
+            if not dep:
+                continue
+            name = pod['metadata']['name']
+            if policy == 'evict-old':
+                old = []
+                for p in pods:
+                    d2, rs2 = deploy_of(p)
+                    if (d2 == dep and rs2 != new_rs
+                            and p['status'].get('phase') == 'Running'
+                            and p['metadata']['name'] not in evicted):
+                        old.append(p)
+                if old:
+                    victim = old[0]['metadata']['name']
+                    print(f'  ⚠ {name} Pending: Insufficient cpu — evict-old: '
+                          f'deleting old pod {victim} of {dep} to free CPU')
+                    subprocess.run(['kubectl', 'delete', 'pod', '-n', ns, victim,
+                                    '--wait=false'], env=env, capture_output=True)
+                    evicted.add(victim)
+            elif name not in warned:
+                warned.add(name)
+                print(f'  ⚠ {name} Pending: Insufficient cpu — the node has no room '
+                      f'for {dep}\'s surge pod (single node, requests ~fully '
+                      f'committed).\n    Unstick by hand:  kubectl -n {ns} delete pod '
+                      f'<an old {dep} pod>\n    Or set redeploy.on_insufficient_cpu: '
+                      f'evict-old in the site yaml (or --on-insufficient-cpu evict-old). '
+                      f'Waiting…')
+        time.sleep(poll)
+
+
 def main():
     p = argparse.ArgumentParser(
         description='Redeploy Nico to a new image tag (helm upgrade only)'
@@ -49,6 +155,9 @@ def main():
     p.add_argument('--force', action='store_true',
                    help='Proceed even if this tag is already the deployed one '
                         '(only useful with imagePullPolicy Always)')
+    p.add_argument('--on-insufficient-cpu', choices=['wait', 'evict-old'], default=None,
+                   help='override the site yaml nico-system.redeploy.on_insufficient_cpu '
+                        '(default from the site yaml, else wait)')
     args = p.parse_args()
 
     site_yaml, site_folder = resolve_site(args.site)
@@ -110,16 +219,31 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
+    # Policy for a rollout that cannot schedule its surge pod (20260903-#2):
+    # site yaml nico-system.redeploy.on_insufficient_cpu, CLI overrides.
+    policy = (args.on_insufficient_cpu
+              or cfg.get('nico-system', {}).get('redeploy', {}).get('on_insufficient_cpu')
+              or 'wait')
+    if policy not in ('wait', 'evict-old'):
+        print(f'Error: redeploy.on_insufficient_cpu must be wait or evict-old, got {policy!r}',
+              file=sys.stderr)
+        sys.exit(1)
+    print(f'  on Insufficient cpu: {policy}')
+
+    # Apply without --wait; we watch the rollout ourselves so a stuck surge
+    # pod gets diagnosed (and, with evict-old, unstuck) instead of a silent
+    # ten-minute helm timeout.
     r = subprocess.run([
         'helm', 'upgrade', 'nico', helm_dir,
         '-n', 'nico-system',
         '--reuse-values',
         '--set', f'global.image.tag={args.tag}',
-        '--wait', '--timeout', '10m',
     ], env=env)
-
     if r.returncode != 0:
         print('Error: helm upgrade failed', file=sys.stderr)
+        sys.exit(1)
+
+    if not watch_rollout('nico-system', env, policy, timeout=600):
         sys.exit(1)
 
     print(f'\n  Nico redeployed with tag {args.tag} ✓')
