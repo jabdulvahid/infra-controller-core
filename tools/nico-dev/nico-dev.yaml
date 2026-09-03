@@ -25,11 +25,30 @@ nico_mac_folder: NICO_MAC_FOLDER
 nico_repo_folder: NICO_REPO_FOLDER
 nico_dev_folder: NICO_DEV_FOLDER
 
-# Mac container registry — Docker registry:2 on Mac, VM pulls via 192.168.64.1
+# Host container registry — Docker registry:2 on the host, VM pulls via 192.168.64.1
 registry:
-  host: 192.168.64.1   # Mac IP as seen from UTM VM (Shared Network)
+  host: 192.168.64.1   # host IP as seen from the VM
   port: 5000
-  nico_tag: latest
+  nico_tag: latest     # legacy; images.tag below is the maintained value
+
+# Images — what the cluster runs and where it came from. Every NICo image
+# lives in ONE registry at ONE tag under the fixed names listed. Written by
+# create-dev-site.py; tag and source are updated by the deploy scripts
+# (deploy-nico-from-ngc.py, build-dev-nico.py, deploy-dev-nico.py,
+# redeploy-dev-nico.py) so this block always describes the running site.
+images:
+  registry: 192.168.64.1:5000     # where the cluster pulls from
+  tag: IMAGES_TAG                 # what is DEPLOYED (none until the first deploy)
+  source:
+    kind: IMAGES_SOURCE_KIND      # ngc | build
+    registry: IMAGES_SOURCE_REGISTRY      # NGC base nvcr.io/<org>/<team> (ngc)
+    tag: IMAGES_SOURCE_TAG                # NGC tag (ngc) / built tag (build)
+    core_image: IMAGES_SOURCE_CORE_IMAGE  # NGC's core image name (local name: nico)
+    token_env: IMAGES_SOURCE_TOKEN_ENV    # env var NAME of the NGC key
+  names:
+    core: nico
+    rest: [nico-rest-api, nico-rest-workflow, nico-rest-site-manager, nico-rest-site-agent, nico-rest-db, nico-rest-cert-manager]
+    flow: [nico-flow, nico-psm, nico-nsm]
 
 fabric:
   dc_name: dev

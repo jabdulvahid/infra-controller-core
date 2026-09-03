@@ -286,6 +286,13 @@ def main():
         sys.exit(1)
 
     print(f'\n  Nico redeployed with tag {args.tag} ✓')
+    # images.tag in the site yaml = what the cluster runs now
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location('site_images', Path(__file__).parent / 'site_images.py')
+    _si = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_si)
+    _si.record(site_yaml, deployed_tag=args.tag)
+    print(f'  site yaml images.tag = {args.tag} ✓')
 
     # helm re-renders nico-api-config-files, silently dropping the
     # allow_insecure_discovery patch deploy-dev-nico.py applied — without
