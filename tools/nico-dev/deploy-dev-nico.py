@@ -520,7 +520,7 @@ def main():
                               capture_output=True, text=True).stdout.strip()
         print(f'  Error: image nico:{nico_tag} not in registry {registry}', file=sys.stderr)
         print(f'  tags present: {tags or "(none)"}', file=sys.stderr)
-        print(f'  Run build-dev-nico-mac.py (source) or deploy-nico-from-ngc.py '
+        print(f'  Run build-dev-nico.py (source) or deploy-nico-from-ngc.py '
               f'(NGC) to push it first.', file=sys.stderr)
         sys.exit(1)
     print(f'  registry {registry}/nico:{nico_tag} ✓')

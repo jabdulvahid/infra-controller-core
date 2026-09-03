@@ -3,7 +3,7 @@
 nico-dev — Redeploy Nico to a new image tag.
 
 Does a helm upgrade of the nico release only — no values regeneration,
-no prereqs touched. Use after build-dev-nico-mac.py pushes a new tag.
+no prereqs touched. Use after build-dev-nico.py pushes a new tag.
 
 Reads site yaml for kubeconfig and helm dir. Runs on Mac.
 
