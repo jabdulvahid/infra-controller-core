@@ -62,11 +62,13 @@ chart generation rather than adapting to it.
 
 ## Verdict for Flow
 
-Easy: everything is chart-rendered and hook-driven, the production
-`setup.sh` phase 7h is a faithful recipe, and the whole add-on is one
-host-side script of ~250 lines with no new prerequisites. Estimated first
-run: images 3–5 min (build) or ~1 min (pull), prereqs upgrade + hooks
-~2 min, chart ~1 min.
+Easy, and **verified live** (2026-09-03, Linux site, NGC lane at the REST
+tag): pull ~10 s (cached), nico-prereqs upgrade to revision 3, credential
+secret synced, Temporal namespace, both certificates Ready, chart installed,
+site-agent upgraded, `flow-…` pod Running — about 45 s end to end after the
+image was present. Everything is chart-rendered, `setup.sh` phase 7h is a
+faithful recipe, and the whole add-on is one host-side script with no new
+prerequisites.
 
 Risks to verify on the first real run (not testable offline):
 
