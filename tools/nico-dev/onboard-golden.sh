@@ -33,7 +33,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ZIP=""; DEST=""; SSH_KEY=""; VM_IP="192.168.64.126"; VM_USER="nico"; VM_PASS='Welcome123!'
-SKIP_CLONE=0; SKIP_UI_SHARE=0; DUMP_UI=0; REPO_URL="https://github.com/NVIDIA/infra-controller.git"
+SKIP_CLONE=0; SKIP_UI_SHARE=0; DUMP_UI=0; TEST_SHARE=0; VM_NAME_OPT=""
+REPO_URL="https://github.com/NVIDIA/infra-controller.git"
 GRAFT_URL="https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh"
 
 usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -48,6 +49,8 @@ while [[ $# -gt 0 ]]; do
         --skip-clone) SKIP_CLONE=1; shift ;;
         --skip-ui-share) SKIP_UI_SHARE=1; shift ;;
         --dump-ui) DUMP_UI=1; shift ;;
+        --test-share) TEST_SHARE=1; shift ;;      # run ONLY the UI share step against an imported VM
+        --vm-name) VM_NAME_OPT="$2"; shift 2 ;;   # with --test-share: which VM (default: bundle in --dest)
         -h|--help) usage; exit 0 ;;
         *) echo "Error: unknown option $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -66,7 +69,7 @@ if [[ "$DUMP_UI" -eq 1 ]]; then
     exit 0
 fi
 
-[[ -n "$ZIP" && -f "$ZIP" ]] || die "--zip <golden image zip> is required and must exist"
+[[ "$TEST_SHARE" -eq 1 || ( -n "$ZIP" && -f "$ZIP" ) ]] || die "--zip <golden image zip> is required and must exist"
 [[ -n "$DEST" ]] || die "--dest <folder> is required (e.g. ~/nico-tests/vm-20260903)"
 DEST="${DEST/#\~/$HOME}"; ZIP="${ZIP/#\~/$HOME}"
 SHARE_DIR="$DEST/shared"
@@ -122,6 +125,25 @@ open -a UTM; sleep 2
 "$UTMCTL" list >/dev/null 2>&1 || warn "utmctl needs the Automation permission — if macOS asked, click Allow and rerun"
 ok "UTM present, running"
 
+# ── --test-share: exercise ONLY the UI share step, then exit ───────────────
+if [[ "$TEST_SHARE" -eq 1 ]]; then
+    VM_NAME="$VM_NAME_OPT"
+    if [[ -z "$VM_NAME" ]]; then
+        B="$(find "$DEST" -maxdepth 1 -name '*.utm' -type d | head -1 || true)"
+        [[ -n "$B" ]] || die "--test-share needs --vm-name (no .utm bundle in $DEST to read the name from)"
+        VM_NAME="$(plutil -extract Information.Name raw -o - "$B/config.plist" 2>/dev/null || basename "$B" .utm)"
+    fi
+    "$UTMCTL" status "$VM_NAME" 2>/dev/null | grep -qi started && die "'$VM_NAME' is running — the share is set while stopped"
+    say "test: UTM shared directory of '$VM_NAME' → $SHARE_DIR"
+    if TITLE="$(set_share_via_ui)"; then
+        echo "  picker now shows: '$TITLE'  (want: '$(basename "$SHARE_DIR")')"
+        [[ "$TITLE" == "$(basename "$SHARE_DIR")" ]] && ok "share set" || warn "title differs — check UTM"
+    else
+        die "UI scripting failed — rerun --dump-ui and share the tree"
+    fi
+    exit 0
+fi
+
 # ── 2. unzip (zip retained) ────────────────────────────────────────────────
 say "2/8 unpack the golden bundle into $DEST"
 mkdir -p "$DEST"
@@ -171,6 +193,15 @@ fi
 # the only legitimate way to grant the sandbox bookmark is UTM's own file
 # dialog. Drive it: select the VM, Edit, Sharing, Browse…, ⌘⇧G, path, Open,
 # Save. Verified afterwards from INSIDE the VM (step 6), never assumed.
+# Layout from a live --dump-ui (UTM 4.x, 2026-09-04):
+#   window 1 → group 1 → splitter group 1 →
+#     group 1 → scroll area 1 → outline 1 → rows (sidebar; UI element 1 →
+#               static text 1 = VM name)
+#     group 2 → scroll area 1 (detail pane) → … static text "Shared Directory",
+#               then ONE `menu button` titled with the current share folder
+#               (or the placeholder when none) — UTM's quick share picker,
+#               whose menu has "Browse…". No Settings sheet needed.
+# Prints the menu button's title afterwards (= the chosen folder's name).
 set_share_via_ui() {
     osascript - "$VM_NAME" "$SHARE_DIR" <<'APPLESCRIPT'
 on run argv
@@ -181,41 +212,48 @@ on run argv
     tell application "System Events"
         tell process "UTM"
             set frontmost to true
-            -- 1. select the VM in the sidebar (rows whose text contains the name)
-            set sidebarRows to rows of outline 1 of scroll area 1 of splitter group 1 of window 1
-            repeat with r in sidebarRows
-                if (value of static text 1 of UI element 1 of r) contains vmName then
-                    select r
-                    exit repeat
-                end if
+            set win to window 1
+            set sidebar to outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1 of win
+            -- 1. select the VM row by name
+            set found to false
+            repeat with r in rows of sidebar
+                try
+                    if (value of static text 1 of UI element 1 of r) is vmName then
+                        set selected of r to true
+                        set found to true
+                        exit repeat
+                    end if
+                end try
             end repeat
-            delay 0.5
-            -- 2. Edit (⌘E opens the settings sheet for the selected VM)
-            keystroke "e" using command down
-            delay 1.5
-            -- 3. Sharing pane in the settings sidebar
-            set paneRows to rows of outline 1 of scroll area 1 of sheet 1 of window 1
-            repeat with r in paneRows
-                if (value of static text 1 of UI element 1 of r) is "Sharing" then
-                    select r
-                    exit repeat
-                end if
-            end repeat
+            if not found then error "VM row '" & vmName & "' not found in the UTM sidebar"
             delay 0.8
-            -- 4. Browse… → Go to folder (⌘⇧G) → path → Open
-            click button "Browse…" of sheet 1 of window 1
-            delay 1
+            -- 2. the Shared Directory quick picker in the detail pane
+            set detail to scroll area 1 of group 2 of splitter group 1 of group 1 of win
+            set mb to menu button 1 of detail
+            click mb
+            delay 0.7
+            set picked to false
+            repeat with mi in menu items of menu 1 of mb
+                try
+                    if (name of mi) starts with "Browse" then
+                        click mi
+                        set picked to true
+                        exit repeat
+                    end if
+                end try
+            end repeat
+            if not picked then error "no Browse… item in the Shared Directory menu"
+            delay 1.2
+            -- 3. the Open panel: Go to folder (⌘⇧G), type the path, confirm twice
             keystroke "g" using {command down, shift down}
-            delay 0.6
+            delay 0.7
             keystroke sharePath
-            delay 0.4
+            delay 0.5
             keystroke return
-            delay 0.8
-            keystroke return  -- "Open" is the default button
-            delay 1
-            -- 5. Save the settings sheet
-            click button "Save" of sheet 1 of window 1
-            delay 0.8
+            delay 0.9
+            keystroke return
+            delay 1.2
+            return title of menu button 1 of detail
         end tell
     end tell
 end run
@@ -225,8 +263,12 @@ say "5/8 UTM shared directory → $SHARE_DIR"
 if [[ "$SKIP_UI_SHARE" -eq 1 ]]; then
     warn "UI step skipped (--skip-ui-share): set it by hand — UTM → $VM_NAME → Settings → Sharing → Path"
 else
-    if set_share_via_ui; then
-        ok "UI scripting ran (verified in step 6)"
+    if TITLE="$(set_share_via_ui)"; then
+        if [[ "$TITLE" == "$(basename "$SHARE_DIR")" ]]; then
+            ok "UTM picker shows '$TITLE' (verified again from inside the VM in step 7)"
+        else
+            warn "UTM picker shows '$TITLE', expected '$(basename "$SHARE_DIR")' — will verify from inside the VM"
+        fi
     else
         warn "UI scripting failed (Accessibility permission? UTM layout changed? try --dump-ui)."
         warn "Set it by hand: UTM → $VM_NAME → Settings → Sharing → Directory Share Mode VirtFS, Path $SHARE_DIR"
