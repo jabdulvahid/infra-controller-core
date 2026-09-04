@@ -397,16 +397,27 @@ if [[ -n "$API_VIP" ]]; then
     # The proof is an HTTP answer from the VIP, not a pod list. A fresh clone
     # can have every pod Running and the VIP still refusing (how-to
     # Troubleshooting, first entry); the documented fix is one api restart.
-    probe() { curl -sk -m 5 -o /dev/null -w '%{http_code}' "https://$API_VIP/admin" 2>/dev/null || echo 000; }
+    # probe → a 3-digit HTTP code, or 000 when nothing answered. (curl prints
+    # 000 AND exits non-zero on a connect failure; a naive `|| echo 000`
+    # yielded "000000" ≠ "000" and passed — the third false green of the day.)
+    probe() {
+        local c
+        c="$(curl -sk -m 5 -o /dev/null -w '%{http_code}' "https://$API_VIP/admin" 2>/dev/null)" || true
+        [[ "$c" =~ ^[0-9]{3}$ ]] || c=000
+        echo "$c"
+    }
+    # a real answer = 2xx/3xx (page or redirect) or 401/403 (auth gate); 000
+    # or 5xx = nothing behind the VIP yet
+    answered() { [[ "$1" =~ ^[23][0-9][0-9]$ || "$1" == 401 || "$1" == 403 ]]; }
     echo "  probing https://$API_VIP/admin …"
     CODE=000
-    for i in $(seq 1 18); do CODE="$(probe)"; [[ "$CODE" != "000" ]] && break; sleep 10; done
-    if [[ "$CODE" == "000" ]]; then
-        warn "VIP not answering after 3 min — applying the fresh-clone fix (rollout restart nico-api)"
+    for i in $(seq 1 18); do CODE="$(probe)"; answered "$CODE" && break; sleep 10; done
+    if ! answered "$CODE"; then
+        warn "VIP not answering (last HTTP $CODE) after 3 min — applying the fresh-clone fix (rollout restart nico-api)"
         "${SSH[@]}" "$K -n nico-system rollout restart deployment/nico-api && $K -n nico-system rollout status deployment/nico-api --timeout=180s" >/dev/null 2>&1 || true
-        for i in $(seq 1 18); do CODE="$(probe)"; [[ "$CODE" != "000" ]] && break; sleep 10; done
+        for i in $(seq 1 18); do CODE="$(probe)"; answered "$CODE" && break; sleep 10; done
     fi
-    if [[ "$CODE" == "000" ]]; then
+    if ! answered "$CODE"; then
         die "admin UI at https://$API_VIP/admin still not answering. On the VM: $K -n metallb-system get pods; ndev fabric verify; $K -n nico-system get svc"
     fi
     ok "admin UI answers (HTTP $CODE)"
