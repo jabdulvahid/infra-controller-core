@@ -488,6 +488,16 @@ final_probe() {
     not_running=$(K get pods -A --no-headers 2>/dev/null | grep -vE 'Running|Completed|Succeeded|Terminating' || true)   # Terminating = an old pod still in its grace period, not a health signal
     if [[ -z "$not_running" ]]; then ok "every pod in the cluster is Running/Completed"
     else warn "pods not Running:"; echo "$not_running" | sed 's/^/      /'; fi
+    # The one thing this script cannot see: the HOST's route to the VIPs. It
+    # dies with the VM's network (UTM tears down vmnet when the last VM stops;
+    # libvirt likewise) — every VM stop/start needs it re-added (2026-09-04:
+    # a green verdict here, 000 from the Mac, route gone after the resize).
+    local vm_ip vips
+    vm_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    vips=$(. /etc/nico-dev/env 2>/dev/null; [[ -n "${NICO_DEV_SITE:-}" ]] && grep -E '^\s*service_vips:' "$NICO_DEV_SITE" 2>/dev/null | head -1 | awk '{print $2}')
+    say "  ℹ if the VM was stopped/rebooted, the HOST's route to the VIPs is gone — re-add it there:"
+    say "      macOS : sudo route -n add -net ${vips:-<service-vips>} ${vm_ip:-<vm-ip>}"
+    say "      Linux : sudo ip route replace ${vips:-<service-vips>} via ${vm_ip:-<vm-ip>}"
     echo
     if [[ $FAILURES -eq 0 ]]; then printf '%sSITE HEALTHY%s\n' "$G" "$N"
     else printf '%s%d CHECK(S) FAILED%s — see ✗ lines above\n' "$R" "$FAILURES" "$N"; exit 1; fi
