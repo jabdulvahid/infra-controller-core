@@ -276,7 +276,9 @@ else
     "$UTMCTL" list 2>/dev/null | grep -q " $VM_NAME\$" || die "UTM did not list '$VM_NAME' after import — open UTM and check"
     ok "imported"
 fi
-"$UTMCTL" status "$VM_NAME" 2>/dev/null | grep -qi started && die "'$VM_NAME' is already running — stop it first (the share must be set while stopped)"
+VM_RUNNING=0
+"$UTMCTL" status "$VM_NAME" 2>/dev/null | grep -qi started && VM_RUNNING=1
+[[ "$VM_RUNNING" -eq 1 ]] && warn "'$VM_NAME' is already running — the share step is skipped (it needs a stopped VM) and verified from inside the VM instead"
 
 # ── 4. shared folder + repo + tools ────────────────────────────────────────
 say "4/8 shared folder: repo + nico-dev tools"
@@ -300,7 +302,9 @@ fi
 # dialog. Drive it: select the VM, Edit, Sharing, Browse…, ⌘⇧G, path, Open,
 # Save. Verified afterwards from INSIDE the VM (step 6), never assumed.
 say "5/8 UTM shared directory → $SHARE_DIR"
-if [[ "$SKIP_UI_SHARE" -eq 1 ]]; then
+if [[ "$VM_RUNNING" -eq 1 ]]; then
+    warn "VM running — skipping the UTM share step (step 7 checks the share device inside the VM)"
+elif [[ "$SKIP_UI_SHARE" -eq 1 ]]; then
     warn "UI step skipped (--skip-ui-share): set it by hand — UTM → $VM_NAME → Settings → Sharing → Path"
 else
     if TITLE="$(set_share_via_ui)"; then
@@ -319,7 +323,7 @@ fi
 # ── 6. start + wait for ssh ────────────────────────────────────────────────
 say "6/8 start $VM_NAME, wait for ssh"
 ssh-keygen -R "$VM_IP" >/dev/null 2>&1 || true
-"$UTMCTL" start "$VM_NAME"
+[[ "$VM_RUNNING" -eq 1 ]] || "$UTMCTL" start "$VM_NAME"
 for i in $(seq 1 90); do nc -z -w 2 "$VM_IP" 22 2>/dev/null && break; sleep 2; done
 nc -z -w 2 "$VM_IP" 22 2>/dev/null || die "ssh not reachable at $VM_IP after 3 min (only ONE nico-dev VM may run at a time)"
 ok "ssh port open"
@@ -345,8 +349,11 @@ if ! "${SSH[@]}" 'cat /sys/bus/virtio/devices/*/mount_tag 2>/dev/null | tr "\0" 
     die "UTM is not offering the 'share' directory to the VM. Stop the VM, set UTM → $VM_NAME → Settings → Sharing (VirtFS, Path $SHARE_DIR), rerun."
 fi
 ok "share device present in the VM"
-if "${SSH[@]}" 'test -s /etc/nico-dev/env' 2>/dev/null; then
-    ok "first-boot already done ($("${SSH[@]}" cat /etc/nico-dev/env))"
+# Personalized = the env file names a site. NOT "file non-empty": the bake
+# leaves a comment line in /etc/nico-dev/env, which made the first live run
+# skip first-boot and end on a fabric-less cluster with no site yaml.
+if "${SSH[@]}" 'grep -q "^NICO_DEV_SITE=" /etc/nico-dev/env' 2>/dev/null; then
+    ok "first-boot already done ($("${SSH[@]}" grep '^NICO_DEV_SITE=' /etc/nico-dev/env))"
 else
     # the CURRENT first-boot.sh (flags, no hostname prompt), regardless of
     # which one the image was baked with
@@ -379,7 +386,7 @@ if [[ -n "$API_VIP" ]]; then
     echo "  KUBECONFIG=$(find "$SHARE_DIR/sites" -name '*.kubeconfig.yaml' | head -1)"
     open "https://$API_VIP/admin" || true
 else
-    warn "could not find the site yaml under $SHARE_DIR/sites — first-boot may not have written it"
+    die "no site yaml under $SHARE_DIR/sites — first-boot did not personalize this VM (rerun; step 7 will run it)"
 fi
 echo
 echo "Done. Re-test any time: stop + delete '$VM_NAME' in UTM, remove $DEST/*.utm, rerun with the same --zip."
