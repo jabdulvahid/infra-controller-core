@@ -409,13 +409,22 @@ if [[ -n "$API_VIP" ]]; then
     # a real answer = 2xx/3xx (page or redirect) or 401/403 (auth gate); 000
     # or 5xx = nothing behind the VIP yet
     answered() { [[ "$1" =~ ^[23][0-9][0-9]$ || "$1" == 401 || "$1" == 403 ]]; }
-    echo "  probing https://$API_VIP/admin …"
+    probe_loop() {   # up to 18 tries ≈ 3 min, one progress line each
+        local i
+        for i in $(seq 1 18); do
+            CODE="$(probe)"
+            printf '    try %2d/18: HTTP %s\n' "$i" "$CODE"
+            answered "$CODE" && return 0
+            sleep 10
+        done
+        return 1
+    }
+    echo "  probing https://$API_VIP/admin (up to 3 min)…"
     CODE=000
-    for i in $(seq 1 18); do CODE="$(probe)"; answered "$CODE" && break; sleep 10; done
-    if ! answered "$CODE"; then
-        warn "VIP not answering (last HTTP $CODE) after 3 min — applying the fresh-clone fix (rollout restart nico-api)"
-        "${SSH[@]}" "$K -n nico-system rollout restart deployment/nico-api && $K -n nico-system rollout status deployment/nico-api --timeout=180s" >/dev/null 2>&1 || true
-        for i in $(seq 1 18); do CODE="$(probe)"; answered "$CODE" && break; sleep 10; done
+    if ! probe_loop; then
+        warn "VIP not answering (last HTTP $CODE) — applying the fresh-clone fix (rollout restart nico-api), then probing again"
+        "${SSH[@]}" "$K -n nico-system rollout restart deployment/nico-api && $K -n nico-system rollout status deployment/nico-api --timeout=180s" 2>&1 | sed 's/^/    /' || true
+        probe_loop || true
     fi
     if ! answered "$CODE"; then
         die "admin UI at https://$API_VIP/admin still not answering. On the VM: $K -n metallb-system get pods; ndev fabric verify; $K -n nico-system get svc"
