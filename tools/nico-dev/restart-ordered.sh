@@ -235,7 +235,10 @@ infra_gate() {
     ensure_workload kube-system deploy/coredns 120
 
     say "  fabric + metallb"
-    if ip link show 2>/dev/null | grep -q 'br-.*-cp'; then ok "fabric control-plane bridge present"; else warn "no br-*-cp bridge — is nico-dev-fabric running? (systemctl status nico-dev-fabric)"; fi
+    # deploy-dev-fabric.py creates br-<dc>-cp and br-<dc>-internet; read sysfs
+    # (works unprivileged and without /usr/sbin on PATH, unlike `ip`)
+    if ls /sys/class/net 2>/dev/null | grep -q '^br-.*-cp$'; then ok "fabric control-plane bridge present"
+    else warn "no br-<dc>-cp bridge (bridges seen: $(ls /sys/class/net 2>/dev/null | grep '^br-' | tr '\n' ' ')) — is nico-dev-fabric running? (systemctl status nico-dev-fabric)"; fi
     ensure_workload metallb-system deploy/metallb-controller 120
     if crashlooping metallb-system app.kubernetes.io/component=speaker; then
         warn "metallb-speaker CrashLoopBackOff — rollout restart (skips the backoff)"
