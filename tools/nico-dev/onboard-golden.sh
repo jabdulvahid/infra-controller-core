@@ -422,7 +422,11 @@ if [[ -n "$API_VIP" ]]; then
     echo "  probing https://$API_VIP/admin (up to 3 min)…"
     CODE=000
     if ! probe_loop; then
-        warn "VIP not answering (last HTTP $CODE) — applying the fresh-clone fix (rollout restart nico-api), then probing again"
+        # first-boot.sh already restarts metallb-speaker and nico-api once
+        # (its step 12, 20260904-#1). Reaching this branch means that was
+        # not enough, or first-boot was skipped on a resumed run — restart
+        # nico-api once more and probe again before giving up.
+        warn "VIP not answering (last HTTP $CODE) — restarting nico-api once more, then probing again"
         "${SSH[@]}" "$K -n nico-system rollout restart deployment/nico-api && $K -n nico-system rollout status deployment/nico-api --timeout=180s" 2>&1 | sed 's/^/    /' || true
         probe_loop || true
     fi
