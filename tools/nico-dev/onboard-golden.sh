@@ -367,13 +367,26 @@ fi
 
 # ── 8. cluster, route, UI ──────────────────────────────────────────────────
 say "8/8 cluster, route, admin UI"
+# kubectl over a non-interactive ssh has no KUBECONFIG (first-boot sets it in
+# .bashrc): use the node's admin kubeconfig explicitly, and treat a kubectl
+# failure as UNKNOWN, never as "zero pods not ready" (the first live run
+# reported all-Running off an error's empty output).
+K='sudo kubectl --kubeconfig /etc/kubernetes/admin.conf'
 echo "  waiting for nico-system pods…"
+NOT_READY=99
 for i in $(seq 1 60); do
-    NOT_READY="$("${SSH[@]}" 'kubectl get pods -n nico-system --no-headers 2>/dev/null | grep -v -E "Running|Completed" | wc -l' 2>/dev/null | tr -d ' ' || echo 99)"
+    OUT="$("${SSH[@]}" "$K get pods -n nico-system --no-headers" 2>/dev/null)" || { sleep 10; continue; }
+    [[ -n "$OUT" ]] || { sleep 10; continue; }
+    NOT_READY="$(grep -v -c -E 'Running|Completed' <<< "$OUT" || true)"
     [[ "$NOT_READY" == "0" ]] && break
     sleep 10
 done
-[[ "$NOT_READY" == "0" ]] && ok "all nico-system pods Running/Completed" || warn "some pods still settling — kubectl get pods -n nico-system on the VM"
+if [[ "$NOT_READY" == "0" ]]; then
+    ok "all nico-system pods Running/Completed"
+else
+    warn "pods still settling after 10 min:"
+    "${SSH[@]}" "$K get pods -n nico-system --no-headers | grep -v -E 'Running|Completed'" 2>/dev/null | sed 's/^/    /' || true
+fi
 SITE_YAML="$(find "$SHARE_DIR/sites" -maxdepth 3 -name '*.yaml' ! -name '*kubeconfig*' 2>/dev/null | head -1 || true)"
 API_VIP="$(grep -E '^\s*api_vip:' "$SITE_YAML" 2>/dev/null | sed -E 's/.*"([0-9.]+)".*/\1/' || true)"
 if [[ -n "$API_VIP" ]]; then
@@ -381,6 +394,22 @@ if [[ -n "$API_VIP" ]]; then
     echo "  route ${VIP_NET} via $VM_IP (sudo)…"
     sudo route -n add -net "$VIP_NET" "$VM_IP" >/dev/null 2>&1 || true
     ok "route present"
+    # The proof is an HTTP answer from the VIP, not a pod list. A fresh clone
+    # can have every pod Running and the VIP still refusing (how-to
+    # Troubleshooting, first entry); the documented fix is one api restart.
+    probe() { curl -sk -m 5 -o /dev/null -w '%{http_code}' "https://$API_VIP/admin" 2>/dev/null || echo 000; }
+    echo "  probing https://$API_VIP/admin …"
+    CODE=000
+    for i in $(seq 1 18); do CODE="$(probe)"; [[ "$CODE" != "000" ]] && break; sleep 10; done
+    if [[ "$CODE" == "000" ]]; then
+        warn "VIP not answering after 3 min — applying the fresh-clone fix (rollout restart nico-api)"
+        "${SSH[@]}" "$K -n nico-system rollout restart deployment/nico-api && $K -n nico-system rollout status deployment/nico-api --timeout=180s" >/dev/null 2>&1 || true
+        for i in $(seq 1 18); do CODE="$(probe)"; [[ "$CODE" != "000" ]] && break; sleep 10; done
+    fi
+    if [[ "$CODE" == "000" ]]; then
+        die "admin UI at https://$API_VIP/admin still not answering. On the VM: $K -n metallb-system get pods; ndev fabric verify; $K -n nico-system get svc"
+    fi
+    ok "admin UI answers (HTTP $CODE)"
     echo
     echo "  Admin UI : https://$API_VIP/admin"
     echo "  KUBECONFIG=$(find "$SHARE_DIR/sites" -name '*.kubeconfig.yaml' | head -1)"
