@@ -118,22 +118,33 @@ on run argv
             end repeat
             if not found then error "VM row '" & vmName & "' not found in the UTM sidebar"
             delay 0.8
-            -- 2. the Shared Directory quick picker in the detail pane
+            -- 2. the Shared Directory control in the detail pane. Two shapes
+            --    (both seen live 2026-09-04): with a share already set it is a
+            --    `menu button` titled with the folder, whose menu has Browse…;
+            --    with NO share (fresh import) it is a plain `button` right after
+            --    the "Shared Directory" label — the last button of the pane —
+            --    that opens the Open panel directly.
             set detail to scroll area 1 of group 2 of splitter group 1 of group 1 of win
-            set mb to menu button 1 of detail
-            click mb
-            delay 0.7
-            set picked to false
-            repeat with mi in menu items of menu 1 of mb
-                try
-                    if (name of mi) starts with "Browse" then
-                        click mi
-                        set picked to true
-                        exit repeat
-                    end if
-                end try
-            end repeat
-            if not picked then error "no Browse… item in the Shared Directory menu"
+            if (count of menu buttons of detail) > 0 then
+                set mb to menu button 1 of detail
+                click mb
+                delay 0.7
+                set picked to false
+                repeat with mi in menu items of menu 1 of mb
+                    try
+                        if (name of mi) starts with "Browse" then
+                            click mi
+                            set picked to true
+                            exit repeat
+                        end if
+                    end try
+                end repeat
+                if not picked then error "no Browse… item in the Shared Directory menu"
+            else
+                set bs to buttons of detail
+                if (count of bs) = 0 then error "no Shared Directory control found in the VM detail pane"
+                click (last item of bs)
+            end if
             delay 1.2
             -- 3. the Open panel: Go to folder (⌘⇧G), type the path, confirm twice
             keystroke "g" using {command down, shift down}
@@ -143,8 +154,13 @@ on run argv
             keystroke return
             delay 0.9
             keystroke return
-            delay 1.2
-            return title of menu button 1 of detail
+            delay 1.5
+            -- after a successful pick the control is the menu button titled with the folder
+            if (count of menu buttons of detail) > 0 then
+                return title of menu button 1 of detail
+            else
+                return "(no share shown)"
+            end if
         end tell
     end tell
 end run
