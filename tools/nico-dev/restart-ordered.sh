@@ -435,7 +435,7 @@ final_probe() {
         warn "nico-api-external has no LoadBalancer IP yet (metallb) — kubectl -n nico-system get svc nico-api-external"
     fi
     local not_running
-    not_running=$(K get pods -A --no-headers 2>/dev/null | grep -vE 'Running|Completed|Succeeded' || true)
+    not_running=$(K get pods -A --no-headers 2>/dev/null | grep -vE 'Running|Completed|Succeeded|Terminating' || true)   # Terminating = an old pod still in its grace period, not a health signal
     if [[ -z "$not_running" ]]; then ok "every pod in the cluster is Running/Completed"
     else warn "pods not Running:"; echo "$not_running" | sed 's/^/      /'; fi
     echo
