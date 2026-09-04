@@ -90,6 +90,26 @@ echo "  share      : $SHARE_DIR"
 echo "  ssh key    : $SSH_KEY"
 echo "  vm         : $VM_USER@$VM_IP"
 
+# ── 0. can we drive UTM's GUI at all? (Accessibility) ──────────────────────
+# Probe BEFORE the 26 GB unzip: without the Accessibility permission the UI
+# step (5) cannot work, and macOS grants it only from System Settings.
+# -1743 = "not allowed assistive access". Any other answer means we may look.
+if [[ "$SKIP_UI_SHARE" -eq 0 ]]; then
+    say "0/8 Accessibility (needed to drive UTM's Sharing dialog)"
+    open -a UTM; sleep 2
+    if PROBE="$(osascript -e 'tell application "System Events" to tell process "UTM" to get name of window 1' 2>&1)"; then
+        ok "System Events can see UTM (window: ${PROBE:-?})"
+    elif grep -q "1743\|assistive" <<< "$PROBE"; then
+        echo "  ✗ your terminal app is not allowed to control other apps." >&2
+        echo "    System Settings → Privacy & Security → Accessibility → enable your terminal" >&2
+        echo "    (Terminal, iTerm2, Warp, …), then rerun. Or pass --skip-ui-share to set the" >&2
+        echo "    UTM shared directory by hand." >&2
+        exit 1
+    else
+        warn "System Events probe returned: ${PROBE} — continuing (UTM may have no window yet)"
+    fi
+fi
+
 # ── 1. UTM ─────────────────────────────────────────────────────────────────
 say "1/8 UTM"
 if [[ ! -x /Applications/UTM.app/Contents/MacOS/utmctl ]]; then
