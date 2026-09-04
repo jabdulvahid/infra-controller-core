@@ -1420,8 +1420,8 @@ than chasing each symptom, replay provisioning order (20260904-#2):
 
 ```bash
 # on the VM — verifies infrastructure, then rolling-restarts every consumer
-# in dependency order (unbound/ntp/dhcp → api → dns/pxe/bmc-proxy/MAT →
-# keycloak → temporal → nico-rest → site-agent → flow), waiting at each step
+# in dependency order (unbound/ntp/dhcp → api → ssh-console/dns/pxe/bmc-proxy/MAT
+# → keycloak → temporal → nico-rest → site-agent → flow), waiting at each step
 sudo restart-ordered.sh
 ```
 

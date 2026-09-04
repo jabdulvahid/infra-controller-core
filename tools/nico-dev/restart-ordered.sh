@@ -84,8 +84,8 @@ K() { kubectl "$@"; }
 FAILURES=0
 
 # ── Dependency order of consumers (namespace  glob) ──────────────────────────
-# Derived from the chart templates: nico-api needs vault+postgres; nico-dns and
-# nico-pxe need the api; machine-a-tron needs nico-dhcp; the site-agent tries
+# Derived from the chart templates: nico-api needs vault+postgres; nico-dns,
+# nico-pxe and ssh-console need the api; machine-a-tron needs nico-dhcp; the site-agent tries
 # its nico-core gRPC connection exactly ONCE at startup (rest_deploy.py), so it
 # must come up after the api; flow needs api + temporal. Leaves first.
 ORDER=(
@@ -93,9 +93,9 @@ ORDER=(
     "nico-system  nico-ntp*"
     "nico-system  nico-dhcp*"
     "nico-system  nico-hardware-health*"
-    "nico-system  nico-ssh-console*"
     "nico-system  nico-dsx-exchange*"
     "nico-system  nico-api*"
+    "nico-system  nico-ssh-console*"      # its config targets https://nico-api. — not ready until the api is (cold run 2026-09-04)
     "nico-system  nico-dns*"
     "nico-system  nico-pxe*"
     "nico-system  nico-bmc-proxy*"
