@@ -71,7 +71,13 @@ fi
 DEST="${DEST/#\~/$HOME}"; ZIP="${ZIP/#\~/$HOME}"
 SHARE_DIR="$DEST/shared"
 if [[ -z "$SSH_KEY" ]]; then
-    SSH_KEY="$(ls "$HOME"/.ssh/id_ed25519.pub "$HOME"/.ssh/id_*.pub 2>/dev/null | head -1 || true)"
+    # deterministic preference (NOT `ls | head`: locale collation sorts
+    # id_ed25519_git_signing.pub before id_ed25519.pub — picked a signing key
+    # on the first live run)
+    for cand in id_ed25519.pub id_ecdsa.pub id_rsa.pub; do
+        [[ -f "$HOME/.ssh/$cand" ]] && { SSH_KEY="$HOME/.ssh/$cand"; break; }
+    done
+    [[ -n "$SSH_KEY" ]] || SSH_KEY="$(find "$HOME/.ssh" -maxdepth 1 -name 'id_*.pub' | sort | head -1 || true)"
 fi
 [[ -n "$SSH_KEY" && -f "${SSH_KEY/#\~/$HOME}" ]] || die "no SSH public key (pass --ssh-key, or: ssh-keygen -t ed25519)"
 SSH_KEY="${SSH_KEY/#\~/$HOME}"; PRIV="${SSH_KEY%.pub}"
