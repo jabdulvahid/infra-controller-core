@@ -72,19 +72,33 @@ def cpu_sizing_advice(env, pending_pod):
     global _cpu_advised
     if _cpu_advised:
         return
-    _cpu_advised = True
     nodes = (_kubectl_json(['get', 'nodes'], env) or {}).get('items', [])
     alloc = nodes[0]['status']['allocatable'].get('cpu', '0') if nodes else '0'
-    have = -(-_millicores(alloc) // 1000)
+    alloc_m = _millicores(alloc)
+    have = -(-alloc_m // 1000)
     pods = (_kubectl_json(['get', 'pods', '-A'], env) or {}).get('items', [])
-    req = sum(_millicores(c.get('resources', {}).get('requests', {}).get('cpu'))
-              for p in pods if p['status'].get('phase') != 'Succeeded'
-              for c in p['spec'].get('containers', []))
-    pend = sum(_millicores(c.get('resources', {}).get('requests', {}).get('cpu'))
-               for c in pending_pod['spec'].get('containers', []))
-    want = max(8, (req + pend) // 1000 + 2)   # surge + headroom; 8 = "code development" tier
+
+    def cpu_of(p):
+        return sum(_millicores(c.get('resources', {}).get('requests', {}).get('cpu'))
+                   for c in p['spec'].get('containers', []))
+    # The scheduler charges a Terminating pod's requests until it is gone
+    # (nico-api's grace period is 240s), so right after a restart the node
+    # looks fuller than its steady state. Only steady state + surge >
+    # allocatable means "resize"; otherwise the shortfall is transient.
+    running = [p for p in pods if p['status'].get('phase') == 'Running']
+    terminating = [p for p in running if p['metadata'].get('deletionTimestamp')]
+    term = sum(cpu_of(p) for p in terminating)
+    steady = max(0, sum(cpu_of(p) for p in running) - term)
+    pend = cpu_of(pending_pod)
+    if steady + pend <= alloc_m:
+        print(f'    (transient: {term}m still held by {len(terminating)} Terminating pod(s); '
+              f'steady state {steady}m + surge {pend}m fits in {alloc} allocatable — no resize needed)')
+        return
+    _cpu_advised = True
+    want = max(8, (steady + pend) // 1000 + 2)   # surge + headroom; 8 = "code development" tier
     print(f'''  ┌─ VM is under-sized for rolling updates ──────────────────────────────────
-  │ CPU requests already committed: {req}m of {alloc} allocatable; this surge pod asks {pend}m more.
+  │ Steady-state CPU requests: {steady}m of {alloc} allocatable (plus {term}m in {len(terminating)} Terminating pod(s) right now);
+  │ this surge pod asks {pend}m more.
   │ The workaround gets this rollout through, but every future redeploy and
   │ restart will hit the same wall. Fix it properly:
   │   1. Stop the VM.

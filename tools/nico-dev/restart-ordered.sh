@@ -316,22 +316,31 @@ to_m() { awk -v q="$1" 'BEGIN{ if (q ~ /m$/) { sub(/m$/,"",q); printf "%d", q } 
 CPU_ADVISED=0
 cpu_advice() {   # <ns> <pending-pod>
     [[ $CPU_ADVISED == 1 ]] && return 0
-    CPU_ADVISED=1
-    local alloc req_m pend_m need_m have_cpus want_cpus vm
+    local alloc alloc_m run_m term_m term_n steady_m pend_m have_cpus want_cpus vm
     alloc=$(K get nodes -o jsonpath='{.items[0].status.allocatable.cpu}' 2>/dev/null || echo 0)
-    have_cpus=$(( ($(to_m "$alloc") + 999) / 1000 ))
-    # sum of cpu requests across every non-terminated pod on the node
-    req_m=$(K get pods -A -o jsonpath='{range .items[?(@.status.phase!="Succeeded")]}{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}{end}' 2>/dev/null \
-            | grep -v '^$' | while read -r q; do to_m "$q"; echo; done | awk '{s+=$1} END{print s+0}')
-    pend_m=$(K get pod -n "$1" "$2" -o jsonpath='{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}' 2>/dev/null \
-             | grep -v '^$' | while read -r q; do to_m "$q"; echo; done | awk '{s+=$1} END{print s+0}')
-    need_m=$((req_m + pend_m))
-    want_cpus=$(( need_m / 1000 + 2 ))                 # room for the surge + headroom
+    alloc_m=$(to_m "$alloc"); have_cpus=$(( (alloc_m + 999) / 1000 ))
+    sum_m() { grep -v '^$' | while read -r q; do to_m "$q"; echo; done | awk '{s+=$1} END{print s+0}'; }
+    # The scheduler charges a Terminating pod's requests until it is gone —
+    # nico-api's grace period is 240s — so right after earlier restarts in
+    # this same run the node looks fuller than its steady state. Separate
+    # the two: only steady state + surge > allocatable means "resize".
+    run_m=$(K get pods -A -o jsonpath='{range .items[?(@.status.phase=="Running")]}{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}{end}' 2>/dev/null | sum_m)
+    term_m=$(K get pods -A -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}{end}' 2>/dev/null | sum_m)
+    term_n=$(K get pods -A -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -c . || true)
+    steady_m=$((run_m - term_m)); [[ $steady_m -lt 0 ]] && steady_m=0
+    pend_m=$(K get pod -n "$1" "$2" -o jsonpath='{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}' 2>/dev/null | sum_m)
+    if [[ $((steady_m + pend_m)) -le $alloc_m ]]; then
+        say "    (transient: ${term_m}m still held by ${term_n} Terminating pod(s) from earlier restarts; steady state ${steady_m}m + surge ${pend_m}m fits in ${alloc} allocatable — no resize needed)"
+        return 0
+    fi
+    CPU_ADVISED=1                                       # the box prints once per run; the transient note may repeat
+    want_cpus=$(( (steady_m + pend_m) / 1000 + 2 ))     # room for the surge + headroom
     [[ $want_cpus -lt 8 ]] && want_cpus=8               # the "code development" tier (README sizing)
     vm='<vm-name>'                                      # libvirt domain / UTM name, not the guest hostname
     cat <<EOF
   ┌─ VM is under-sized for rolling updates ──────────────────────────────────
-  │ CPU requests already committed: ${req_m}m of ${alloc} allocatable; this surge pod asks ${pend_m}m more.
+  │ Steady-state CPU requests: ${steady_m}m of ${alloc} allocatable (plus ${term_m}m in ${term_n} Terminating pod(s) right now);
+  │ this surge pod asks ${pend_m}m more.
   │ The workaround above gets this rollout through, but every future redeploy
   │ and restart will hit the same wall. Fix it properly:
   │   1. Stop the VM (sudo poweroff here, or from the host).
