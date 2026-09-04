@@ -61,6 +61,73 @@ ok()   { printf '  ✓ %s\n' "$1"; }
 warn() { printf '  ⚠ %s\n' "$1"; }
 die()  { printf '  ✗ %s\n' "$1" >&2; exit 1; }
 
+# Layout from a live --dump-ui (UTM 4.x, 2026-09-04):
+#   window 1 → group 1 → splitter group 1 →
+#     group 1 → scroll area 1 → outline 1 → rows (sidebar; UI element 1 →
+#               static text 1 = VM name)
+#     group 2 → scroll area 1 (detail pane) → … static text "Shared Directory",
+#               then ONE `menu button` titled with the current share folder
+#               (or the placeholder when none) — UTM's quick share picker,
+#               whose menu has "Browse…". No Settings sheet needed.
+# Prints the menu button's title afterwards (= the chosen folder's name).
+set_share_via_ui() {
+    osascript - "$VM_NAME" "$SHARE_DIR" <<'APPLESCRIPT'
+on run argv
+    set vmName to item 1 of argv
+    set sharePath to item 2 of argv
+    tell application "UTM" to activate
+    delay 1
+    tell application "System Events"
+        tell process "UTM"
+            set frontmost to true
+            set win to window 1
+            set sidebar to outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1 of win
+            -- 1. select the VM row by name
+            set found to false
+            repeat with r in rows of sidebar
+                try
+                    if (value of static text 1 of UI element 1 of r) is vmName then
+                        set selected of r to true
+                        set found to true
+                        exit repeat
+                    end if
+                end try
+            end repeat
+            if not found then error "VM row '" & vmName & "' not found in the UTM sidebar"
+            delay 0.8
+            -- 2. the Shared Directory quick picker in the detail pane
+            set detail to scroll area 1 of group 2 of splitter group 1 of group 1 of win
+            set mb to menu button 1 of detail
+            click mb
+            delay 0.7
+            set picked to false
+            repeat with mi in menu items of menu 1 of mb
+                try
+                    if (name of mi) starts with "Browse" then
+                        click mi
+                        set picked to true
+                        exit repeat
+                    end if
+                end try
+            end repeat
+            if not picked then error "no Browse… item in the Shared Directory menu"
+            delay 1.2
+            -- 3. the Open panel: Go to folder (⌘⇧G), type the path, confirm twice
+            keystroke "g" using {command down, shift down}
+            delay 0.7
+            keystroke sharePath
+            delay 0.5
+            keystroke return
+            delay 0.9
+            keystroke return
+            delay 1.2
+            return title of menu button 1 of detail
+        end tell
+    end tell
+end run
+APPLESCRIPT
+}
+
 # ── --dump-ui: print UTM's front-window accessibility tree and exit ─────────
 # For adapting the UI-scripting step to a UTM version whose layout differs.
 if [[ "$DUMP_UI" -eq 1 ]]; then
@@ -193,72 +260,6 @@ fi
 # the only legitimate way to grant the sandbox bookmark is UTM's own file
 # dialog. Drive it: select the VM, Edit, Sharing, Browse…, ⌘⇧G, path, Open,
 # Save. Verified afterwards from INSIDE the VM (step 6), never assumed.
-# Layout from a live --dump-ui (UTM 4.x, 2026-09-04):
-#   window 1 → group 1 → splitter group 1 →
-#     group 1 → scroll area 1 → outline 1 → rows (sidebar; UI element 1 →
-#               static text 1 = VM name)
-#     group 2 → scroll area 1 (detail pane) → … static text "Shared Directory",
-#               then ONE `menu button` titled with the current share folder
-#               (or the placeholder when none) — UTM's quick share picker,
-#               whose menu has "Browse…". No Settings sheet needed.
-# Prints the menu button's title afterwards (= the chosen folder's name).
-set_share_via_ui() {
-    osascript - "$VM_NAME" "$SHARE_DIR" <<'APPLESCRIPT'
-on run argv
-    set vmName to item 1 of argv
-    set sharePath to item 2 of argv
-    tell application "UTM" to activate
-    delay 1
-    tell application "System Events"
-        tell process "UTM"
-            set frontmost to true
-            set win to window 1
-            set sidebar to outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1 of win
-            -- 1. select the VM row by name
-            set found to false
-            repeat with r in rows of sidebar
-                try
-                    if (value of static text 1 of UI element 1 of r) is vmName then
-                        set selected of r to true
-                        set found to true
-                        exit repeat
-                    end if
-                end try
-            end repeat
-            if not found then error "VM row '" & vmName & "' not found in the UTM sidebar"
-            delay 0.8
-            -- 2. the Shared Directory quick picker in the detail pane
-            set detail to scroll area 1 of group 2 of splitter group 1 of group 1 of win
-            set mb to menu button 1 of detail
-            click mb
-            delay 0.7
-            set picked to false
-            repeat with mi in menu items of menu 1 of mb
-                try
-                    if (name of mi) starts with "Browse" then
-                        click mi
-                        set picked to true
-                        exit repeat
-                    end if
-                end try
-            end repeat
-            if not picked then error "no Browse… item in the Shared Directory menu"
-            delay 1.2
-            -- 3. the Open panel: Go to folder (⌘⇧G), type the path, confirm twice
-            keystroke "g" using {command down, shift down}
-            delay 0.7
-            keystroke sharePath
-            delay 0.5
-            keystroke return
-            delay 0.9
-            keystroke return
-            delay 1.2
-            return title of menu button 1 of detail
-        end tell
-    end tell
-end run
-APPLESCRIPT
-}
 say "5/8 UTM shared directory → $SHARE_DIR"
 if [[ "$SKIP_UI_SHARE" -eq 1 ]]; then
     warn "UI step skipped (--skip-ui-share): set it by hand — UTM → $VM_NAME → Settings → Sharing → Path"
