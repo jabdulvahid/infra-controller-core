@@ -1118,6 +1118,7 @@ it can see, which is how the same site folder works from both sides.
 | `configure-clis.py` | Host | Certs, MAT config, `run-*.sh` wrappers, `/etc/hosts` | yes (reissues) |
 | `get-admin-cli.sh` | VM | Extract `nico-admin-cli` from the api image, no build | yes |
 | `ndev.py <site> [ctx] [cmd]` | Host or VM | Status and verification | read-only |
+| `restart-ordered.sh [--cold]` | VM, sudo | Last-resort recovery after a reboot: verify infra (metallb, vault unsealed, postgres leader, ESO), then restart every consumer in provisioning order; `--cold` scales all to 0 first | yes |
 | `onboard-golden.sh --zip Z --dest D` | Mac | Golden-image zip → running site, hands off (import, share via UI scripting, first-boot, route, UI) | yes (skips done steps) |
 | `smoke-test.sh [--keep]` | Host | Throwaway VM: boot path assertions, then delete | yes |
 | `dev-down.py --config X` | Host (Linux today) | Delete the VM and everything created for it; keep your data | yes |
@@ -1407,6 +1408,35 @@ VM `ndev` is preinstalled and the site argument is optional.
 ---
 
 ## Troubleshooting
+
+### After a VM reboot the site "looks Running" but does not work — start here
+
+Kubernetes has no pod start order. After a reboot kubelet re-admits every
+pod at once and containerd starts them in whatever order sandboxes happen
+to come up, so which race you hit is luck: the speaker parked in a long
+CrashLoopBackOff, the api Running with a poisoned connection pool, the
+site-agent with a nil nico-core client (it tries once at startup). Rather
+than chasing each symptom, replay provisioning order (20260904-#2):
+
+```bash
+# on the VM — verifies infrastructure, then rolling-restarts every consumer
+# in dependency order (unbound/ntp/dhcp → api → dns/pxe/bmc-proxy/MAT →
+# keycloak → temporal → nico-rest → site-agent → flow), waiting at each step
+sudo restart-ordered.sh
+```
+
+```bash
+# the hammer: scale every consumer to 0 (dependents first), then up in order
+sudo restart-ordered.sh --cold
+```
+
+`--dry-run` prints the plan. Infrastructure (kube-system, metallb,
+local-path, cert-manager, vault, external-secrets, both postgres clusters)
+is verified with bounded waits and restarted only when unhealthy; databases
+are never scaled down. Workloads already at 0 with no restore marker are
+left alone. Ends with an honest verdict: api endpoints present, admin UI
+answering from the VM, every pod Running. The subsections below are the
+individual symptoms it covers.
 
 ### VIP/GUI connection refused on a fresh clone — but pods look Running
 

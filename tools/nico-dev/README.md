@@ -225,6 +225,12 @@ implementation for your host. What differs on Linux:
   the cluster would silently keep the old image. On a 6-CPU VM a rollout can
   stick on `Insufficient cpu`; set `redeploy: { on_insufficient_cpu: scale-down-first }`
   in your devup yaml (or size the VM for development, see step 4)
+- **Rebooted the VM and the site "looks Running" but doesn't work?**
+  Kubernetes has no pod start order, so a reboot is a lottery of races. On
+  the VM: `sudo restart-ordered.sh` verifies the infrastructure (metallb,
+  vault unsealed, postgres leader, secrets synced) and restarts every
+  consumer in provisioning order; `--cold` scales all to zero first. Ends
+  with a pass/fail verdict. Details in how-to → Troubleshooting
 - Native Mac CLIs, MAT fleet runs, golden-image baking: [how-to.md](how-to.md)
 - Inside the VM, `~/mac/<repo>` is a git *worktree* whose metadata lives
   on the Mac — git commands there won't work (deploys only read files;
