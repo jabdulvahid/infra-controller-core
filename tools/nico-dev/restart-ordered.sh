@@ -95,7 +95,12 @@ ORDER=(
     "temporal     temporal-web*"
     "temporal     temporal-admintools*"
     "temporal     *"
-    "nico-rest    nico-rest-*"
+    "nico-rest    nico-rest-api*"
+    "nico-rest    nico-rest-cert-manager*"
+    "nico-rest    nico-rest-cloud-worker*"
+    "nico-rest    nico-rest-site-manager*"
+    "nico-rest    nico-rest-site-worker*"
+    "nico-rest    nico-rest-site-agent*"     # tries its nico-core gRPC connection ONCE at startup — after api and temporal
     "nico-rest    *"
     "flow         flow*"
     "flow         *"
@@ -142,18 +147,54 @@ order_inventory() {
 # ── Generic wait/repair helper for infrastructure ────────────────────────────
 # ensure_workload <ns> <kind/name> <timeout-s>: wait for rollout; if it does
 # not settle, rollout-restart once and wait again. Missing workload = warn.
+# rollout_wait <ns> <kind/name> <timeout-s>: `kubectl rollout status` for
+# Deployments/DaemonSets. StatefulSets are polled on readyReplicas instead:
+# `rollout status` REFUSES OnDelete StatefulSets (the vault chart's default),
+# which made vault a false failure on the first live run (20260904-#2).
+rollout_wait() {
+    local ns="$1" ref="$2" t="$3"
+    if [[ "$ref" != sts/* && "$ref" != statefulset/* ]]; then
+        K rollout status -n "$ns" "$ref" --timeout="${t}s" >/dev/null 2>&1
+        return
+    fi
+    local deadline=$((SECONDS+t)) want have
+    while :; do
+        want=$(K get -n "$ns" "$ref" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")
+        have=$(K get -n "$ns" "$ref" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo 0)
+        [[ -n "$want" && "${have:-0}" == "$want" ]] && return 0
+        [[ $SECONDS -ge $deadline ]] && return 1
+        sleep 5
+    done
+}
+
+# restart_workload <ns> <kind/name>: rollout restart; for OnDelete
+# StatefulSets that changes only the template, so delete the pods too
+# (the controller recreates them from the new revision).
+restart_workload() {
+    local ns="$1" ref="$2" name="${2#*/}" strat pods
+    K rollout restart -n "$ns" "$ref" >/dev/null
+    if [[ "$ref" == sts/* || "$ref" == statefulset/* ]]; then
+        strat=$(K get -n "$ns" "$ref" -o jsonpath='{.spec.updateStrategy.type}' 2>/dev/null || true)
+        if [[ "$strat" == OnDelete ]]; then
+            pods=$(K get pods -n "$ns" -o jsonpath='{range .items[?(@.metadata.ownerReferences[0].name=="'"$name"'")]}{.metadata.name}{" "}{end}' 2>/dev/null || true)
+            # shellcheck disable=SC2086
+            [[ -n "$pods" ]] && K delete pod -n "$ns" $pods --wait=false >/dev/null
+        fi
+    fi
+}
+
 ensure_workload() {
     local ns="$1" ref="$2" t="$3"
     if ! K get -n "$ns" "$ref" >/dev/null 2>&1; then
         warn "$ns $ref not found — skipped"; return 0
     fi
-    if K rollout status -n "$ns" "$ref" --timeout="${t}s" >/dev/null 2>&1; then
+    if rollout_wait "$ns" "$ref" "$t"; then
         ok "$ns $ref ready"; return 0
     fi
-    warn "$ns $ref not ready in ${t}s — rollout restart"
+    warn "$ns $ref not ready in ${t}s — restarting"
     [[ $DRY == 1 ]] && return 0
-    K rollout restart -n "$ns" "$ref" >/dev/null
-    if K rollout status -n "$ns" "$ref" --timeout="${t}s" >/dev/null 2>&1; then
+    restart_workload "$ns" "$ref"
+    if rollout_wait "$ns" "$ref" "$t"; then
         ok "$ns $ref ready after restart"
     else
         bad "$ns $ref still not ready — continuing, but expect failures downstream"
@@ -245,7 +286,7 @@ infra_gate() {
 kind_short() { case "$1" in Deployment) echo deploy ;; StatefulSet) echo sts ;; *) echo "$1" ;; esac; }
 
 wait_ready() {   # <ns> <kind/name> <timeout>
-    if K rollout status -n "$1" "$2" --timeout="$3s" >/dev/null 2>&1; then ok "$1 $2 ready"
+    if rollout_wait "$1" "$2" "$3"; then ok "$1 $2 ready"
     else bad "$1 $2 not ready in $3s (kubectl -n $1 describe $2)"; FAILURES=$((FAILURES+1)); fi
 }
 
@@ -259,7 +300,7 @@ warm_restart() {
         if [[ "${rep:-0}" == 0 ]]; then say "  - $ns $ref at 0 replicas — left alone"; continue; fi
         say "  → $ns $ref"
         [[ $DRY == 1 ]] && continue
-        K rollout restart -n "$ns" "$ref" >/dev/null
+        restart_workload "$ns" "$ref"
         wait_ready "$ns" "$ref" 180
     done
 }
