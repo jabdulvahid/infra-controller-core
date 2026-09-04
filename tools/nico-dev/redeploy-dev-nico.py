@@ -53,6 +53,49 @@ def _kubectl_json(args, env):
     return json.loads(r.stdout)
 
 
+def _millicores(q):
+    """'500m' → 500, '2' → 2000, '0.5' → 500, None → 0."""
+    if not q:
+        return 0
+    q = str(q)
+    return int(q[:-1]) if q.endswith('m') else int(float(q) * 1000)
+
+
+_cpu_advised = False
+
+
+def cpu_sizing_advice(env, pending_pod):
+    """The workaround is not the fix: a node where a surge pod cannot place is
+    under-sized for rolling updates. Say so once, with numbers and the exact
+    resize steps (Jasmeer, 2026-09-04: "it is imperative on us to tell them to
+    increase it")."""
+    global _cpu_advised
+    if _cpu_advised:
+        return
+    _cpu_advised = True
+    nodes = (_kubectl_json(['get', 'nodes'], env) or {}).get('items', [])
+    alloc = nodes[0]['status']['allocatable'].get('cpu', '0') if nodes else '0'
+    have = -(-_millicores(alloc) // 1000)
+    pods = (_kubectl_json(['get', 'pods', '-A'], env) or {}).get('items', [])
+    req = sum(_millicores(c.get('resources', {}).get('requests', {}).get('cpu'))
+              for p in pods if p['status'].get('phase') != 'Succeeded'
+              for c in p['spec'].get('containers', []))
+    pend = sum(_millicores(c.get('resources', {}).get('requests', {}).get('cpu'))
+               for c in pending_pod['spec'].get('containers', []))
+    want = max(8, (req + pend) // 1000 + 2)   # surge + headroom; 8 = "code development" tier
+    print(f'''  ┌─ VM is under-sized for rolling updates ──────────────────────────────────
+  │ CPU requests already committed: {req}m of {alloc} allocatable; this surge pod asks {pend}m more.
+  │ The workaround gets this rollout through, but every future redeploy and
+  │ restart will hit the same wall. Fix it properly:
+  │   1. Stop the VM.
+  │   2. Increase CPUs from {have} to at least {want} (and memory to 16 GB if it is below):
+  │        macOS/UTM : UTM → select VM → ⌘E → System → CPU Cores
+  │        Linux     : virsh setvcpus <vm-name> {want} --config --maximum && virsh setvcpus <vm-name> {want} --config
+  │   3. Set  vm: {{ cpus: {want} }}  in your devup yaml so dev-up/records agree.
+  │   4. Start the VM; on the VM run restart-ordered.sh to settle the site.
+  └──────────────────────────────────────────────────────────────────────────''')
+
+
 def watch_rollout(ns, env, policy, timeout=600, poll=10):
     """Wait for every Deployment in ns to finish rolling; diagnose a surge
     pod stuck on 'Insufficient cpu' and, with policy scale-down-first, free room by
@@ -159,6 +202,7 @@ def watch_rollout(ns, env, policy, timeout=600, poll=10):
             if pod_rs != newest_rs.get(dep):
                 continue
             name = pod['metadata']['name']
+            cpu_sizing_advice(env, pod)
             if policy == 'scale-down-first':
                 if dep in patched:
                     continue          # already switched; the controller is on it
