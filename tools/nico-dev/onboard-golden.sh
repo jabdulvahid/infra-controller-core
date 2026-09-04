@@ -75,12 +75,35 @@ set_share_via_ui() {
 on run argv
     set vmName to item 1 of argv
     set sharePath to item 2 of argv
-    tell application "UTM" to activate
-    delay 1
+    -- Establish the GUI state ourselves; assume nothing about what is on top:
+    -- activate brings UTM forward, reopen recreates the main window if it was
+    -- closed, then un-minimize and pick the MAIN window by its title (a VM
+    -- console window may be "window 1").
+    tell application "UTM"
+        activate
+        reopen
+    end tell
+    delay 1.2
     tell application "System Events"
         tell process "UTM"
             set frontmost to true
-            set win to window 1
+            repeat with w in windows
+                try
+                    if value of attribute "AXMinimized" of w is true then set value of attribute "AXMinimized" of w to false
+                end try
+            end repeat
+            set win to missing value
+            repeat with w in windows
+                try
+                    if (name of w) starts with "UTM" then
+                        set win to w
+                        exit repeat
+                    end if
+                end try
+            end repeat
+            if win is missing value then error "UTM main window not found (is only a VM console window open? close it or open UTM's main window)"
+            perform action "AXRaise" of win
+            delay 0.5
             set sidebar to outline 1 of scroll area 1 of group 1 of splitter group 1 of group 1 of win
             -- 1. select the VM row by name
             set found to false
@@ -167,7 +190,7 @@ echo "  vm         : $VM_USER@$VM_IP"
 if [[ "$SKIP_UI_SHARE" -eq 0 ]]; then
     say "0/8 Accessibility (needed to drive UTM's Sharing dialog)"
     open -a UTM; sleep 2
-    if PROBE="$(osascript -e 'tell application "System Events" to tell process "UTM" to get name of window 1' 2>&1)"; then
+    if PROBE="$(osascript -e 'tell application "UTM" to reopen' -e 'delay 1' -e 'tell application "System Events" to tell process "UTM" to get name of (first window whose name starts with "UTM")' 2>&1)"; then
         ok "System Events can see UTM (window: ${PROBE:-?})"
     elif grep -q "1743\|assistive" <<< "$PROBE"; then
         echo "  ✗ your terminal app is not allowed to control other apps." >&2
