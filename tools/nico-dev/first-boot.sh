@@ -18,6 +18,8 @@
 #   6. Writes /etc/nico-dev/env with your site path
 #   7. Copies the nico-dev script bundle to the Mac share
 #   8. Restarts nico-dev-fabric → Nico cluster comes up using cached images
+#   9. Restarts metallb-speaker and nico-api — the two components that come
+#      up wrong on a fresh clone often enough to restart unconditionally
 # =============================================================================
 set -euo pipefail
 
@@ -419,6 +421,32 @@ while [[ $SECONDS -lt $deadline ]]; do
     echo "  Waiting... ($not_running/$total not ready)"
     sleep 10
 done
+echo
+
+# ── Step 12: Restart the two cold-start casualties ───────────────────────────
+# On a fresh clone two components come up wrong often enough that we restart
+# them unconditionally rather than wait for a probe to fail (20260903-#5,
+# 20260904-#1):
+#   - metallb-speaker starts before the fabric bridge exists on the renamed
+#     clone and sits in CrashLoopBackOff until its backoff expires;
+#   - nico-api reaches Running but never answers on the service VIP until
+#     its pod is recreated.
+# Both are idempotent restarts of already-healthy-looking objects; the
+# rollout waits are bounded so a broken cluster still reaches the summary.
+echo "Step 12: Restarting metallb-speaker and nico-api (fresh-clone fix)..."
+K="kubectl --kubeconfig /etc/kubernetes/admin.conf"
+if $K -n metallb-system rollout restart daemonset/metallb-speaker >/dev/null 2>&1; then
+    $K -n metallb-system rollout status daemonset/metallb-speaker --timeout=120s 2>&1 \
+        | sed 's/^/  /' || echo "  metallb-speaker rollout did not settle in 120s (check: kubectl -n metallb-system get pods)"
+else
+    echo "  metallb-speaker daemonset not found — skipped"
+fi
+if $K -n nico-system rollout restart deployment/nico-api >/dev/null 2>&1; then
+    $K -n nico-system rollout status deployment/nico-api --timeout=180s 2>&1 \
+        | sed 's/^/  /' || echo "  nico-api rollout did not settle in 180s (check: kubectl -n nico-system get pods)"
+else
+    echo "  nico-api deployment not found — skipped"
+fi
 echo
 
 # ── Done ──────────────────────────────────────────────────────────────────────
