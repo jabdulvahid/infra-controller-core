@@ -794,10 +794,12 @@ kubectl get pods -n nico-system
 ```
 
 > **First-boot expectation:** the cold start elects a database leader;
-> pods (nico-api especially) may restart for a few minutes. If the GUI
-> VIP still refuses connections after everything shows Running, see
-> Troubleshooting → "VIP connection refused on a fresh clone" — one
-> `kubectl rollout restart deployment/nico-api -n nico-system` fixes it.
+> pods (nico-api especially) may restart for a few minutes. first-boot.sh
+> (step 12, 20260904-#1) ends by restarting `metallb-speaker` and
+> `nico-api` unconditionally, because both come up wrong on a fresh clone
+> often enough to treat as the norm. If the GUI VIP still refuses
+> connections after that, see Troubleshooting → "VIP connection refused
+> on a fresh clone".
 
 ### 5. Mac setup (same as §9 and §10)
 
@@ -1413,7 +1415,11 @@ through a patroni leader election; nico-api connects during the window,
 its WorkLockManager pool rejects the read-only sessions, and the pod can
 sit **1/1 Running without actually serving** — so the api VIP refuses
 connections (a LoadBalancer with no ready endpoints), which looks
-exactly like fabric/metallb breakage. It is not. Diagnosis order:
+exactly like fabric/metallb breakage. It is not. Since 2026-09-04
+first-boot.sh applies the remedy below (plus a `metallb-speaker` restart)
+unconditionally as its last step (20260904-#1), and onboard-golden.sh
+retries it once more if the VIP probe still fails — so on a clone brought
+up by either you should rarely see this. If you do, diagnosis order:
 
 ```bash
 # 1. FIRST: does the api service have endpoints? none = api not serving (NOT fabric)
