@@ -129,6 +129,29 @@ on a Mac at the office; 13 min on a Linux host on the corp network**
 modes, and gives the exact resume command (`dev-up.py --config ...
 --from <step>`). Every step is safe to rerun.
 
+## Got a golden image instead? Three steps
+
+If someone handed you `nico-dev-golden-YYYYMMDD.utm.zip` (a baked, exported
+VM with a running site inside), you don't build anything. Mac prerequisites:
+UTM (installed for you if missing), git, an SSH keypair. One nico-dev VM at
+a time per Mac.
+
+```bash
+# 1. one folder for everything nico-dev on this Mac
+mkdir -p ~/nico-tests/vm1/shared && cd ~/nico-tests/vm1/shared
+git clone https://github.com/NVIDIA/infra-controller.git      # folder name must stay infra-controller
+
+# 2. the nico-dev tools, grafted into that clone
+cd ~/nico-tests/vm1/shared/infra-controller
+curl -fsSL https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh | bash
+
+# 3. everything else — hands off except a one-time Accessibility permission and one sudo
+tools/nico-dev/onboard-golden.sh --zip ~/Downloads/nico-dev-golden-YYYYMMDD.utm.zip --dest ~/nico-tests/vm1
+```
+
+It ends with the admin UI open in your browser. Details, options and the
+manual fallback: [how-to.md §12](how-to.md).
+
 ## Linux hosts (libvirt/KVM)
 
 Same commands, same config file, same addressing — `dev-up.py`,

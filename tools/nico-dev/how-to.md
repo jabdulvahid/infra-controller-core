@@ -685,6 +685,45 @@ For **developers receiving the golden image**. Takes ~5 minutes.
 > actually ship alongside the image. This section remains the maintainer's
 > reference copy.
 
+### 0. Automated path (recommended) — three steps, then hands off
+
+Prerequisites on the Mac: UTM (installed automatically if missing), git,
+an SSH keypair (`ssh-keygen -t ed25519` if `ls ~/.ssh/id_*.pub` is empty).
+Only **one** nico-dev VM may run on a Mac at a time (same static IP).
+
+```bash
+# 1. one folder for everything nico-dev on this Mac (recommended layout)
+mkdir -p ~/nico-tests/vm1/shared
+cd ~/nico-tests/vm1/shared
+git clone https://github.com/NVIDIA/infra-controller.git      # folder name must stay infra-controller
+
+# 2. the nico-dev tools, grafted into that clone (untracked, git-ignored)
+cd ~/nico-tests/vm1/shared/infra-controller
+curl -fsSL https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh | bash
+
+# 3. everything else
+tools/nico-dev/onboard-golden.sh --zip ~/Downloads/nico-dev-golden-YYYYMMDD.utm.zip --dest ~/nico-tests/vm1
+```
+
+`onboard-golden.sh` unzips the bundle into `--dest` (the zip is kept, so
+the whole thing is repeatable), imports it into UTM, sets the shared
+directory to `<dest>/shared` by driving UTM's own Sharing dialog (the one
+property UTM does not expose to scripts), starts the VM, installs your SSH
+key using the image's default password, runs `first-boot.sh`
+non-interactively, waits for the cluster, adds the VIP route and opens the
+admin UI. Every step is idempotent: after a failure, rerun and it skips
+what is done. The two moments macOS interrupts: a one-time **Accessibility**
+permission for your terminal when the Sharing dialog is first driven
+(System Settings → Privacy & Security → Accessibility; allow, rerun), and
+**sudo** for the route. Options: `--ssh-key <pub>` (default: first
+`~/.ssh/id_*.pub`), `--skip-ui-share` (set the share by hand instead),
+`--dump-ui` (prints UTM's accessibility tree if the Sharing step needs
+adapting to a new UTM version). To repeat a test: delete the VM in UTM,
+remove `<dest>/*.utm`, rerun step 3.
+
+The manual steps below are the fallback and the explanation of what the
+script does.
+
 ### 1. Import into UTM
 
 Open UTM → **+** → **Import** → select `nico-dev-golden-YYYYMMDD.utm`
@@ -1077,6 +1116,7 @@ it can see, which is how the same site folder works from both sides.
 | `configure-clis.py` | Host | Certs, MAT config, `run-*.sh` wrappers, `/etc/hosts` | yes (reissues) |
 | `get-admin-cli.sh` | VM | Extract `nico-admin-cli` from the api image, no build | yes |
 | `ndev.py <site> [ctx] [cmd]` | Host or VM | Status and verification | read-only |
+| `onboard-golden.sh --zip Z --dest D` | Mac | Golden-image zip → running site, hands off (import, share via UI scripting, first-boot, route, UI) | yes (skips done steps) |
 | `smoke-test.sh [--keep]` | Host | Throwaway VM: boot path assertions, then delete | yes |
 | `dev-down.py --config X` | Host (Linux today) | Delete the VM and everything created for it; keep your data | yes |
 | `bake-golden-image.sh` / `first-boot.sh` | VM, sudo | Golden-image lane (§11–§12) | see those sections |
@@ -1152,6 +1192,22 @@ belt-and-braces `vol-delete`, removes host routes `via <vm-ip>`,
 `ssh-keygen -R <ip>`, deletes the ledger entry. Never touches your share
 folder, site folder or worktree. `--remove-infra` also removes `nico-nat`
 and the pool, but only when no `nico-*` domains remain.
+
+**`onboard-golden.sh --zip Z --dest D [--ssh-key K] [--skip-ui-share]
+[--dump-ui]`** (macOS only) — The golden-image recipient's one command
+(§12.0). Ensures UTM (brew cask), unzips the bundle into `D` (zip kept),
+imports with `open <bundle>` and waits for `utmctl` to list it, creates
+`D/shared` with a clone of `NVIDIA/infra-controller` and grafted tools
+unless present, sets the UTM shared directory by **UI scripting** of the
+Sharing pane (select VM, ⌘E, Sharing, Browse…, ⌘⇧G path, Open, Save; the
+grant is a sandbox bookmark only UTM's own dialog can mint, 20260903-#5),
+starts the VM, waits for ssh, installs the key with `expect` and the
+image's default password, copies the **current** `first-boot.sh` in and
+runs it with `--ssh-key --mac-folder --yes` (so images baked with the
+older interactive script work too), verifies the share device from inside
+the VM, waits for `nico-system` pods, adds the VIP route (sudo), opens the
+admin UI. Idempotent per step. Unavoidable human touches: the one-time
+Accessibility/Automation permission and one sudo.
 
 **`smoke-test.sh [--keep]`** — Builds a throwaway VM `nico-smoke` on
 `.124`, asserts: creation succeeds, static IP is up early, ssh answers,
