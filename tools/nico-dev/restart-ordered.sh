@@ -30,7 +30,12 @@
 #
 # Usage (on the VM):
 #   sudo restart-ordered.sh [--cold] [--dry-run] [--skip-infra] [--yes]
+#                           [--on-insufficient-cpu scale-down-first|wait]
 #   KUBECONFIG defaults to /etc/kubernetes/admin.conf.
+#   On a fully committed single node a rolling restart of a maxSurge-1
+#   Deployment cannot place its surge pod; scale-down-first (default here)
+#   flips that one rollout to maxSurge 0 / maxUnavailable 1 on the symptom
+#   and restores the chart's strategy after (issues.md 20260903-#2).
 #
 # Consumers = Deployments/StatefulSets in nico-system, nico-rest, temporal,
 # flow. Workloads already at 0 replicas with no restore annotation are left
@@ -41,12 +46,21 @@
 set -euo pipefail
 
 COLD=0; DRY=0; SKIP_INFRA=0; YES=0
+# Rolling mode on a fully committed single node: a Deployment with maxSurge 1
+# cannot place its surge pod ("Insufficient cpu", issues.md 20260903-#2).
+# scale-down-first = on that symptom only, switch the deployment to
+# maxSurge 0 / maxUnavailable 1 for this rollout and restore the chart's
+# strategy afterwards. wait = report and move on. Symptom-triggered, so a
+# cluster with room never sees the patch.
+ON_INSUFFICIENT_CPU=scale-down-first
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cold)       COLD=1 ;;
         --dry-run)    DRY=1 ;;
         --skip-infra) SKIP_INFRA=1 ;;
         --yes|-y)     YES=1 ;;
+        --on-insufficient-cpu) shift; ON_INSUFFICIENT_CPU="${1:-}"
+            [[ "$ON_INSUFFICIENT_CPU" =~ ^(wait|scale-down-first)$ ]] || { echo "--on-insufficient-cpu wait|scale-down-first" >&2; exit 2; } ;;
         -h|--help)    sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -290,6 +304,52 @@ wait_ready() {   # <ns> <kind/name> <timeout>
     else bad "$1 $2 not ready in $3s (kubectl -n $1 describe $2)"; FAILURES=$((FAILURES+1)); fi
 }
 
+# JSON literal for a maxSurge/maxUnavailable value ("25%" → quoted, 1 → bare)
+json_val() { if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf '"%s"' "$1"; fi; }
+
+# rolling restart of ONE Deployment with the Insufficient-cpu policy applied
+# on symptom: a Pending pod of this deployment whose PodScheduled message
+# names "Insufficient cpu". Strategy is always restored, even on failure.
+restart_deploy_watched() {   # <ns> <name> <timeout>
+    local ns="$1" name="$2" t="$3" ref="deploy/$2"
+    local deadline=$((SECONDS+t)) patched=0 os ou msg
+    restart_workload "$ns" "$ref"
+    while :; do
+        if rollout_wait "$ns" "$ref" 15; then ok "$ns $ref ready"; break; fi
+        if [[ $patched == 0 ]]; then
+            msg=$(K get pods -n "$ns" -o jsonpath='{range .items[?(@.status.phase=="Pending")]}{.metadata.name}{"|"}{.status.conditions[?(@.type=="PodScheduled")].message}{"\n"}{end}' 2>/dev/null \
+                  | grep "^$name-" | grep -m1 "Insufficient cpu" || true)
+            if [[ -n "$msg" ]]; then
+                if [[ "$ON_INSUFFICIENT_CPU" == scale-down-first ]]; then
+                    os=$(K get -n "$ns" "$ref" -o jsonpath='{.spec.strategy.rollingUpdate.maxSurge}')
+                    ou=$(K get -n "$ns" "$ref" -o jsonpath='{.spec.strategy.rollingUpdate.maxUnavailable}')
+                    warn "$ns $ref: surge pod Pending on Insufficient cpu — scale-down-first: maxSurge 0 / maxUnavailable 1 for this rollout (chart: ${os:-default}/${ou:-default})"
+                    K patch -n "$ns" "$ref" --type merge -p '{"spec":{"strategy":{"rollingUpdate":{"maxSurge":0,"maxUnavailable":1}}}}' >/dev/null
+                    patched=1
+                else
+                    warn "$ns $ref: surge pod Pending on Insufficient cpu (policy wait) — unstick: kubectl -n $ns patch $ref --type merge -p '{\"spec\":{\"strategy\":{\"rollingUpdate\":{\"maxSurge\":0,\"maxUnavailable\":1}}}}' then restore"
+                    patched=2   # reported once
+                fi
+            fi
+        fi
+        if [[ $SECONDS -ge $deadline ]]; then
+            bad "$ns $ref not ready in ${t}s (kubectl -n $ns describe $ref)"; FAILURES=$((FAILURES+1)); break
+        fi
+    done
+    if [[ $patched == 1 ]]; then
+        local p
+        if [[ -z "$os" && -z "$ou" ]]; then
+            p='{"spec":{"strategy":{"rollingUpdate":null}}}'   # chart set neither → back to k8s defaults
+        else
+            p='{"spec":{"strategy":{"rollingUpdate":{'
+            [[ -n "$os" ]] && p+='"maxSurge":'"$(json_val "$os")"','
+            [[ -n "$ou" ]] && p+='"maxUnavailable":'"$(json_val "$ou")"','
+            p="${p%,}}}}}"
+        fi
+        K patch -n "$ns" "$ref" --type merge -p "$p" >/dev/null && say "    restored $ref rollout strategy to the chart's"
+    fi
+}
+
 # default mode: sequential rollout restart in order
 warm_restart() {
     hdr "Phase 2: rolling restart of consumers in dependency order"
@@ -300,8 +360,12 @@ warm_restart() {
         if [[ "${rep:-0}" == 0 ]]; then say "  - $ns $ref at 0 replicas — left alone"; continue; fi
         say "  → $ns $ref"
         [[ $DRY == 1 ]] && continue
-        restart_workload "$ns" "$ref"
-        wait_ready "$ns" "$ref" 180
+        if [[ "$kind" == Deployment ]]; then
+            restart_deploy_watched "$ns" "$name" 180
+        else
+            restart_workload "$ns" "$ref"
+            wait_ready "$ns" "$ref" 180
+        fi
     done
 }
 
@@ -361,13 +425,14 @@ final_probe() {
     eps=$(K get endpoints -n nico-system nico-api -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)
     if [[ -n "$eps" ]]; then ok "nico-api service has endpoints ($eps)"
     else bad "nico-api service has NO endpoints — api pod Running but not serving (issues.md 20260826-#6)"; FAILURES=$((FAILURES+1)); fi
-    vip=$(K get svc -n nico-system nico-api -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+    # the VIP lives on the chart's external service (nico-api-external), not the ClusterIP one
+    vip=$(K get svc -n nico-system nico-api-external -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
     if [[ -n "$vip" ]]; then
         code=$(curl -sk -m 5 -o /dev/null -w '%{http_code}' "https://$vip/admin" 2>/dev/null || true)
         if [[ "$code" =~ ^[23][0-9][0-9]$ || "$code" == 401 || "$code" == 403 ]]; then ok "admin UI answers at https://$vip/admin (HTTP $code)"
         else bad "admin UI not answering at https://$vip/admin (HTTP ${code:-000}) — from the VM itself, so this is not the Mac route"; FAILURES=$((FAILURES+1)); fi
     else
-        warn "nico-api service has no LoadBalancer IP yet (metallb) — kubectl -n nico-system get svc nico-api"
+        warn "nico-api-external has no LoadBalancer IP yet (metallb) — kubectl -n nico-system get svc nico-api-external"
     fi
     local not_running
     not_running=$(K get pods -A --no-headers 2>/dev/null | grep -vE 'Running|Completed|Succeeded' || true)
