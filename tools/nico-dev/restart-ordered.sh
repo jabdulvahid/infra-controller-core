@@ -307,6 +307,43 @@ wait_ready() {   # <ns> <kind/name> <timeout>
 # JSON literal for a maxSurge/maxUnavailable value ("25%" → quoted, 1 → bare)
 json_val() { if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf '"%s"' "$1"; fi; }
 
+# cpu quantity → millicores ("500m" → 500, "2" → 2000, "0.5" → 500)
+to_m() { awk -v q="$1" 'BEGIN{ if (q ~ /m$/) { sub(/m$/,"",q); printf "%d", q } else printf "%d", q*1000 }'; }
+
+# The working-around is not the fix: a node where a surge pod cannot place is
+# under-sized. Say so once, with numbers and the exact resize steps
+# (Jasmeer, 2026-09-04: "it is imperative on us to tell them to increase it").
+CPU_ADVISED=0
+cpu_advice() {   # <ns> <pending-pod>
+    [[ $CPU_ADVISED == 1 ]] && return 0
+    CPU_ADVISED=1
+    local alloc req_m pend_m need_m have_cpus want_cpus vm
+    alloc=$(K get nodes -o jsonpath='{.items[0].status.allocatable.cpu}' 2>/dev/null || echo 0)
+    have_cpus=$(( ($(to_m "$alloc") + 999) / 1000 ))
+    # sum of cpu requests across every non-terminated pod on the node
+    req_m=$(K get pods -A -o jsonpath='{range .items[?(@.status.phase!="Succeeded")]}{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}{end}' 2>/dev/null \
+            | grep -v '^$' | while read -r q; do to_m "$q"; echo; done | awk '{s+=$1} END{print s+0}')
+    pend_m=$(K get pod -n "$1" "$2" -o jsonpath='{range .spec.containers[*]}{.resources.requests.cpu}{"\n"}{end}' 2>/dev/null \
+             | grep -v '^$' | while read -r q; do to_m "$q"; echo; done | awk '{s+=$1} END{print s+0}')
+    need_m=$((req_m + pend_m))
+    want_cpus=$(( need_m / 1000 + 2 ))                 # room for the surge + headroom
+    [[ $want_cpus -lt 8 ]] && want_cpus=8               # the "code development" tier (README sizing)
+    vm='<vm-name>'                                      # libvirt domain / UTM name, not the guest hostname
+    cat <<EOF
+  ┌─ VM is under-sized for rolling updates ──────────────────────────────────
+  │ CPU requests already committed: ${req_m}m of ${alloc} allocatable; this surge pod asks ${pend_m}m more.
+  │ The workaround above gets this rollout through, but every future redeploy
+  │ and restart will hit the same wall. Fix it properly:
+  │   1. Stop the VM (sudo poweroff here, or from the host).
+  │   2. Increase CPUs from ${have_cpus} to at least ${want_cpus} (and memory to 16 GB if it is below):
+  │        macOS/UTM : UTM → select VM → ⌘E → System → CPU Cores
+  │        Linux     : virsh setvcpus ${vm} ${want_cpus} --config --maximum && virsh setvcpus ${vm} ${want_cpus} --config
+  │   3. Set  vm: { cpus: ${want_cpus} }  in your devup yaml so dev-up/records agree.
+  │   4. Start the VM; run this script again (default mode) to settle the site.
+  └──────────────────────────────────────────────────────────────────────────
+EOF
+}
+
 # rolling restart of ONE Deployment with the Insufficient-cpu policy applied
 # on symptom: a Pending pod of this deployment whose PodScheduled message
 # names "Insufficient cpu". Strategy is always restored, even on failure.
@@ -320,6 +357,7 @@ restart_deploy_watched() {   # <ns> <name> <timeout>
             msg=$(K get pods -n "$ns" -o jsonpath='{range .items[?(@.status.phase=="Pending")]}{.metadata.name}{"|"}{.status.conditions[?(@.type=="PodScheduled")].message}{"\n"}{end}' 2>/dev/null \
                   | grep "^$name-" | grep -m1 "Insufficient cpu" || true)
             if [[ -n "$msg" ]]; then
+                cpu_advice "$ns" "${msg%%|*}"
                 if [[ "$ON_INSUFFICIENT_CPU" == scale-down-first ]]; then
                     os=$(K get -n "$ns" "$ref" -o jsonpath='{.spec.strategy.rollingUpdate.maxSurge}')
                     ou=$(K get -n "$ns" "$ref" -o jsonpath='{.spec.strategy.rollingUpdate.maxUnavailable}')
