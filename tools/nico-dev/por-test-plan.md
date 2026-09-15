@@ -352,15 +352,21 @@ explicitly OUT of nico-dev scope: sim and real operator fight over
 DPU.status.phase, and MAT hardcodes is_dpf_enabled=true BY DESIGN for the
 sim path. Estimated 1-2 days. Reference: setup-machine-a-tron.sh Phase 4b.
 
-- [ ] I1. site.yaml `enable_dpf` flag (default false) → values generator
-      emits `[dpf] enabled = true` in the api site config (chart-managed —
-      survives redeploys, unlike the 20260825-#4 patch class)
-- [ ] I2. build-dev-nico.py builds dpf-sim-controller (Go, native arch)
-      into the local registry
-- [ ] I3. deploy-dev-nico.py Phase-4b port under the flag: DPF CRDs from
-      crates/dpf/crds/ + sim Deployment + carbide-api restart ([dpf] is
-      startup-only). NEVER helm-install dpf-operator alongside (CRD
-      ownership collision, documented in the sim README)
+- [x] I1. DONE 2026-09-15, shape changed by ruling (DPF is the DEFAULT going
+      forward; bringup.yaml fronts the site yaml): `dpf: true|false` in
+      bringup.yaml (default true) → `--dpf` on bring-up/create-dev-site →
+      `nico-system.dpf.{enabled,namespace,sim.*}` in the site yaml → values
+      generator emits `[dpf] enabled = true` in the TOML and
+      `nico-api.dpf.rbacCreate` (chart-managed). dpf: false renders
+      byte-identical to before.
+- [x] I2. DONE 2026-09-15: `deploy-dpf-sim.py` builds dev/k8s/dpf-sim-controller
+      for the host arch (docker buildx --push) into the local registry at
+      images.tag; not on NGC, so both lanes build it.
+- [x] I3. DONE 2026-09-15: deploy-dev-nico.py applies namespace + CRDs BEFORE
+      the nico release (imports ensure_dpf_prereqs; nico-api crash-loops
+      without them); the simulator is the `dpf` bring-up step after nico
+      (RBAC + Deployment rendered from upstream config/, requests 100m/128Mi).
+      Preflight refuses a real dpf-operator on the cluster.
 - [ ] I4. Validation: MAT run to Ready via the DPF path — dpuinit walks
       DPUDevice/DPUNode → DPU CRs to Ready incl. the Rebooting round-trip
       (nico reboots hosts via Redfish against MAT mocks, exercising the

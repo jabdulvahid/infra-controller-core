@@ -61,6 +61,10 @@ def parse_args():
                         'pod on a CPU-saturated node (default wait; scale-down-first '
                         'temporarily rolls that deployment with maxSurge 0 / '
                         'maxUnavailable 1 so an old pod goes first) — 20260903-#2')
+    p.add_argument('--dpf', choices=['true', 'false'], default='true',
+                   help='DPF as the DPU-provisioning path (default true): [dpf] enabled in '
+                        'the API config, DPF CRDs before nico, dpf-sim-controller at the end '
+                        'of bring-up. false = legacy iPXE path. From bringup.yaml `dpf:`.')
     # images: — recorded so every later script (redeploy, add-ons) knows how
     # the site's images are produced without command-line flags
     p.add_argument('--images-source-kind', choices=['ngc', 'build'], default='build',
@@ -127,6 +131,8 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('NICO_DEV_FOLDER',   args._dev_folder),
         # Redeploy policy on a CPU-saturated node (20260903-#2)
         ('REDEPLOY_ON_INSUFFICIENT_CPU', args.redeploy_on_insufficient_cpu),
+        # DPF as the provisioning path (bringup.yaml dpf:, default true)
+        ('DPF_ENABLED',                  args.dpf),
         # Images — source of truth for what runs and where it came from
         ('IMAGES_TAG',               'none'),
         ('IMAGES_SOURCE_KIND',       args.images_source_kind),

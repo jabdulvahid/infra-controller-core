@@ -118,8 +118,17 @@ add-on today; worth a separate decision.
 Other candidates that **are** charts in this repo and currently disabled in
 nico-dev: `nico-pxe`, `nico-dsx-exchange-consumer` (umbrella sub-charts,
 `components.*: false` in the site yaml), `nico-machine-a-tron` (the MAT
-chart; nico-dev runs MAT on the VM instead), observability
-(`helm/observability`, `setup.sh --with-observability`), and DPF
-(`docs/manuals/dpf.md`). Each fits the same one-script pattern; PXE and the
-DSX consumer are umbrella values flips, observability is a separate chart
-set with its own prerequisites.
+chart; nico-dev runs MAT on the VM instead) and observability
+(`helm/observability`, `setup.sh --with-observability`). Each fits the same
+one-script pattern; PXE and the DSX consumer are umbrella values flips,
+observability is a separate chart set with its own prerequisites.
+
+DPF is **not** an add-on. Since 2026-09-15 it is the default provisioning
+path of a nico-dev site: `dpf:` in bringup.yaml (default true) makes the
+values generator enable `[dpf]` in the API config and the nico-api DPF RBAC,
+deploy-dev-nico.py applies the DPF CRDs before the nico release, and
+`deploy-dpf-sim.py` deploys upstream's dpf-sim-controller as the `dpf`
+bring-up step. It changes what nico-api does at startup and how every MAT
+host is provisioned, which is base behaviour, not an optional chart. The
+real DPF operator stays out of scope (it would fight the simulator over
+`DPU.status.phase`).

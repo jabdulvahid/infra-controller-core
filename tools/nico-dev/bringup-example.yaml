@@ -35,6 +35,14 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # redeploy:
 #   on_insufficient_cpu: scale-down-first
 
+# ── DPF (DOCA Platform Framework) — the default DPU-provisioning path ───
+# true (default): NICo runs with DPF enabled and the DPF simulator
+# (dev/k8s/dpf-sim-controller) is deployed at the end of bring-up, so MAT
+# hosts are provisioned the way production does it. false: the legacy iPXE
+# path, nothing DPF-related installed. Tuning (namespace, phase dwell,
+# resources) is advanced and lives in the site yaml under nico-system.dpf.
+# dpf: true
+
 # ── Your site identity — EDIT THESE ────────────────────────────────────
 dc: dc1                           # datacenter name (yours to choose)
 site: dev1                        # site name (yours to choose)

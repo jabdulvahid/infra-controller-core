@@ -415,6 +415,7 @@ def gen_site_config_toml(cfg):
     ext_vpc_vni = pools.get('external_vpc_vni', {'start': 51008,           'end': 51011            })
 
     # ── build TOML ───────────────────────────────────────────────────────────
+    dpf_enabled = bool((cfg['nico-system'].get('dpf') or {}).get('enabled', False))
     L = []
     L.append(f'sitename = {_toml_str(sitename)}')
     L.append(f'initial_domain_name = {_toml_str(domain)}')
@@ -543,6 +544,14 @@ def gen_site_config_toml(cfg):
         L.append(f'route_targets_on_exports = [{{ asn = {a}, vni = 50400 }}]')
         L.append('')
 
+    # DPF: read by nico-api at startup only. Present only when enabled, so a
+    # dpf: false site renders the TOML exactly as before the feature.
+    if dpf_enabled:
+        if L and L[-1] != '':
+            L.append('')
+        L.append('[dpf]')
+        L.append('enabled = true')
+
     return '\n'.join(L)
 
 
@@ -570,8 +579,11 @@ def gen_nico(cfg):
     api_host = f'nico-api.{dc_name}-{sitename}'
 
     site_toml = gen_site_config_toml(cfg)
+    dpf = ns.get('dpf') or {}
+    dpf_enabled = bool(dpf.get('enabled', False))
+    dpf_ns = dpf.get('namespace') or 'dpf-operator-system'
 
-    return {
+    values = {
         'global': {
             'image': {
                 'repository': repository,
@@ -599,6 +611,13 @@ def gen_nico(cfg):
             'siteConfig': {
                 'enabled':           True,
                 'nicoApiSiteConfig': site_toml,
+            },
+            # DPF: the API needs a Role on the DPF resources in the operator
+            # namespace (chart template dpf-rbac.yaml; the namespace must exist
+            # at install time — deploy-dev-nico.py creates it with the CRDs).
+            'dpf': {
+                'rbacCreate':        dpf_enabled,
+                'operatorNamespace': dpf_ns,
             },
             'legacyAlias': {
                 'aliases': [{
@@ -675,6 +694,8 @@ def gen_nico(cfg):
             },
         },
     }
+    return values
+
 
 
 # ── YAML writer ───────────────────────────────────────────────────────────────
