@@ -3,7 +3,7 @@
 nico-dev — Tear down a nico-dev VM on a LINUX host (the one-command delete).
 
   dev-down.py --name nico-dc1-dev1          # by VM name
-  dev-down.py --config devup-mysite.yaml    # by the same config dev-up used
+  dev-down.py --config bringup-mysite.yaml    # by the same config bring-up used
   dev-down.py --name X --remove-infra       # also drop nico-nat + pool
                                             #   (refused while other nico VMs exist)
 
@@ -46,7 +46,7 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog=__doc__)
     p.add_argument('--name', help='VM name')
-    p.add_argument('--config', help='devup yaml (name: or dc/site → nico-<dc>-<site>)')
+    p.add_argument('--config', help='bringup yaml (name: or dc/site → nico-<dc>-<site>)')
     p.add_argument('--remove-infra', action='store_true',
                    help=f'also remove {NET_NAME} and pool {POOL} if no nico VMs remain')
     p.add_argument('--yes', action='store_true', help='no confirmation prompt')

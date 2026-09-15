@@ -7,10 +7,10 @@ else. Each unit stays independently runnable (how-to §1-§9 unchanged);
 this encodes the order, the argument plumbing between steps, and the
 recovery story.
 
-  ./dev-up.py --name nico-dev-c5                    # the whole chain
-  ./dev-up.py --name x --from build                 # resume after a failure
-  ./dev-up.py --name x --until fabric               # stop early
-  ./dev-up.py --list                                # show the steps
+  ./bring-up.py --name nico-dev-c5                    # the whole chain
+  ./bring-up.py --name x --from build                 # resume after a failure
+  ./bring-up.py --name x --until fabric               # stop early
+  ./bring-up.py --list                                # show the steps
 
 Steps: vm → prep → site → fabric → cp → build → registry → nico → route.
 On failure: prints that step's known failure modes + the exact resume
@@ -73,7 +73,7 @@ def vm_ssh(args, remote_cmd):
     # Pin the identity: bare ssh offers EVERY agent key; sshd disconnects
     # after MaxAuthTries rejections before the right key gets a turn
     # ("Too many authentication failures", exit 255) — the prepare-vm.sh
-    # lesson, relearned on the dev-up maiden run.
+    # lesson, relearned on the bring-up maiden run.
     ident = []
     if args.ssh_key:
         priv = str(Path(args.ssh_key).expanduser()).removesuffix('.pub')

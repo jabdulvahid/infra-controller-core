@@ -1,6 +1,6 @@
-# dev-up.py config — copy to devup-<your-site>.yaml, EDIT, then:
-#   dev-up.py --config devup-<your-site>.yaml
-# Keys = dev-up.py option names (underscores). Anything here can still be
+# bring-up.py config — copy to bringup-<your-site>.yaml, EDIT, then:
+#   bring-up.py --config bringup-<your-site>.yaml
+# Keys = bring-up.py option names (underscores). Anything here can still be
 # overridden on the command line; anything omitted uses the built-in default.
 
 name: nico-vm1                    # UTM VM name (required)
@@ -40,7 +40,7 @@ dc: dc1                           # datacenter name (yours to choose)
 site: dev1                        # site name (yours to choose)
 underlay: 11                      # first IP octets — they become Mac-routed
 overlay: 12                       #   prefixes. Pick octets nothing on your
-                                  #   Mac uses (VPN/LAN!); dev-up preflight
+                                  #   Mac uses (VPN/LAN!); bring-up preflight
                                   #   warns if the Mac already routes them.
 # To find a deployable NGC tag for ngc.tag below:  ngc-tags.py --config <this file>
 

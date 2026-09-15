@@ -7,7 +7,7 @@ nico-dev — make sure the HOST-side image registry is running (idempotent).
 
 The VM's containerd pulls every nico image from <host>:5000 (192.168.64.1
 as seen from the VM). Source builds and the NGC lane both push into it.
-dev-up runs this in the `registry` step BEFORE verifying reachability
+bring-up runs this in the `registry` step BEFORE verifying reachability
 from the VM — in NGC mode nothing earlier would have created it
 (20260902-#5: verify-before-create; masked on Macs whose Colima kept an
 old registry container around).

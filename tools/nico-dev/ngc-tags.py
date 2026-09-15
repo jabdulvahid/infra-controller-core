@@ -3,7 +3,7 @@
 nico-dev — List deployable NGC image tags (pick one for ngc.nico_tag).
 
   ngc-tags.py                              # env defaults (see below)
-  ngc-tags.py --config devup-mysite.yaml   # read image/token from a config
+  ngc-tags.py --config bringup-mysite.yaml   # read image/token from a config
   ngc-tags.py -n 20                        # more PR builds
 
 Defaults: image from $NICO_NGC_IMAGE, key from $NGC_API_KEY (names only —
@@ -97,7 +97,7 @@ def main():
     p.add_argument('--token-env', default='NGC_API_KEY', metavar='VAR',
                    help='env var NAME holding the NGC key (default: NGC_API_KEY)')
     p.add_argument('--config', default=None, metavar='FILE',
-                   help='devup yaml — reads ngc.nico_image / ngc.token_env')
+                   help='bringup yaml — reads ngc.nico_image / ngc.token_env')
     p.add_argument('-n', type=int, default=10,
                    help='how many PR builds to show (default 10)')
     p.add_argument('--before', metavar='TAG', default=None,
@@ -156,7 +156,7 @@ def main():
         print(f'\nLatest release: {rels[-1]}'
               + (f'   (previous: {", ".join(rels[-4:-1][::-1])})'
                  if len(rels) > 1 else ''))
-    print('\nPick a tag → ngc.nico_tag in your devup yaml. Note: nico does '
+    print('\nPick a tag → ngc.nico_tag in your bringup yaml. Note: nico does '
           'not\nsupport schema downgrades — on an EXISTING site, never '
           'deploy a tag\nolder than what is running.')
 

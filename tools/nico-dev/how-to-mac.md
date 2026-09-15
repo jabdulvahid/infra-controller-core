@@ -86,14 +86,14 @@ drives UTM pops "Terminal wants to control UTM": click Allow.
 | You have | a `nico-dev-golden-YYYYMMDD.utm.zip` from a colleague | nothing but this repo and, for the NGC lane, an NGC key |
 | What happens | the ZIP is a baked VM with a site already deployed inside; one script imports it, personalises it and opens the admin UI | a VM is created, Kubernetes and the fabric are installed, NICo is deployed from images |
 | Where the images come from | already inside the VM | **NGC lane**: pulled pre-built from NGC. **Source-build lane**: built from your worktree |
-| You write | nothing | one `devup-<site>.yaml` |
+| You write | nothing | one `bringup-<site>.yaml` |
 | Time | minutes, nothing to build | NGC lane about 30 minutes; source-build lane plus a 20 to 40 minute first build |
 | Read | section 4, then continue at section 7 | sections 5 and 6, then continue at section 7 |
 
 The two workflows do not mix. `onboard-golden.sh` is Workflow A only and
-never reads a devup yaml. `dev-up.py` and the devup yaml are Workflow B only
+never reads a bringup yaml. `bring-up.py` and the bringup yaml are Workflow B only
 and never touch a golden ZIP. Within Workflow B the two lanes differ in one
-block of the devup yaml and one build step; everything else is identical.
+block of the bringup yaml and one build step; everything else is identical.
 
 From section 7 onward the page applies to both workflows: the running site
 looks the same however it got there.
@@ -144,8 +144,8 @@ Workflow B only, both lanes. Golden-image users have nothing to do here;
 continue at section 7.
 
 ```bash
-cp devup-example.yaml devup-mysite.yaml
-vi devup-mysite.yaml
+cp bringup-example.yaml bringup-mysite.yaml
+vi bringup-mysite.yaml
 ```
 
 ```yaml
@@ -177,12 +177,12 @@ ngc:
 ```
 
 Do not set `ip`; the VM address derives from UTM's own subnet, `host_num`
-changes the last octet (default 126). dev-up's preflight warns if the Mac
+changes the last octet (default 126). bring-up's preflight warns if the Mac
 already routes your octets.
 
 ```bash
-ngc-tags.py --config devup-mysite.yaml                 # newest PR builds tracking main, arm64 availability
-ngc-tags.py --config devup-mysite.yaml --before v2.3.0
+ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main, arm64 availability
+ngc-tags.py --config bringup-mysite.yaml --before v2.3.0
 ```
 
 Prefer a recent dev tag; a fresh site's database ledger tracks main and the
@@ -193,8 +193,8 @@ migration job refuses downgrades. The image must publish arm64.
 Workflow B only, both lanes.
 
 ```bash
-dev-up.py --config devup-mysite.yaml --dry-run   # preflight ✓/✗/⚠, numbered plan, READY or NOT READY
-dev-up.py --config devup-mysite.yaml
+bring-up.py --config bringup-mysite.yaml --dry-run   # preflight ✓/✗/⚠, numbered plan, READY or NOT READY
+bring-up.py --config bringup-mysite.yaml
 ```
 
 Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
@@ -329,7 +329,7 @@ kubectl -n nico-system get pods -w
   previously applied but is missing", delete the job, revert the code, build
   and deploy a new tag.
 - **Tight node.** `redeploy: { on_insufficient_cpu: scale-down-first }` in
-  the devup yaml handles `Insufficient cpu` during a rollout.
+  the bringup yaml handles `Insufficient cpu` during a rollout.
 
 Full deploy or one release: `deploy-dev-nico.py <site> --tag <t>`,
 `--skip-to <release>`, `--only <release>`. Never delete the `nico-system`
@@ -419,7 +419,7 @@ Linux only. Your site folder and worktree are never touched by either.
 |---|---|---|
 | `check-prereqs.sh [--build]` | Mac | read-only prerequisite check |
 | `onboard-golden.sh --zip Z --dest D` | Mac | golden image ZIP to running site, hands off |
-| `dev-up.py --config X [--dry-run] [--from step]` | Mac | the whole bring-up |
+| `bring-up.py --config X [--dry-run] [--from step]` | Mac | the whole bring-up |
 | `ngc-tags.py --config X` | Mac | deployable NGC tags |
 | `build-dev-nico.py <site> --tag T` | Mac | build images, push to the colima registry |
 | `deploy-dev-nico.py <site> --tag T` | Mac | full helm deploy, resumable |

@@ -350,7 +350,7 @@ cpu_advice() {   # <ns> <pending-pod>
   │   2. Increase CPUs from ${have_cpus} to at least ${want_cpus} (and memory to 16 GB if it is below):
   │        macOS/UTM : UTM → select VM → ⌘E → System → CPU Cores
   │        Linux     : virsh setvcpus ${vm} ${want_cpus} --config --maximum && virsh setvcpus ${vm} ${want_cpus} --config
-  │   3. Set  vm: { cpus: ${want_cpus} }  in your devup yaml so dev-up/records agree.
+  │   3. Set  vm: { cpus: ${want_cpus} }  in your bringup yaml so bring-up/records agree.
   │   4. Start the VM; run this script again (default mode) to settle the site.
   └──────────────────────────────────────────────────────────────────────────
 EOF

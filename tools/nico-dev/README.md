@@ -73,8 +73,8 @@ THESE block — VM name, user/password, SSH key, dc/site names, two IP
 octets — and choose ONE deploy mode:
 
 ```bash
-cp devup-example.yaml devup-mysite.yaml
-vi devup-mysite.yaml
+cp bringup-example.yaml bringup-mysite.yaml
+vi bringup-mysite.yaml
 ```
 
 - **NGC pre-built** (`ngc:` block: `registry`, `tag`, `core_image`,
@@ -84,8 +84,8 @@ vi devup-mysite.yaml
   your site yaml). Needs an NGC API key with registry-read on that
   org/team. To pick a tag:
   ```bash
-  ngc-tags.py --config devup-mysite.yaml        # latest builds + dates + arm64
-  ngc-tags.py --config devup-mysite.yaml --before v2.3.0   # page back
+  ngc-tags.py --config bringup-mysite.yaml        # latest builds + dates + arm64
+  ngc-tags.py --config bringup-mysite.yaml --before v2.3.0   # page back
   ```
 - **Source build** (`tag:`, the default when `ngc:` is absent) — builds
   **your worktree's branch** and deploys it; the full dev loop
@@ -99,14 +99,14 @@ CPU requests, and a rolling redeploy needs headroom for the surge pod
 (issues.md 20260903-#2). vCPUs are a ceiling, not a reservation.
 
 Octets become Mac-routed prefixes — pick ones your Mac doesn't use
-(VPN/LAN); dev-up preflight warns if the Mac already routes them. Do NOT
+(VPN/LAN); bring-up preflight warns if the Mac already routes them. Do NOT
 set `ip` — the VM address derives from your Mac's own UTM subnet;
 `host_num` changes the last octet (default 126; two VMs can't share one).
 
 **5. Go:**
 
 ```bash
-dev-up.py --config devup-mysite.yaml
+bring-up.py --config bringup-mysite.yaml
 ```
 
 `--dry-run` first: it lists every preflight check (✓/✗/⚠), the numbered
@@ -126,7 +126,7 @@ on a Mac at the office; 13 min on a Linux host on the corp network**
 (measured 2026-09-02, empty host to Done).
 
 **If a step fails:** the runner stops, prints that step's known failure
-modes, and gives the exact resume command (`dev-up.py --config ...
+modes, and gives the exact resume command (`bring-up.py --config ...
 --from <step>`). Every step is safe to rerun.
 
 ## Got a golden image instead? Three steps
@@ -154,7 +154,7 @@ manual fallback: [how-to.md §12](how-to.md).
 
 ## Linux hosts (libvirt/KVM)
 
-Same commands, same config file, same addressing — `dev-up.py`,
+Same commands, same config file, same addressing — `bring-up.py`,
 `smoke-test.sh`, `check-prereqs.sh`, `build-nico-dev-vm.py` and
 `dev-down.py` are platform dispatchers that run the `_linux` (or `_mac`)
 implementation for your host. What differs on Linux:
@@ -190,11 +190,11 @@ implementation for your host. What differs on Linux:
   Mac keeps host builds because it needs Mach-O binaries.
 - **Console**: `virsh console <vm>` (a getty is enabled in the seed).
 - **Route**: `sudo ip route replace <underlay>.133.1.0/27 via <vm-ip>`
-  (dev-up does it; not persistent across host reboots).
+  (bring-up does it; not persistent across host reboots).
 - **Several sites on one box**: give each a distinct `host_num`, octets,
   and `name` (default `nico-<dc>-<site>` coming in Phase 3). Everything
   created is namespaced and listed in `~/.nico-dev/vms/<vm>.yaml`.
-- **Teardown**: `dev-down.py --config devup-mysite.yaml` — the one
+- **Teardown**: `dev-down.py --config bringup-mysite.yaml` — the one
   command: domain, its volumes, its route, its ledger entry. Your site
   folder and worktree are never deleted. `--remove-infra` drops
   `nico-nat`/pool when no nico VMs remain.
@@ -224,7 +224,7 @@ implementation for your host. What differs on Linux:
   tag every time** — both scripts refuse a same-tag rebuild/redeploy because
   the cluster would silently keep the old image. On a 6-CPU VM a rollout can
   stick on `Insufficient cpu`; set `redeploy: { on_insufficient_cpu: scale-down-first }`
-  in your devup yaml (or size the VM for development, see step 4)
+  in your bringup yaml (or size the VM for development, see step 4)
 - **Rebooted the VM and the site "looks Running" but doesn't work?**
   Kubernetes has no pod start order, so a reboot is a lottery of races. On
   the VM: `sudo restart-ordered.sh` verifies the infrastructure (metallb,
