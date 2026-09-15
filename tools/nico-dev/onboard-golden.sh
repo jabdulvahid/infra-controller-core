@@ -391,9 +391,19 @@ SITE_YAML="$(find "$SHARE_DIR/sites" -maxdepth 3 -name '*.yaml' ! -name '*kubeco
 API_VIP="$(grep -E '^\s*api_vip:' "$SITE_YAML" 2>/dev/null | sed -E 's/.*"([0-9.]+)".*/\1/' || true)"
 if [[ -n "$API_VIP" ]]; then
     VIP_NET="$(echo "$API_VIP" | awk -F. '{print $1"."$2"."$3".0/27"}')"
-    echo "  route ${VIP_NET} via $VM_IP (sudo)…"
-    sudo route -n add -net "$VIP_NET" "$VM_IP" >/dev/null 2>&1 || true
-    ok "route present"
+    ROUTE_CMD="sudo route -n add -net $VIP_NET $VM_IP"
+    # Print the exact command, run it, then VERIFY (route -n get) instead of
+    # trusting the exit code: `route add` fails silently when the route already
+    # exists, and a declined sudo prompt must not read as a green tick.
+    echo "  host route to the service VIPs (sudo):"
+    echo "    $ROUTE_CMD"
+    $ROUTE_CMD >/dev/null 2>&1 || true
+    route_ok() { route -n get "$API_VIP" 2>/dev/null | awk '/gateway:/{print $2}' | grep -qx "$VM_IP"; }
+    if route_ok; then
+        ok "route present (${VIP_NET} via $VM_IP)"
+    else
+        warn "route NOT present — run by hand in another terminal, then rerun this script:  $ROUTE_CMD"
+    fi
     # The proof is an HTTP answer from the VIP, not a pod list. A fresh clone
     # can have every pod Running and the VIP still refusing (how-to
     # Troubleshooting, first entry); the documented fix is one api restart.
@@ -431,12 +441,14 @@ if [[ -n "$API_VIP" ]]; then
         probe_loop || true
     fi
     if ! answered "$CODE"; then
-        die "admin UI at https://$API_VIP/admin still not answering. On the VM: $K -n metallb-system get pods; ndev fabric verify; $K -n nico-system get svc"
+        die "admin UI at https://$API_VIP/admin still not answering. On the Mac: $ROUTE_CMD (then route -n get $API_VIP). On the VM: $K -n metallb-system get pods; ndev fabric verify; $K -n nico-system get svc"
     fi
     ok "admin UI answers (HTTP $CODE)"
     echo
     echo "  Admin UI : https://$API_VIP/admin"
     echo "  KUBECONFIG=$(find "$SHARE_DIR/sites" -name '*.kubeconfig.yaml' | head -1)"
+    echo "  VIP route: $ROUTE_CMD"
+    echo "             (macOS drops it whenever the VM stops or the network changes — rerun that line, or restart-ordered.sh reminds you)"
     open "https://$API_VIP/admin" || true
 else
     die "no site yaml under $SHARE_DIR/sites — first-boot did not personalize this VM (rerun; step 7 will run it)"
