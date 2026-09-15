@@ -276,3 +276,60 @@ from a feature build — that overwrites the baseline CLI the same way
 | config (source of truth) | `{site}/mat/mat-config.toml` (generated) | copied to runtime dir per run |
 | logs | — | `/var/log/machine-a-tron-<dc>.log` |
 | build caches | docker volumes `nico-mat-target`, `nico-mat-cargo-registry` | — |
+
+## 12. What MAT fakes and what it does not (read before building on it)
+
+MAT is often described as "fake machines". That is true at some layers and
+false at others, and knowing which is which decides what can be built on top
+of it.
+
+**Faithful: the API and workflow layer.** MAT never writes to the database
+and calls no hidden test endpoint. It drives nico's public gRPC API, and
+nico's own workflows run unmodified: site-explorer, ingestion, DHCP records,
+every machine state transition. A MAT machine is indistinguishable from a
+real one once it exists, which is why anything that consumes nico's view of a
+machine (the network config, the instance, the VPC membership) works on MAT
+machines without special cases.
+
+**Stand-in: three layers real hardware never touches.**
+
+1. *Identity.* MAT authenticates with one client certificate, SPIFFE
+   `machine-a-tron`, and the API's internal RBAC table
+   (`crates/api-core/src/auth/internal_rbac_rules.rs`) grants that principal
+   a union of roles no real component holds at once: the DHCP server's
+   `DiscoverDhcp` and `ExpireDhcpLease`; Scout's `DiscoveryCompleted`,
+   `MachineValidationCompleted`, `RebootCompleted`, `CleanupMachineCompleted`
+   and `ForgeAgentControl`; the DPU agent's `RecordDpuNetworkStatus`; the
+   PXE service's `GetPxeInstructions`; the admin CLI's force-deletes,
+   `CreateVpc`, `SetDynamicConfig`, switch and power-shelf creation. A real
+   BMC, host or DPU has no client certificate at discovery time; nico-dhcp
+   and nico-pxe call the API on their behalf, and the DPU agent later gets
+   its own per-DPU `Agent` identity.
+2. *DHCP without a packet.* In production a BMC or DPU broadcasts, the OOB
+   switch relays, nico-dhcp receives and calls `DiscoverDhcp`. MAT's
+   `dhcp_relay` task calls `DiscoverDhcp` directly with a synthetic MAC,
+   relay address and circuit id; the API sees a relayed request that was
+   never on a wire.
+3. *Inventory from templates, lifecycle without a boot.* `DiscoverMachine`
+   is an anonymous RPC, because real Scout and real DPU agents call it before
+   they have any identity, so the hook itself is normal. The payload is not:
+   MAT posts as the Scout reporter for the host and the DpuAgent reporter for
+   the DPU, with `create_machine: true` and template-generated serial, MAC
+   addresses and TPM EK certificate. No PXE boot and no Scout run follow;
+   MAT's per-host state machine calls the completion RPCs itself, while the
+   BMC mock answers Redfish power and boot commands so nico's workflows
+   proceed. Nothing boots, nothing is wiped, nothing is measured.
+
+**The seam that matters for the datapath.** MAT fetches each machine's
+network configuration with `GetManagedHostNetworkConfig`, the same call the
+production DPU agent makes, and acknowledges it with `RecordDpuNetworkStatus`,
+copying the configuration version back so nico sees the DPU as converged.
+Between the fetch and the acknowledgement nothing is applied anywhere: the
+machine has an admin address, a VPC and a VNI in the database, and no
+interface, no VRF, no packets. The VPC datapath simulation
+(`vpc-sim-design.md`) fills exactly that gap: same fetch, a real apply into a
+per-machine FRR stand-in on the fabric, same acknowledgement. Layers 1 to 3
+stay as they are; MAT remains the API actor for every machine.
+
+One-line version: MAT is faithful at the API and workflow layer and a
+stand-in at the identity, packet and physical layers.
