@@ -333,3 +333,41 @@ stay as they are; MAT remains the API actor for every machine.
 
 One-line version: MAT is faithful at the API and workflow layer and a
 stand-in at the identity, packet and physical layers.
+
+## 13. The DPF path (the default since 2026-09-15) and the simulator
+
+NICo provisions DPUs through DPF: the machine controller writes DPUDevice and
+DPUNode resources and waits for the DPF operator to walk a DPU resource to
+Ready; while the DPU is in `Rebooting` NICo power-cycles the host over
+Redfish and clears the reboot annotation. In nico-dev the operator's half is
+played by upstream's `dev/k8s/dpf-sim-controller`, deployed by
+`deploy-dpf-sim.py` as the `dpf` bring-up step. Nothing is flashed and no
+DPU OS boots; only the status transitions NICo observes are reproduced, on a
+per-phase timer (`nico-system.dpf.sim.phase_dwell` in the site yaml).
+
+What decides the path is per host: the site flag (`[dpf] enabled` in the API
+config, from `dpf:` in bringup.yaml) AND the host's own DPF flag. MAT
+registers every host with DPF on, so on a DPF site the whole fleet takes the
+DPF path. `run-admin-cli.sh dpf disable <host>` before ingestion sends that
+host down the iPXE path instead; NICo refuses it once the host was ingested
+via DPF.
+
+Three pieces have to agree, and the tooling installs them in this order
+because nico-api fails hard otherwise: the DPF CRDs and the operator
+namespace (before the nico release), `[dpf] enabled = true` plus the
+nico-api Role on DPF resources (chart-rendered from the site yaml), and the
+simulator (last; hosts only need it once they reach `dpuinit`).
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| nico-api crash-loops right after deploy, log says `failed to initialize DPF SDK` | `[dpf]` enabled but the CRDs or the operator namespace are missing | `deploy-dpf-sim.py <site> --crds-only`, then `kubectl -n nico-system rollout restart deployment/nico-api`. deploy-dev-nico.py does this before the release; a hand-edited TOML can bypass it |
+| every host sits in `dpuinit`; DPUDevice and DPUNode exist, no DPU resource appears | no simulator, or it is not Running | `deploy-dpf-sim.py <site>`; `kubectl -n dpf-operator-system get pods` |
+| a DPU parks in `Rebooting` | NICo has not cleared the reboot annotation: the host's BMC mock did not complete the power cycle | MAT log on the VM; `run-admin-cli.sh machine show <host>` |
+| `dpf disable` refused | the host was ingested via DPF | `reset-mat-state.py <site> --yes`, then disable before the next ingestion |
+| simulator pod Pending | CPU committed on the node | it asks for 100m / 128Mi (site yaml `nico-system.dpf.sim.resources`); free CPU or resize the VM |
+
+The simulator and the real DPF operator must never share a cluster, since
+both write `DPU.status.phase`; `deploy-dpf-sim.py` refuses when it finds the
+operator. The simulator's Go types are pinned to the doca-platform release
+whose CRDs ship in `crates/dpf/crds`; both come from the same checkout, so
+they agree as long as the site is built from one tree.

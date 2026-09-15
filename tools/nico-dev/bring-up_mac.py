@@ -205,6 +205,7 @@ def build_steps(args):
                  f' --nico-repo-folder {args.repo}'
                  f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev'
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
+                 f' --dpf {str(args.dpf).lower()}'
                  + (f' --images-source-kind ngc'
                     f' --images-source-registry {args.ngc_registry}'
                     f' --images-source-tag {args.ngc_tag}'
@@ -245,6 +246,12 @@ def build_steps(args):
          'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
          '(20260826-#7). how-to §8.'),
 
+        ('dpf', 'Mac', 'Deploy the DPF simulator (dpf-sim-controller)',
+         [[sys.executable, NICO_DEV / 'deploy-dpf-sim.py', site_mac]],
+         'Builds dev/k8s/dpf-sim-controller for the host arch (docker), applies\n'
+         'its RBAC + Deployment into dpf-operator-system. Skipped with --no-dpf.\n'
+         'Rollout stuck: kubectl -n dpf-operator-system describe pod. how-to: DPF.'),
+
         ('route', 'Mac', 'Route the service VIPs + final status',
          [['sudo', 'route', '-n', 'add', '-net', vip_net, args.ip],
           [sys.executable, NICO_DEV / 'ndev.py', site_mac]],
@@ -254,6 +261,8 @@ def build_steps(args):
     ]
     if args.ngc_tag:
         steps = apply_ngc_mode(steps, args, site_mac)
+    if not args.dpf:                      # --no-dpf / dpf: false — legacy iPXE site, no simulator
+        steps = [s for s in steps if s[0] != 'dpf']
     return steps
 
 
@@ -319,6 +328,9 @@ def main():
     p.add_argument('--site', default='dev')
     p.add_argument('--underlay', type=int, default=11)
     p.add_argument('--overlay', type=int, default=12)
+    p.add_argument('--dpf', action=argparse.BooleanOptionalAction, default=True,
+                   help='DPF as the DPU-provisioning path (default; config: dpf: true|false). '
+                        '--no-dpf = legacy iPXE path: no DPF CRDs, no simulator, [dpf] off')
     p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'scale-down-first'],
                    default='wait',
                    help='redeploy policy when a rollout cannot schedule its surge pod '
@@ -437,7 +449,7 @@ def main():
         dummy = args
         dummy.name = dummy.name or '<name>'
         for i, (key, where, desc, _, _r) in enumerate(build_steps(dummy), 1):
-            print(f'  {i}. {key:9s} [{where:3s}] {desc}')
+            print(f'  {i:2d}. {key:9s} [{where:3s}] {desc}')
         return
 
     steps = build_steps(args)

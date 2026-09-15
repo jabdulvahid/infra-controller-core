@@ -708,6 +708,18 @@ def main():
     if not skip('nico'):
         print('\nInstalling nico...')
         ensure_nico_namespace(kubeconfig)
+        # DPF (default): nico-api creates DPF resources at startup and the
+        # chart's DPF Role needs the operator namespace, so CRDs + namespace
+        # go in BEFORE the release. One implementation, in deploy-dpf-sim.py.
+        dpf_block = (cfg.get('nico-system') or {}).get('dpf') or {}
+        if dpf_block.get('enabled', False):
+            import importlib.util as _ilu
+            _spec = _ilu.spec_from_file_location(
+                'deploy_dpf_sim', Path(__file__).resolve().parent / 'deploy-dpf-sim.py')
+            _dpf = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_dpf)
+            _dpf.ensure_dpf_prereqs(repo, dpf_block.get('namespace') or 'dpf-operator-system',
+                                    kubeconfig)
         heal_stuck_release('nico', 'nico-system', kubeconfig)
         helm(['upgrade', '--install', 'nico', helm_dir,
               '-n', 'nico-system',

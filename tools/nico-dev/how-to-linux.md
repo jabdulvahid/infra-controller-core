@@ -100,6 +100,8 @@ vm:
 redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
+dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
+
 dc: dc1
 site: dev1
 underlay: 11        # first octets of the fabric prefixes: pick two your host and VPN do not use
@@ -137,7 +139,7 @@ bring-up.py --config bringup-mysite.yaml
 ```
 
 Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
-nico → route. No GUI step; `virt-install` sets the share path. One `sudo`
+nico → dpf → route. No GUI step; `virt-install` sets the share path. One `sudo`
 prompt at the end for the host route to the service VIPs. On failure the
 runner prints that step's known failure modes and the resume command
 (`--from <step>`). Every step is safe to rerun.
@@ -248,6 +250,35 @@ reset-mat-state.py <site> --yes
 NICo keeps the fleet's footprint (explored endpoints, expected-machine
 registrations, rotated BMC credentials); without the reset a rerun against
 fresh mocks locks the endpoints out.
+
+### DPF and the two provisioning modes
+
+A site brought up with `dpf: true` (the default) runs NICo with DPF as the
+DPU-provisioning path and carries the DPF simulator, `dpf-sim-controller`, in
+the `dpf-operator-system` namespace. Every MAT host then passes through
+`dpuinit`: NICo writes DPUDevice and DPUNode resources, the simulator walks a
+DPU resource through the real phase sequence, including the reboot round-trip
+against the BMC mocks, and the host comes Ready. Watch it:
+
+```bash
+kubectl -n dpf-operator-system get dpudevice,dpunode,dpu -w
+kubectl -n dpf-operator-system logs deployment/dpf-sim-controller -f
+```
+
+The legacy iPXE path is still available in two ways:
+
+- **Chosen hosts**: `<site>/run-admin-cli.sh dpf disable <host>` after the
+  host is discovered and before it is ingested. NICo refuses to disable DPF on
+  a host that was ingested via DPF, so decide before the run reaches
+  `dpuinit`. MAT registers all hosts with DPF on.
+- **Whole site**: `dpf: false` in bringup.yaml. No CRDs, no simulator, and
+  NICo logs its iPXE deprecation warning.
+
+`deploy-dpf-sim.py <site>` redeploys the simulator, for example with
+`--phase-dwell 30s` for a slower walk or `--rebuild` after a code change;
+`--uninstall` removes it. Tuning lives in the site yaml under
+`nico-system.dpf`. What the simulator does and does not reproduce, and its
+failure catalog: `mat-in-nico-dev.md` §13.
 
 Your own MAT build against the site's certificates: build with
 `--repo <worktree> --out-dir <dir>` so the site's baseline binary is
@@ -368,6 +399,7 @@ is listed in `~/.nico-dev/vms/<vm>.yaml`.
 | `deploy-dev-nico.py <site> --tag T` | host | full helm deploy, resumable |
 | `redeploy-dev-nico.py <site> --tag T` | host | roll the nico release to a tag |
 | `deploy-flow.py <site> --ngc\|--build` | host | Flow add-on |
+| `deploy-dpf-sim.py <site> [--phase-dwell T] [--uninstall]` | host | DPF simulator (default site; the `dpf` bring-up step) |
 | `build-nico-clis.py <site>` | host | admin-cli, nicocli, MAT in containers |
 | `configure-clis.py <site>` | host | certs, MAT config, wrappers, /etc/hosts |
 | `run-admin-cli.sh`, `run-mat.sh` | host / VM | generated wrappers in the site folder |

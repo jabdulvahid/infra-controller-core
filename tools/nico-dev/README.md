@@ -90,6 +90,10 @@ vi bringup-mysite.yaml
 - **Source build** (`tag:`, the default when `ngc:` is absent) — builds
   **your worktree's branch** and deploys it; the full dev loop
   (20–40 min first build, minutes after).
+- **DPF** (`dpf: true`, the default) — NICo's DPU-provisioning path, with
+  the DPF simulator deployed at the end so MAT hosts are provisioned the way
+  production does it. `dpf: false` gives the legacy iPXE path. Details in the
+  how-to's "DPF and the two provisioning modes".
 
 **Sizing** (`vm:` block): for **build-and-play** — deploy from NGC, use the
 site, no redeploys — 6 CPUs and 8 GB RAM are enough. For **code
@@ -119,8 +123,8 @@ beats the config file.
 GUI (point it at `~/nico-tests/vm1/shared` — the one thing macOS won't
 let a script do; instructions are printed), then: VM built from the
 Ubuntu cloud image (~90 s), tools and mounts, site config, fabric,
-Kubernetes, images (NGC pull, or your source build), deploy, and finally
-a Mac `sudo` prompt to route the service VIPs. Done looks like a URL:
+Kubernetes, images (NGC pull, or your source build), deploy, the DPF
+simulator, and finally a Mac `sudo` prompt to route the service VIPs. Done looks like a URL:
 `https://<underlay>.133.1.17/admin`. NGC lane, zero compilation: **~30 min
 on a Mac at the office; 13 min on a Linux host on the corp network**
 (measured 2026-09-02, empty host to Done).

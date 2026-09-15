@@ -178,6 +178,24 @@ nico-system:
   redeploy:
     on_insufficient_cpu: REDEPLOY_ON_INSUFFICIENT_CPU
 
+  # DPF (DOCA Platform Framework) — NICo's DEFAULT DPU-provisioning path.
+  # enabled comes from bringup.yaml `dpf:` (default true). true = the API runs
+  # with [dpf] enabled, the DPF CRDs are applied before nico installs, and the
+  # `dpf` step deploys dev/k8s/dpf-sim-controller, which plays the operator's
+  # half so MAT hosts leave dpuinit. false = the legacy iPXE path, nothing
+  # DPF-related is installed. Everything below `enabled` is advanced tuning
+  # read by deploy-dpf-sim.py; sim.image lives in the local registry at
+  # images.tag and is always built from the checkout (not on NGC).
+  dpf:
+    enabled: DPF_ENABLED
+    namespace: dpf-operator-system
+    sim:
+      image: dpf-sim-controller
+      phase_dwell: 3s               # time per DPU phase (OS install, reboot, ...)
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits:   { cpu: 500m, memory: 512Mi }
+
   vault:
     # file = persistent storage (hostPath /var/lib/vault) + auto-unseal sidecar.
     # Survives VM reboots — REQUIRED for golden images. 'dev' (in-memory,
