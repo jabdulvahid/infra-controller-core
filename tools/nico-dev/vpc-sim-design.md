@@ -169,3 +169,116 @@ and verified on the wire:
    groups → connectivity proof, each step showing the GUI/REST view AND
    the packets/routes behind it. This is the learning deliverable: all of
    nico's tenant-facing surface, exercised end-to-end, without a DPU.
+
+---
+
+## 7. Refinements (2026-09-08)
+
+Review of Stages 1–2 against the upstream code, and a scoping decision.
+
+### 7.1 Scope ruling: the realizer, not the real agent
+
+**Ruling:** HBN, NVUE and the production `forge-dpu-agent` are
+implementation details of a BlueField. What the simulation must prove is:
+*can the managed host's current network configuration be retrieved from the
+API and applied to the simulated fabric?* Stage 1 (the realizer) is the
+plan. Stage 2 (real agent in the stand-in) is dropped as a goal; it may be
+revisited as a curiosity, never as a gate.
+
+Findings from the code that informed the ruling (recorded so nobody re-does
+the survey):
+
+- `forge-dpu-agent` has a dev-only **fake-DPU mode** (`[machine]
+  is_fake_dpu = true`): synthetic BlueField identity, no hardware
+  enumeration, no client certificate required. Identity is hard-coded to
+  one MAC/serial, so at most one such agent per site without an upstream
+  change. It still requires HBN (via `crictl` or NVUE REST) to apply config.
+- The agent supports **NVUE REST** (`--hbn-config-mode nvue-rest`,
+  `NVUE_HTTPS_ADDRESS`/`NVUE_USERNAME`/`NVUE_PASSWORD`). The HBN version
+  gate expects a build string prefixed `HBN`; interface names are
+  BlueField's (`p0_if`, `p1_if`, `pf0hpf_if`, `pf0vfN_if`). Running it
+  against Cumulus VX or the `doca_hbn` container on a generic VM would be
+  a spike with real unknowns — the reason for the ruling above.
+- **MAT already impersonates the agent's entire control-plane leg**:
+  `discover_machine`, `dpu_info`, `get_managed_host_network_config`,
+  `record_dpu_network_status`, `dpu_agent_network_observation`. The seam
+  between MAT and a realizer is therefore known: the realizer consumes the
+  same `ManagedHostNetworkConfigResponse` and realizes it; MAT remains the
+  API actor.
+- `bmc-mock` has a **libvirt mode** (power control + virtual media on a
+  named domain). MAT does not use it today. It is the piece a future
+  "real VM host" phase would build on; not needed for Stage 1.
+
+### 7.2 The translation is specified by the agent's own renderer
+
+The realizer re-implements what `crates/agent/src/ethernet_virtualization.rs`
++ `templates/nvue_startup_fnn.conf` do, targeting plain Linux + FRR instead
+of NVUE. Field by field, per `ManagedHostNetworkConfigResponse`:
+
+| API field | Realization in the stand-in |
+|---|---|
+| `managed_host_config.loopback_ip` (lo-ip pool) | `lo` address, VXLAN source, BGP router-id, underlay eBGP to the leaf (unchanged from the existing dpu-1 pattern) |
+| `vpc_vni` / `use_admin_network` | one VRF `vpc_<vni>` with L3VNI `<vni>` (`ip link add vrf-… type vrf`, `vxlan… ` bound to it); admin VPC when `use_admin_network`, tenant VPC otherwise; **rebuild on change, never edit in place** (the agent re-renders the whole config every poll) |
+| per-VPC loopback (`vpc-dpu-lo` pool) | loopback inside the VRF (EVPN next hop for that VRF's type-5 routes) |
+| `tenant_interfaces[]` / `admin_interface`: `gateway`, `interface_prefix`, `ip`, `vlan_id` | host-facing veth in the VRF carrying the **gateway address with the segment mask** (not a /31 — that is the site-controller pattern); the host container's end takes `ip` |
+| `datacenter_asn`, `asn` (fnn-asn pool) | FRR `router bgp <asn>`; RTs formed as `<datacenter_asn>:<n>` |
+| routing profile `route_target_imports` / `route_targets_on_exports` + native `<dc_asn>:<vpc_vni>` + `additional_route_target_imports` | `route-target import/export` lists in the VRF's `l2vpn evpn` AF; `advertise ipv4 unicast` |
+| `tenant_host_asn` + routing profile `allowed_anycast_prefixes` | **passive eBGP neighbour toward the host** in the VRF, inbound prefix-list permitting /32s inside the allowed anycast prefixes, community tag for the leak — required for the anycast exercise (7.4), not optional |
+| `leak_*` flags | VRF↔default route-import with the community/prefix-gated route-map |
+| `network_security_groups`, `deny_prefixes` | nftables in the stand-in — **deferred** behind connectivity/isolation/anycast |
+| `dhcp_servers` | Stage 1: static host addresses from `ip`; later: DHCP relay from the stand-in toward nico-dhcp (realistic path) |
+
+Fidelity risk: the realizer is a second implementation of a translation the
+agent owns; it will lag agent changes. Mitigation: generate both renders
+from one variable set and diff them structurally (the same render-diff idea
+proposed for the site-controller template). One rendering library, two
+consumers.
+
+### 7.3 Host unit: a container, not a bare namespace, not a VM
+
+A user must be able to ssh into a host, ping, tcpdump, and *install a
+service*. A bare `ip netns` cannot host that; a VM per host is too heavy
+(GBs vs tens of MB; eight hosts must fit on the 16 GB tier beside the site).
+**Unit = lightweight Linux container per host** (same family as the fabric's
+FRR containers): sshd, iproute2, ping, tcpdump, curl, and FRR available for
+7.4. `ndev host shell <h>` enters from the VM side; ssh between hosts inside
+a VPC proves connectivity from the tenant's point of view.
+
+A VM host is the right unit only when the exercise is the OS lifecycle
+itself (PXE from nico-pxe, scout inventory, real Ubuntu install, reboots).
+That is a later phase built on `bmc-mock`'s libvirt mode.
+
+### 7.4 Fourth exercise: anycast VIP without a cluster
+
+nico supports tenant anycast natively: a routing profile's
+`allowed_anycast_prefixes` lets a host announce /32s inside those prefixes
+to its DPU over BGP; the DPU tags and leaks/exports them. In the sim:
+
+1. Two hosts in a *provider* VPC each run FRR with `network <vip>/32`
+   toward their stand-in (the passive tenant neighbour of 7.2).
+2. Each stand-in installs the /32 with the host as next hop; two hosts →
+   two next hops → ECMP at the importer.
+3. A *consumer* VPC reaches the VIP only if its routing profile imports
+   the right RT (or the leak path permits it) — the "who imports what"
+   lesson, on packets. Kill one announcer and watch the ECMP set shrink.
+
+Exit criteria (section 6) gain this as item 5a. It exercises the piece of
+the realizer most likely to be skipped (the host-facing BGP session) and
+the piece of nico most often misunderstood (RT-gated reachability).
+
+### 7.5 Decisions taken from section 5
+
+1. Vehicle: nico-dev; generator kept portable. 2. Cardinality: 1:1 first.
+3. Realizer language: Python. 4. Host IPs: static first, DHCP later.
+5. Admin-VPC datapath **included from day one** — it is the first config
+every MAT machine receives, and makes the "before" state physically real.
+
+### 7.6 Sizing and first step
+
+With HBN and the real agent out of scope there is no research risk left;
+the remaining risk is translation fidelity and MAT convergence. Estimate:
+one to two weeks of ordinary work for connectivity + isolation + anycast;
+NSG realization and DHCP realism after. Ordering (POR): after the DPU-sim
+gate (Phase I). **First concrete step:** a half-day proof — one hand-built
+stand-in, one hand-run `get_managed_host_network_config`, one hand-applied
+VRF — before any generator work.
