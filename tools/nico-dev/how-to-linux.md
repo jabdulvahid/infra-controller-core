@@ -82,8 +82,8 @@ The check is read-only. Fix every ✗; each line says how.
 ## 3. Describe the site
 
 ```bash
-cp devup-example.yaml devup-mysite.yaml
-vi devup-mysite.yaml
+cp bringup-example.yaml bringup-mysite.yaml
+vi bringup-mysite.yaml
 ```
 
 ```yaml
@@ -122,8 +122,8 @@ Several VMs on one host need distinct `name`, `host_num` and octets.
 Choosing an NGC tag:
 
 ```bash
-ngc-tags.py --config devup-mysite.yaml                 # newest PR builds tracking main, with host-arch availability
-ngc-tags.py --config devup-mysite.yaml --before v2.3.0 # page back
+ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main, with host-arch availability
+ngc-tags.py --config bringup-mysite.yaml --before v2.3.0 # page back
 ```
 
 Prefer a recent dev tag. A fresh site's database ledger tracks main and the
@@ -132,8 +132,8 @@ migration job refuses downgrades.
 ## 4. Bring the site up
 
 ```bash
-dev-up.py --config devup-mysite.yaml --dry-run   # preflight ✓/✗/⚠, numbered plan, READY or NOT READY
-dev-up.py --config devup-mysite.yaml
+bring-up.py --config bringup-mysite.yaml --dry-run   # preflight ✓/✗/⚠, numbered plan, READY or NOT READY
+bring-up.py --config bringup-mysite.yaml
 ```
 
 Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
@@ -152,7 +152,7 @@ sshuttle -r <linux-host> 11.133.1.0/27       # if the login flow redirects to th
 ```
 
 The host route is `sudo ip route replace 11.133.1.0/27 via 192.168.64.126`.
-dev-up adds it; it does not survive a host reboot.
+bring-up adds it; it does not survive a host reboot.
 
 ## 5. Where things are
 
@@ -273,7 +273,7 @@ Rules that save an afternoon:
   previously applied but is missing", you deployed an older binary; delete
   the job, revert the code, build and deploy a new tag.
 - **Tight node.** On a 6-CPU VM a rollout can stick on `Insufficient cpu`;
-  `redeploy: { on_insufficient_cpu: scale-down-first }` in the devup yaml
+  `redeploy: { on_insufficient_cpu: scale-down-first }` in the bringup yaml
   rolls the stuck deployment old-pod-first for that rollout only.
 
 Full deploy or one release: `deploy-dev-nico.py <site> --tag <t>`,
@@ -349,8 +349,8 @@ nico-dev-fabric` rebuilds the fabric from the site yaml. Newcomers start with
 ## 12. Tear down
 
 ```bash
-dev-down.py --config devup-mysite.yaml                  # domain, volumes, host route, ledger entry
-dev-down.py --config devup-mysite.yaml --remove-infra   # also nico-nat and the pool, when no nico VMs remain
+dev-down.py --config bringup-mysite.yaml                  # domain, volumes, host route, ledger entry
+dev-down.py --config bringup-mysite.yaml --remove-infra   # also nico-nat and the pool, when no nico VMs remain
 ```
 
 Your site folder and worktree are never deleted. Everything nico-dev created
@@ -361,7 +361,7 @@ is listed in `~/.nico-dev/vms/<vm>.yaml`.
 | Script | Runs on | Does |
 |---|---|---|
 | `check-prereqs.sh [--build]` | host | read-only prerequisite check |
-| `dev-up.py --config X [--dry-run] [--from step]` | host | the whole bring-up |
+| `bring-up.py --config X [--dry-run] [--from step]` | host | the whole bring-up |
 | `dev-down.py --config X [--remove-infra]` | host | the whole teardown |
 | `ngc-tags.py --config X` | host | deployable NGC tags |
 | `build-dev-nico.py <site> --tag T` | host | build images, push to local registry |

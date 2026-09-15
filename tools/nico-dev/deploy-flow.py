@@ -2,7 +2,7 @@
 """
 nico-dev add-on — deploy NICo Flow (flow + psm + nsm) onto a running nico-dev site.
 
-A POST-bring-up option: nothing in dev-up / deploy-dev-nico changes. Run it
+A POST-bring-up option: nothing in bring-up / deploy-dev-nico changes. Run it
 after the site is up, from the host (helm/kubectl reach the cluster through
 the site kubeconfig). One script, one chart; deploy-<chart>.py is the pattern
 for further add-ons.
@@ -277,7 +277,7 @@ def main():
         # Flow is an add-on to a DEPLOYED core: refuse on a half-built site
         if not helm_values('nico', 'nico-system', env):
             probs.append('helm release nico (NICo core) not found in nico-system — '
-                         'deploy the site first (dev-up / deploy-dev-nico.py)')
+                         'deploy the site first (bring-up / deploy-dev-nico.py)')
         elif kubectl(['get', 'deploy', 'nico-api', '-n', 'nico-system'], env,
                      check=False).returncode != 0:
             probs.append('nico-api deployment missing — core deploy incomplete')

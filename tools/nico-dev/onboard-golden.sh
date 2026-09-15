@@ -25,10 +25,10 @@
 #      so an image baked with the older interactive script works too
 #   8  wait for the cluster, add the VIP route (sudo), open the admin UI
 #
-# Explicit platform gate: macOS only (UTM). Linux hosts use dev-up.py.
+# Explicit platform gate: macOS only (UTM). Linux hosts use bring-up.py.
 set -euo pipefail
 
-[[ "$(uname -s)" == "Darwin" ]] || { echo "Error: macOS only (UTM). On Linux use dev-up.py." >&2; exit 1; }
+[[ "$(uname -s)" == "Darwin" ]] || { echo "Error: macOS only (UTM). On Linux use bring-up.py." >&2; exit 1; }
 [[ "$(uname -m)" == "arm64" ]] || { echo "Error: Apple Silicon only (the golden image is arm64)." >&2; exit 1; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -291,10 +291,12 @@ else
     git clone "$REPO_URL" "$SHARE_DIR/infra-controller"
     ok "cloned $REPO_URL"
 fi
-if [[ -d "$SHARE_DIR/infra-controller" && ! -f "$SHARE_DIR/infra-controller/tools/nico-dev/dev-up.py" ]]; then
+# Graft marker: bring-up.py (edge) or its pre-rename name dev-up.py (older stable tags).
+_tools="$SHARE_DIR/infra-controller/tools/nico-dev"
+if [[ -d "$SHARE_DIR/infra-controller" && ! -f "$_tools/bring-up.py" && ! -f "$_tools/dev-up.py" ]]; then
     (cd "$SHARE_DIR/infra-controller" && curl -fsSL "$GRAFT_URL" | bash)
 fi
-[[ -f "$SHARE_DIR/infra-controller/tools/nico-dev/dev-up.py" ]] && ok "nico-dev tools grafted (stable channel)"
+[[ -f "$_tools/bring-up.py" || -f "$_tools/dev-up.py" ]] && ok "nico-dev tools grafted (stable channel)"
 
 # ── 5. the shared directory in UTM (UI scripting) ──────────────────────────
 # UTM exposes no share-path property for QEMU VMs (20260828-#2, 20260903-#5);

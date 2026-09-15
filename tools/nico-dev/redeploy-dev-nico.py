@@ -105,7 +105,7 @@ def cpu_sizing_advice(env, pending_pod):
   │   2. Increase CPUs from {have} to at least {want} (and memory to 16 GB if it is below):
   │        macOS/UTM : UTM → select VM → ⌘E → System → CPU Cores
   │        Linux     : virsh setvcpus <vm-name> {want} --config --maximum && virsh setvcpus <vm-name> {want} --config
-  │   3. Set  vm: {{ cpus: {want} }}  in your devup yaml so dev-up/records agree.
+  │   3. Set  vm: {{ cpus: {want} }}  in your bringup yaml so bring-up/records agree.
   │   4. Start the VM; on the VM run restart-ordered.sh to settle the site.
   └──────────────────────────────────────────────────────────────────────────''')
 
