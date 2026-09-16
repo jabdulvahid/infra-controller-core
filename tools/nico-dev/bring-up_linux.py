@@ -105,6 +105,21 @@ def preflight(args):
     check(Path(args.share).expanduser().is_dir(),
           f'share folder {args.share}',
           f'share folder does not exist: {args.share}')
+    # checkout parity: the nico-dev scripts embed chart paths, resource names,
+    # setup.sh phases and values defaults; assert them against the site's repo
+    # so upstream drift fails here, before any step runs.
+    repo_dir = Path(args.share).expanduser() / args.repo
+    if (repo_dir / 'helm-prereqs').is_dir():
+        r = subprocess.run([sys.executable, str(NICO_DEV / 'check-parity.py'), str(repo_dir), '--quiet'],
+                           capture_output=True, text=True)
+        drift = [l.strip() for l in r.stdout.splitlines() if l.strip().startswith('✗')]
+        check(r.returncode == 0,
+              f'checkout parity: {repo_dir} matches what the nico-dev scripts assume',
+              f'checkout drifted from what nico-dev assumes ({len(drift)} item(s); '
+              f'check-parity.py {repo_dir} lists them and the nico-dev file to update):\n      '
+              + '\n      '.join(drift[:6]))
+    else:
+        check(False, '', f'nico repo not found at {repo_dir} (share/{args.repo}; --repo names the folder inside the share)')
     if args.ngc_tag:
         check(os.environ.get(args.token_env),
               f'NGC API key present in env var {args.token_env}',

@@ -127,6 +127,14 @@ The check only reads; it changes nothing. Fix every line marked ✗. Each
 line says how. The first time a script drives UTM, macOS shows the dialog
 "Terminal wants to control UTM". Click Allow.
 
+The last section of the check, "checkout parity", is about the repository
+rather than your Mac. The nico-dev scripts re-implement parts of the
+upstream setup and therefore assume certain chart paths, resource names and
+defaults in the checkout. `check-parity.py` verifies all of them, so an
+upstream change that would break or silently divert a bring-up shows up
+here. A ✗ in that section means a nico-dev script needs updating, not your
+repository; report it.
+
 ## 3. Which workflow are you on?
 
 There are two ways to get a site. They share nothing until the site is
@@ -640,7 +648,8 @@ planned. Neither step touches your site folder or your worktree.
 
 | Script | Runs on | Does |
 |---|---|---|
-| `check-prereqs.sh [--build]` | Mac | read-only prerequisite check |
+| `check-prereqs.sh [--build]` | Mac | read-only prerequisite check, includes checkout parity |
+| `check-parity.py [repo] [--quiet]` | Mac | does the checkout still match what the nico-dev scripts assume |
 | `onboard-golden.sh --zip Z --dest D` | Mac | golden image ZIP to running site, hands off |
 | `bring-up.py --config X [--dry-run] [--from step]` | Mac | the whole bring-up |
 | `ngc-tags.py --config X` | Mac | deployable NGC tags |
