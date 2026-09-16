@@ -37,6 +37,8 @@ comments survive (yaml.dump would strip them). Older site yamls without the
 block get one appended. Readers fall back to the legacy `registry:` block.
 """
 
+import copy
+import json
 import re
 from pathlib import Path
 
@@ -55,6 +57,68 @@ IMAGE_NAMES = {
 }
 NGC_CORE_IMAGE_DEFAULT = 'nvmetal-carbide'
 GROUPS = ('core', 'rest', 'flow')
+
+# The names NGC publishes under, per LOCAL name. The local names are what the
+# Helm charts expect in the local registry and are fixed by the charts (IMAGE_NAMES);
+# the NGC names are configuration (bringup.yaml ngc.images) and default to the same
+# name — only the core differs (nvmetal-carbide on NGC, nico locally).
+NGC_NAMES_DEFAULT = {
+    'core': NGC_CORE_IMAGE_DEFAULT,
+    'rest': {n: n for n in IMAGE_NAMES['rest']},
+    'flow': {n: n for n in IMAGE_NAMES['flow']},
+}
+
+
+def parse_names_arg(value):
+    """JSON string (CLI) or dict (yaml) → {'core': str, 'rest': {local: ngc}, 'flow': {...}}
+    with only the given keys. Local names must be chart names; None/'' → {}."""
+    if not value:
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError as e:
+            raise SystemExit(f'Error: images: not valid JSON ({e})')
+    if not isinstance(value, dict):
+        raise SystemExit('Error: images: expected a map with keys core, rest, flow')
+    bad = sorted(set(value) - set(GROUPS))
+    if bad:
+        raise SystemExit(f'Error: images: unknown image group(s) {", ".join(bad)} '
+                         f'— valid: {", ".join(GROUPS)}')
+    out = {}
+    if value.get('core') not in (None, ''):
+        if not isinstance(value['core'], str):
+            raise SystemExit('Error: images.core must be the NGC name of the core image (a string)')
+        out['core'] = value['core']
+    for g in ('rest', 'flow'):
+        m = value.get(g)
+        if not m:
+            continue
+        if not isinstance(m, dict):
+            raise SystemExit(f'Error: images.{g} must be a map of local chart name → NGC name')
+        unknown = sorted(set(m) - set(IMAGE_NAMES[g]))
+        if unknown:
+            raise SystemExit(f'Error: images.{g}: {", ".join(unknown)} is not a local image name; '
+                             f'the local names are fixed by the Helm charts: {", ".join(IMAGE_NAMES[g])}')
+        out[g] = {k: str(v) for k, v in m.items() if v not in (None, '')}
+    return out
+
+
+def resolve_ngc_names(overrides=None):
+    """Full {'core': str, 'rest': {local: ngc}, 'flow': {local: ngc}}: defaults with
+    the overrides applied."""
+    names = copy.deepcopy(NGC_NAMES_DEFAULT)
+    ov = parse_names_arg(overrides)
+    if 'core' in ov:
+        names['core'] = ov['core']
+    for g in ('rest', 'flow'):
+        names[g].update(ov.get(g, {}))
+    return names
+
+
+def names_arg(names):
+    """{...} → compact JSON for passing between scripts."""
+    return json.dumps(names, separators=(',', ':'), sort_keys=True)
 
 
 def parse_tags_arg(value):
@@ -117,6 +181,11 @@ def read(cfg):
                 for g in GROUPS}
     img['tags'] = _fill(img['tag'], img.get('tags'))
     img['source']['tags'] = _fill(img['source'].get('tag', ''), img['source'].get('tags'))
+    # NGC names: the recorded map, else legacy core_image, else the defaults
+    given = dict(img['source'].get('names') or {})
+    if 'core' not in given and img['source'].get('core_image'):
+        given['core'] = img['source']['core_image']
+    img['source']['names'] = resolve_ngc_names(given)
     return img
 
 
@@ -161,6 +230,22 @@ def _insert_at(lines, start, end):
     return at
 
 
+def _set_tree(lines, start, end, indent, mapping):
+    """Set nested `key: value` pairs at `indent` inside lines[start:end]; a dict
+    value becomes a sub-block. Returns the new end index of lines[start:end]."""
+    for k, v in mapping.items():
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            c_start, c_end, new_end = _ensure_subblock(lines, start, end, indent, k)
+            end = new_end
+            new_c_end = _set_tree(lines, c_start, c_end, indent + 2, v)
+            end += new_c_end - c_end
+        else:
+            end = _set_key(lines, start, end, indent, k, v)
+    return end
+
+
 def _ensure_subblock(lines, start, end, indent, key):
     pat = re.compile(rf'^{" " * indent}{re.escape(key)}:\s*(#.*)?$')
     for i in range(start, end):
@@ -183,8 +268,10 @@ def record(site_yaml, deployed_tag=None, source=None, registry=None, deployed_ta
 
     deployed_tag:  the default deployed tag (images.tag)
     deployed_tags: {group: tag} now running (images.tags.<group>)
-    source:        dict with any of kind/registry/tag/core_image/token_env, plus
-                   an optional 'tags' {group: ngc tag} (images.source.tags)
+    source:        dict with any of kind/registry/tag/core_image/token_env, plus the
+                   optional maps 'tags' {group: ngc tag} (images.source.tags) and
+                   'names' {'core': str, 'rest': {local: ngc}, 'flow': {...}}
+                   (images.source.names)
     registry:      where the cluster pulls from (images.registry)
     """
     path = Path(site_yaml)
@@ -200,29 +287,17 @@ def record(site_yaml, deployed_tag=None, source=None, registry=None, deployed_ta
     if deployed_tag is not None:
         end = _set_key(lines, start + 1, end, 2, 'tag', deployed_tag)
     if deployed_tags:
-        t_start, t_end, end = _ensure_subblock(lines, start + 1, end, 2, 'tags')
-        for g in GROUPS:
-            if deployed_tags.get(g) is not None:
-                new_end = _set_key(lines, t_start, t_end, 4, g, deployed_tags[g])
-                end += new_end - t_end
-                t_end = new_end
+        end = _set_tree(lines, start + 1, end, 2,
+                        {'tags': {g: deployed_tags[g] for g in GROUPS if deployed_tags.get(g) is not None}})
     if source:
-        s_start, s_end, end = _ensure_subblock(lines, start + 1, end, 2, 'source')
-        for k in ('kind', 'registry', 'tag', 'core_image', 'token_env'):
-            if k in source and source[k] is not None:
-                new_end = _set_key(lines, s_start, s_end, 4, k, source[k])
-                end += new_end - s_end
-                s_end = new_end
+        scalars = {k: source[k] for k in ('kind', 'registry', 'tag', 'core_image', 'token_env')
+                   if source.get(k) is not None}
+        maps = {}
         if source.get('tags'):
-            t_start, t_end, new_s_end = _ensure_subblock(lines, s_start, s_end, 4, 'tags')
-            end += new_s_end - s_end
-            s_end = new_s_end
-            for g in GROUPS:
-                if source['tags'].get(g) is not None:
-                    new_end = _set_key(lines, t_start, t_end, 6, g, source['tags'][g])
-                    end += new_end - t_end
-                    s_end += new_end - t_end
-                    t_end = new_end
+            maps['tags'] = {g: source['tags'][g] for g in GROUPS if source['tags'].get(g) is not None}
+        if source.get('names'):
+            maps['names'] = source['names']
+        end = _set_tree(lines, start + 1, end, 2, {'source': {**scalars, **maps}})
     # names: always present so "all images" is spelled out once
     if not any(re.match(r'^  names:\s*$', l) for l in lines[start:end]):
         lines[end:end] = ['  names:',

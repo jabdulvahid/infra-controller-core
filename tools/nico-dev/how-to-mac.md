@@ -249,6 +249,8 @@ ngc:
   #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
   #   flow: <tag>                      #   images, flow = the Flow add-on; unnamed groups use tag
   core_image: nvmetal-carbide          # NGC's name for the core image
+  # images:                            # optional: NGC names, if NGC publishes an image
+  #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
   token_env: NGC_API_KEY               # NAME of the env var holding your key
 # tag: main-20260910                   # source-build lane: the image label
 ```
@@ -275,6 +277,11 @@ What the fields mean:
   applies to a whole group. Groups you do not name use `tag`. For the
   source-build lane, set the top-level `tag` instead; it is only a label for
   the images you build, and all groups share it.
+- `core_image` and `images`: the names NGC publishes under. The names the
+  Helm charts expect in the local registry are fixed; only the core differs
+  on NGC, `nvmetal-carbide` against `nico` locally. If NGC ever publishes a
+  REST or Flow image under a new name, map it in `images` as local name to
+  NGC name, and nothing else changes.
 
 Do not set an `ip` field. The VM's address comes from UTM's own subnet. If
 you need a different last octet, set `host_num`; the default is 126. The

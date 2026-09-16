@@ -66,6 +66,12 @@ overlay: 12                       #   prefixes. Pick octets nothing on your
 #     rest: v2.2.0-pr-441-g1234567     #   the six REST images (nico-rest + site-agent)
 #     flow: v2.2.0-pr-441-g1234567     #   the Flow add-on (deploy-flow.py --ngc)
 #   core_image: nvmetal-carbide        # NGC's name for the core image (default)
+#   images:                            # optional: NGC image names, if NGC publishes one
+#     core: nvmetal-carbide            #   under a different name. Keys under rest/flow are
+#     rest:                            #   the LOCAL names the Helm charts expect (fixed);
+#       nico-rest-api: nico-rest-api   #   values are the NGC names. Unnamed = same name.
+#     flow:
+#       nico-flow: nico-flow
 #   token_env: NGC_API_KEY             # env var NAME holding your NGC key
 #   (legacy spelling still accepted: nico_image: <registry>/<core_image>, nico_tag: <tag>)
 #

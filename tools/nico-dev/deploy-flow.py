@@ -156,7 +156,9 @@ def build_images(repo, push_reg, tag, images):
             cwd=rest_dir, capture=False)
 
 
-def pull_images_from_ngc(push_reg, ngc_base, ngc_tag, local_tag, token_env, images):
+def pull_images_from_ngc(push_reg, ngc_base, ngc_tag, local_tag, token_env, images, ngc_names=None):
+    """images = the local (chart) names; ngc_names maps local → NGC name (default: same)."""
+    ngc_names = ngc_names or {}
     token = os.environ.get(token_env)
     if not token:
         sys.exit(f'Error: env var {token_env} is empty or unset (the NGC API key)')
@@ -164,7 +166,7 @@ def pull_images_from_ngc(push_reg, ngc_base, ngc_tag, local_tag, token_env, imag
     run(['docker', 'login', 'nvcr.io', '-u', '$oauthtoken', '--password-stdin'],
         stdin=token, capture=True)
     for i, image in enumerate(images, 1):
-        src = f'{ngc_base}/{image}:{ngc_tag}'
+        src = f'{ngc_base}/{ngc_names.get(image, image)}:{ngc_tag}'
         dst = f'{push_reg}/{image}:{local_tag}'
         print(f'  [{i}/{len(images)}] {src}')
         run(['docker', 'pull', '--platform', f'linux/{DOCKER_ARCH}', src], capture=False)
@@ -320,7 +322,8 @@ def main():
         if not base:
             sys.exit('Error: NGC registry base unknown — pass --ngc-image nvcr.io/<org>/<team> '
                      '(or deploy the site from NGC first so images.source records it)')
-        pull_images_from_ngc(push_reg, base, ngc_tag, tag, token_env, images)
+        pull_images_from_ngc(push_reg, base, ngc_tag, tag, token_env, images,
+                             ngc_names=src_cfg['names']['flow'])
     missing = [i for i in images if not registry_has(push_reg, i, tag)]
     if missing:
         sys.exit(f'Error: not in {push_reg} at tag {tag}: {", ".join(missing)} — use --build or --ngc')

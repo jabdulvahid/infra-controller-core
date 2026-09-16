@@ -115,6 +115,8 @@ ngc:
   #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
   #   flow: <tag>                      #   images, flow = the Flow add-on; unnamed groups use tag
   core_image: nvmetal-carbide          # NGC's name for the core image
+  # images:                            # optional: NGC names, if NGC publishes an image
+  #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
   token_env: NGC_API_KEY               # NAME of the env var holding your key
 # tag: main-20260910                   # source-build lane: the image label
 ```
