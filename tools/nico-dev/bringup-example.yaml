@@ -60,7 +60,11 @@ overlay: 12                       #   prefixes. Pick octets nothing on your
 # different name on NGC (nvmetal-carbide) than in the local registry (nico).
 # ngc:
 #   registry: nvcr.io/<org>/<team>     # base — all images live here
-#   tag: v2.2.0-pr-441-g1234567        # one tag for the whole release line (ngc-tags.py)
+#   tag: v2.2.0-pr-441-g1234567        # default tag for every image (ngc-tags.py)
+#   tags:                              # optional per-group overrides; each defaults to tag
+#     core: v2.2.0-pr-440-g89abcde     #   the NICo core image (the nico release)
+#     rest: v2.2.0-pr-441-g1234567     #   the six REST images (nico-rest + site-agent)
+#     flow: v2.2.0-pr-441-g1234567     #   the Flow add-on (deploy-flow.py --ngc)
 #   core_image: nvmetal-carbide        # NGC's name for the core image (default)
 #   token_env: NGC_API_KEY             # env var NAME holding your NGC key
 #   (legacy spelling still accepted: nico_image: <registry>/<core_image>, nico_tag: <tag>)

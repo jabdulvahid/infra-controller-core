@@ -77,6 +77,9 @@ def main():
                         '(default: NGC_API_KEY). The value is never printed.')
     p.add_argument('--ngc-image', default=DEFAULT_NGC_IMAGE,
                    help=f'NGC image repository (default: {DEFAULT_NGC_IMAGE})')
+    p.add_argument('--tags', default=None, metavar='GROUP=TAG,...',
+                   help='per-group NGC tag overrides (core, rest, flow); groups not named '
+                        'use the positional tag (bringup.yaml ngc.tags)')
     p.add_argument('--initial', action='store_true',
                    help='first deploy on a fresh site: run deploy-dev-nico.py '
                         'instead of redeploy-dev-nico.py')
@@ -95,15 +98,25 @@ def main():
         sys.exit(1)
 
     site = str(Path(args.site).expanduser().resolve())
-    ngc_ref = f'{args.ngc_image}:{args.ngc_tag}'
-    local_tag = f'ngc-{args.ngc_tag}'
-    local_ref = f'localhost:{REGISTRY_PORT}/nico:{local_tag}'
     here = Path(__file__).resolve().parent
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location('site_images', here / 'site_images.py')
+    site_images = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(site_images)
+    # one default tag, optional per-group override; each group is one Helm release
+    tags = site_images.resolve_group_tags(args.ngc_tag, args.tags)
+    local_tags = {g: f'ngc-{t}' for g, t in tags.items()}
+    ngc_ref = f'{args.ngc_image}:{tags["core"]}'
+    local_tag = local_tags['core']
+    local_ref = f'localhost:{REGISTRY_PORT}/nico:{local_tag}'
 
     print('nico-dev — Deploy nico from NGC')
     print(f'  site       : {site}')
     print(f'  NGC image  : {ngc_ref}')
     print(f'  local tag  : {local_tag}')
+    print(f'  REST tag   : {tags["rest"]}' + ('' if tags['rest'] == tags['core'] else '   (override)'))
+    if tags['flow'] != args.ngc_tag:
+        print(f'  Flow tag   : {tags["flow"]}   (recorded for deploy-flow.py --ngc)')
     print(f'  token from : ${args.token_env}')
     print()
 
@@ -135,17 +148,14 @@ def main():
     # deploy references — zero build, version-matched with the core by
     # construction. Fallback if a tag is missing: build them from the
     # checkout (--rest-only; version skew vs the core is then possible).
-    import importlib.util
-    _spec = importlib.util.spec_from_file_location('site_images', here / 'site_images.py')
-    site_images = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(site_images)
     rest_images = site_images.IMAGE_NAMES['rest']      # the fixed set, one place
     ngc_base, ngc_core_name = site_images.split_ngc_image(args.ngc_image)
-    print(f'Step 5: REST images from NGC ({ngc_base}/*:{args.ngc_tag})...')
+    rest_tag, rest_local = tags['rest'], local_tags['rest']
+    print(f'Step 5: REST images from NGC ({ngc_base}/*:{rest_tag})...')
     fell_back = False
     for i, image in enumerate(rest_images, 1):
-        src = f'{ngc_base}/{image}:{args.ngc_tag}'
-        dst = f'localhost:{REGISTRY_PORT}/{image}:{local_tag}'
+        src = f'{ngc_base}/{image}:{rest_tag}'
+        dst = f'localhost:{REGISTRY_PORT}/{image}:{rest_local}'
         print(f'  [{i}/{len(rest_images)}] {image}')
         r = run(['docker', 'pull', '--platform', f'linux/{DOCKER_ARCH}', src],
                 f'pull {image}', check=False)
@@ -155,7 +165,7 @@ def main():
                   f'  (they may not exactly match the core image\'s '
                   f'commit).')
             run([sys.executable, str(here / 'build-dev-nico.py'), site,
-                 '--tag', local_tag, '--rest-only'],
+                 '--tag', rest_local, '--rest-only'],
                 'REST image build (rest-api/ buildx)')
             fell_back = True
             break
@@ -163,7 +173,7 @@ def main():
         run(['docker', 'push', dst], f'push {image}')
     if not fell_back:
         print(f'  REST images pulled + pushed ✓ ({len(rest_images)}, '
-              f'tag {args.ngc_tag} → {local_tag})')
+              f'tag {rest_tag} → {rest_local})')
 
     # Record the source in the site yaml (source of truth) BEFORE deploying,
     # so a failed deploy still leaves the provenance behind; the deploy
@@ -171,19 +181,23 @@ def main():
     site_yamls = [f for f in Path(site).glob('*.yaml') if '.kubeconfig' not in f.name]
     if len(site_yamls) == 1:
         site_images.record(site_yamls[0], source={
-            'kind': 'ngc', 'registry': ngc_base, 'tag': args.ngc_tag,
+            'kind': 'ngc', 'registry': ngc_base, 'tag': args.ngc_tag, 'tags': tags,
             'core_image': ngc_core_name, 'token_env': args.token_env})
         print(f'  site yaml images.source updated ({site_yamls[0].name})')
 
     deploy = 'deploy-dev-nico.py' if args.initial else 'redeploy-dev-nico.py'
-    print(f'Step 6: {deploy} --tag {local_tag}...')
-    run([sys.executable, str(here / deploy), site, '--tag', local_tag],
-        deploy)
+    # the core release takes the core tag; the REST releases take theirs
+    # (redeploy rolls the core release only, so it needs no REST tag)
+    deploy_cmd = [sys.executable, str(here / deploy), site, '--tag', local_tag]
+    if args.initial:
+        deploy_cmd += ['--rest-tag', rest_local]
+    print(f'Step 6: {deploy} --tag {local_tag}' + (f' --rest-tag {rest_local}' if args.initial else '') + '...')
+    run(deploy_cmd, deploy)
 
     print()
     print('=' * 55)
-    print(f'  nico deployed from NGC: {args.ngc_tag} ✓')
-    print(f'  (local registry tag: nico:{local_tag})')
+    print(f'  nico deployed from NGC: core {tags["core"]}, REST {rest_tag} ✓')
+    print(f'  (local registry tags: nico:{local_tag}, REST {rest_local})')
     print('=' * 55)
 
 

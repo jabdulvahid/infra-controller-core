@@ -244,7 +244,10 @@ overlay: 12
 # NGC lane: enable this block. Source-build lane: leave it out and set tag: instead.
 ngc:
   registry: nvcr.io/<org>/<team>       # ask your team
-  tag: <tag>                           # ngc-tags.py, below
+  tag: <tag>                           # default tag for every image; ngc-tags.py, below
+  # tags:                              # optional: a different tag for one image group
+  #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
+  #   flow: <tag>                      #   images, flow = the Flow add-on; unnamed groups use tag
   core_image: nvmetal-carbide          # NGC's name for the core image
   token_env: NGC_API_KEY               # NAME of the env var holding your key
 # tag: main-20260910                   # source-build lane: the image label
@@ -265,9 +268,13 @@ What the fields mean:
 - `underlay`, `overlay`: two numbers that become the first octet of every
   network prefix inside the VM. Pick two numbers that nothing on your Mac or
   VPN uses. With `underlay: 11` the admin UI ends up at `11.133.1.17`.
-- `ngc`: present for the NGC lane, absent for the source-build lane. For the
-  source-build lane, set `tag` instead; it is only a label for the images
-  you build.
+- `ngc`: present for the NGC lane, absent for the source-build lane. `tag`
+  is the default for every image. The optional `tags` map gives one image
+  group a different tag: `core` is the NICo core image, `rest` the six REST
+  images, `flow` the Flow add-on. Each group is one Helm release, so a tag
+  applies to a whole group. Groups you do not name use `tag`. For the
+  source-build lane, set the top-level `tag` instead; it is only a label for
+  the images you build, and all groups share it.
 
 Do not set an `ip` field. The VM's address comes from UTM's own subnet. If
 you need a different last octet, set `host_num`; the default is 126. The
@@ -276,11 +283,13 @@ picked.
 
 **Choosing an NGC tag.** The `ngc-tags.py` script lists tags that are
 deployable, that is, recent builds that track main and are published for
-arm64:
+arm64. By default it lists the core image; `--group rest` or `--group flow`
+lists that group instead, for filling in `tags`:
 
 ```bash
 ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main, arm64 availability
 ngc-tags.py --config bringup-mysite.yaml --before v2.3.0
+ngc-tags.py --config bringup-mysite.yaml --group rest    # tags of the REST images
 ```
 
 Prefer a recent development tag. A fresh site's database schema follows

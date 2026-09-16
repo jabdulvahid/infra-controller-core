@@ -110,7 +110,10 @@ overlay: 12
 # NGC lane: enable this block. Source-build lane: leave it out and set tag: instead.
 ngc:
   registry: nvcr.io/<org>/<team>       # ask your team
-  tag: <tag>                           # ngc-tags.py, below
+  tag: <tag>                           # default tag for every image; ngc-tags.py, below
+  # tags:                              # optional: a different tag for one image group
+  #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
+  #   flow: <tag>                      #   images, flow = the Flow add-on; unnamed groups use tag
   core_image: nvmetal-carbide          # NGC's name for the core image
   token_env: NGC_API_KEY               # NAME of the env var holding your key
 # tag: main-20260910                   # source-build lane: the image label
@@ -121,11 +124,14 @@ dedicated libvirt NAT network `nico-nat`, bridge `virbr-nico`, which the
 builder creates and records; `--subnet` overrides if that range is taken.
 Several VMs on one host need distinct `name`, `host_num` and octets.
 
-Choosing an NGC tag:
+Choosing an NGC tag. `tag` is the default for every image; the optional
+`tags` map gives one image group (`core`, `rest`, `flow`) a different tag,
+and `--group` lists that group's tags:
 
 ```bash
 ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main, with host-arch availability
 ngc-tags.py --config bringup-mysite.yaml --before v2.3.0 # page back
+ngc-tags.py --config bringup-mysite.yaml --group rest    # tags of the REST images
 ```
 
 Prefer a recent dev tag. A fresh site's database ledger tracks main and the

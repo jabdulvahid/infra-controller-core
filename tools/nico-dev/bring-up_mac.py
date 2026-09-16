@@ -33,6 +33,10 @@ import time
 from pathlib import Path
 
 NICO_DEV = Path(__file__).resolve().parent
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location('site_images', NICO_DEV / 'site_images.py')
+_site_images = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_site_images)
 # When invoked via the platform dispatcher, show ITS name in hints.
 ENTRY = os.environ.get('NICO_DEV_ENTRY', sys.argv[0])
 
@@ -206,6 +210,8 @@ def build_steps(args):
                  f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev'
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
                  f' --dpf {str(args.dpf).lower()}'
+                 + (f' --images-source-tags {_site_images.tags_arg(args.ngc_tags)}'
+                    if args.ngc_tags else '')
                  + (f' --images-source-kind ngc'
                     f' --images-source-registry {args.ngc_registry}'
                     f' --images-source-tag {args.ngc_tag}'
@@ -275,6 +281,8 @@ def apply_ngc_mode(steps, args, site_mac):
                '--initial']
     if args.ngc_image:
         ngc_cmd += ['--ngc-image', args.ngc_image]
+    if args.ngc_tags:
+        ngc_cmd += ['--tags', _site_images.tags_arg(args.ngc_tags)]
     ngc_step = (
         'ngc', 'Mac', 'Deploy pre-built image from NGC (no source build)',
         [ngc_cmd],
@@ -349,6 +357,9 @@ def main():
                    help='deploy this pre-built NGC image tag instead of '
                         'building from source (replaces the build+nico '
                         'steps — the quickest onboarding path)')
+    p.add_argument('--ngc-tags', default=None, metavar='GROUP=TAG,...',
+                   help='per-group NGC tag overrides: core (nico), rest (six REST images), '
+                        'flow (Flow add-on); groups not named use --ngc-tag (config: ngc.tags)')
     p.add_argument('--ngc-registry', default=None, metavar='BASE',
                    help='NGC base nvcr.io/<org>/<team> — EVERY NICo image (core, '
                         'REST, Flow) lives there at the same tag (config: ngc.registry)')
@@ -393,7 +404,7 @@ def main():
         groups = {
             # ngc: registry (base for ALL images) + tag + core_image + token_env;
             # nico_image/nico_tag are the legacy spelling (still accepted)
-            'ngc': {'registry': 'ngc_registry', 'tag': 'ngc_tag',
+            'ngc': {'registry': 'ngc_registry', 'tag': 'ngc_tag', 'tags': 'ngc_tags',
                     'core_image': 'ngc_core_image', 'token_env': 'token_env',
                     'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image'},
             'vm': {'cpus': 'vm_cpus', 'mem_mb': 'vm_mem_mb',
@@ -436,6 +447,8 @@ def main():
             args.ngc_registry, args.ngc_core_image = base, (args.ngc_core_image or name)
         args.ngc_image = (f'{args.ngc_registry}/{args.ngc_core_image}'
                           if args.ngc_registry else None)
+    # per-group tag overrides: yaml map or CLI 'core=T,rest=T'; validated here
+    args.ngc_tags = _site_images.parse_tags_arg(args.ngc_tags) if args.ngc_tag else {}
     if not args.tag:
         args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
     if args.ip_explicit:
@@ -460,8 +473,9 @@ def main():
     start = keys.index(args.from_step) if args.from_step else 0
     stop = keys.index(args.until_step) if args.until_step else len(keys) - 1
 
-    mode = (f'NGC pre-built, tag {args.ngc_tag}' if args.ngc_tag
-            else f'source build, tag {args.tag}')
+    mode = (f'NGC pre-built, tag {args.ngc_tag}'
+            + (f' (overrides: {_site_images.tags_arg(args.ngc_tags)})' if args.ngc_tags else '')
+            if args.ngc_tag else f'source build, tag {args.tag}')
     print(bold(f'nico-dev — bring-up: {args.name} @ {args.ip}'))
     print(f'  site {args.dc}/{args.site} (underlay {args.underlay}, '
           f'overlay {args.overlay}) — {mode}')
