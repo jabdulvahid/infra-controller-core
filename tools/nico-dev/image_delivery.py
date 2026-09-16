@@ -43,6 +43,9 @@ except ImportError:
     sys.exit(1)
 
 CTR_NS = 'k8s.io'
+CONTENT_STORE = '/var/lib/containerd/io.containerd.content.v1.content'
+SHARE_RATE_MBPS = 15        # measured 2026-09-16: 10 GB tarball, UTM share → ctr import, ~15 MB/s
+PROGRESS_EVERY = 60         # seconds between host-side progress lines during the import
 
 
 # ── the VM, from the site yaml ───────────────────────────────────────────────
@@ -106,6 +109,48 @@ def run_on_vm(cfg, site_folder, remote_cmd, check=True, capture=True):
     return r
 
 
+def _content_store_bytes(cfg, site_folder):
+    r = run_on_vm(cfg, site_folder, f'sudo du -sb {CONTENT_STORE}', check=False)
+    try:
+        return int(r.stdout.split()[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def _import_with_progress(cfg, site_folder, remote_cmd, tar_bytes):
+    """Run the import (directly on the VM, or over ssh) and, while it runs,
+    print one line per PROGRESS_EVERY seconds: content-store growth since the
+    start, ingest rate over the last interval, rough time to go for the copy."""
+    argv = ['bash', '-c', remote_cmd] if on_vm(site_folder, cfg) else ssh_argv(cfg, remote_cmd)
+    proc = subprocess.Popen(argv)
+    t0 = time.time()
+    c0 = c_prev = _content_store_bytes(cfg, site_folder)
+    t_prev = t0
+    while True:
+        try:
+            rc = proc.wait(timeout=PROGRESS_EVERY)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+        c = _content_store_bytes(cfg, site_folder)
+        now = time.time()
+        if c is None or c0 is None:
+            print(f'    {(now - t0) / 60:.0f} min elapsed, import still running')
+        else:
+            rate = (c - c_prev) / max(now - t_prev, 1)
+            copied = c - c0
+            msg = f'    {(now - t0) / 60:.0f} min: {copied / 1024**3:.1f} of {tar_bytes / 1024**3:.1f} GB copied, {rate / 1024**2:.0f} MB/s'
+            if copied >= tar_bytes * 0.97 or (rate < 1024**2 and copied > 0):
+                msg += ' — copy done, unpacking layers'
+            elif rate > 0:
+                msg += f', ~{(tar_bytes - copied) / rate / 60:.0f} min to go for the copy'
+            print(msg, flush=True)
+            c_prev, t_prev = c, now
+    if rc != 0:
+        print(f'  ! on the VM: {remote_cmd[:120]} (exit {rc})', file=sys.stderr)
+        sys.exit(1)
+
+
 # ── delivery ─────────────────────────────────────────────────────────────────
 def _docker(args, check=True, capture=True):
     r = subprocess.run(['docker'] + args, capture_output=capture, text=True)
@@ -167,10 +212,22 @@ def deliver(cfg, site_folder, refs, label, push_reg=None, dry_run=False, keep_ta
     size = tar_host.stat().st_size
     human = f'{size / 1024**3:.1f} GB' if size >= 1024**3 else f'{size / 1024**2:.0f} MB'
     print(f'  exported {human} to {tar_host.name} in {time.time() - t0:.0f}s')
+    # ctr import: no progress watchdog, no tunnel — the share is the transport.
+    # It is slow, though (SHARE_RATE_MBPS measured), and silent: say how long,
+    # give the VM-side monitor, and poll the content store from here.
+    copy_min = size / (SHARE_RATE_MBPS * 1024**2) / 60
+    print(f'  importing into containerd ({CTR_NS}) — the VM reads the tarball through the share at '
+          f'~{SHARE_RATE_MBPS} MB/s: expect ~{copy_min:.0f} min for the copy, then the unpack of the '
+          f'largest layer (several more minutes for the 9 GB core layer). No output until it finishes.')
+    try:
+        mon = vm_path(Path(__file__).resolve().parent / 'monitor-import.sh', cfg)
+        print(f'  progress, on the VM:  bash {mon} {shlex.quote(tar_vm)}')
+    except SystemExit:                                   # tools not under the share: inline fallback
+        print(f'  progress, on the VM:  watch -n 30 sudo du -sh {CONTENT_STORE}')
     t1 = time.time()
-    # ctr import: no progress watchdog, no tunnel — the share is the transport
-    run_on_vm(cfg, site_folder, f'sudo ctr -n {CTR_NS} images import {shlex.quote(tar_vm)}', capture=False)
-    print(f'  imported into containerd ({CTR_NS}) in {time.time() - t1:.0f}s')
+    _import_with_progress(cfg, site_folder, f'sudo ctr -n {CTR_NS} images import {shlex.quote(tar_vm)}', size)
+    dt = time.time() - t1
+    print(f'  imported into containerd ({CTR_NS}) in {dt / 60:.1f} min ({size / 1024**2 / max(dt, 1):.0f} MB/s incl. unpack)')
     missing = [r for r in todo if r not in vm_has(cfg, site_folder, todo)]
     if missing:
         sys.exit(f'Error: not in the VM\'s containerd after import: {", ".join(missing)}')
