@@ -635,6 +635,16 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
   `image_delivery.py <site> <the image ref from the pod's events>` puts the
   image in place; then `sudo systemctl restart containerd` on the VM drops
   the stuck pull. Running containers are not affected.
+- **The image import into the VM looks stuck.** It is slow, not stuck. The
+  VM reads the tarball through the share at about 15 MB/s, so the 10 GB
+  core image takes 10 to 12 minutes to copy, and then the unpack of its 9 GB
+  layer takes several more. The delivery prints that estimate before it
+  starts, then one progress line per minute from the Mac. For a closer
+  look, run the command it prints on the VM:
+  `bash /home/nico/mac/infra-controller/tools/nico-dev/monitor-import.sh <tarball>`.
+  It shows the containerd content store growing while the copy runs, then
+  the snapshotter growing while the unpack runs. Only a content store that
+  does not grow for two samples in a row is a real stall.
 - **A pull fails with "HTTP response to HTTPS client".** Run `ndev.py <site>
   registry verify` on the VM. If containerd shows ✗, the insecure-registry
   `config_path` is missing; the fix is printed.
