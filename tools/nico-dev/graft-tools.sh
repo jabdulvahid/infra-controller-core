@@ -7,10 +7,13 @@
 #   bash graft-tools.sh <fork-url> [--edge|--ref X]   # non-default source
 #
 # Pulls only tools/nico-dev from the fork's nico-dev branch into this
-# working tree as UNTRACKED, git-excluded files: invisible to git status,
-# impossible to sweep into a commit or PR. Works in plain clones and in
-# git worktrees (the exclude entry lands in the COMMON git dir, so it
-# covers every worktree of the repo, once).
+# working tree as UNTRACKED, git-ignored files: invisible to git status,
+# impossible to sweep into a commit or PR. The ignore is a `.gitignore`
+# INSIDE tools/nico-dev (containing `*`, so it hides itself too): it
+# applies to this checkout only. An earlier version wrote the ignore into
+# the clone's shared .git/info/exclude, which also hid the directory in
+# every OTHER worktree of the same clone — including one where the tools
+# are tracked (the fork branch) — so that line is removed when found.
 #
 # Rerunning updates the tools IN PLACE — local edits under tools/nico-dev
 # are overwritten. First-time bootstrap (before you have this script):
@@ -65,17 +68,24 @@ echo "Extracting tools/nico-dev into ${TOP}..."
 git checkout FETCH_HEAD -- tools/nico-dev
 git reset -q tools/nico-dev
 
-# Do NOT exclude when tools/nico-dev is TRACKED here (the maintainer's
-# own fork checkout on the nico-dev branch) — an exclude there hides
+# Do NOT ignore when tools/nico-dev is TRACKED here (the maintainer's
+# own fork checkout on the nico-dev branch) — an ignore there hides
 # tracked-file work from add -A (bit its own maintainer, 2026-09-01).
 if git ls-files --error-unmatch tools/nico-dev >/dev/null 2>&1; then
     echo "tools/nico-dev is tracked in this checkout — skipping the ignore."
 else
-    EXCLUDE="$(git rev-parse --git-common-dir)/info/exclude"
-    if ! grep -qx 'tools/nico-dev/' "$EXCLUDE" 2>/dev/null; then
-        echo 'tools/nico-dev/' >> "$EXCLUDE"
-        echo "Added tools/nico-dev/ to $(basename "$EXCLUDE") (local-only ignore)."
-    fi
+    # Per-directory ignore: `*` hides every grafted file and the .gitignore itself,
+    # and it applies to THIS checkout only.
+    printf '# grafted by graft-tools.sh — untracked on purpose; never commit this directory\n*\n' \
+        > tools/nico-dev/.gitignore
+    echo "tools/nico-dev/.gitignore written (ignores the grafted files in this checkout)."
+fi
+# Migration: the shared info/exclude entry an earlier graft wrote hid the
+# directory in every worktree of this clone (2026-09-16 finding); drop it.
+EXCLUDE="$(git rev-parse --git-common-dir)/info/exclude"
+if grep -qx 'tools/nico-dev/' "$EXCLUDE" 2>/dev/null; then
+    grep -vx 'tools/nico-dev/' "$EXCLUDE" > "$EXCLUDE.tmp" && mv "$EXCLUDE.tmp" "$EXCLUDE"
+    echo "Removed the clone-wide tools/nico-dev/ entry from $(basename "$EXCLUDE") (replaced by the per-directory .gitignore)."
 fi
 
 SHA="$(git rev-parse --short FETCH_HEAD)"
