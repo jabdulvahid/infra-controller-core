@@ -164,8 +164,9 @@ def deliver(cfg, site_folder, refs, label, push_reg=None, dry_run=False, keep_ta
     tar_host.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     _docker(['save', '-o', str(tar_host)] + todo, capture=False)
-    size_gb = tar_host.stat().st_size / 1024**3
-    print(f'  exported {size_gb:.1f} GB to {tar_host.name} in {time.time() - t0:.0f}s')
+    size = tar_host.stat().st_size
+    human = f'{size / 1024**3:.1f} GB' if size >= 1024**3 else f'{size / 1024**2:.0f} MB'
+    print(f'  exported {human} to {tar_host.name} in {time.time() - t0:.0f}s')
     t1 = time.time()
     # ctr import: no progress watchdog, no tunnel — the share is the transport
     run_on_vm(cfg, site_folder, f'sudo ctr -n {CTR_NS} images import {shlex.quote(tar_vm)}', capture=False)
