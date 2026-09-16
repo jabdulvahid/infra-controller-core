@@ -175,6 +175,32 @@ def main():
     # Enable SystemdCgroup (required for k8s with systemd cgroup driver)
     cfg_text = cfg_text.replace('SystemdCgroup = false', 'SystemdCgroup = true')
 
+    # Image-pull watchdog. containerd's CRI plugin cancels a pull when no bytes
+    # arrive from the registry for image_pull_progress_timeout (default 5m) —
+    # and the timer keeps running while a fetched layer is being UNPACKED. The
+    # NICo core image has one layer that expands to ~9 GB; on this VM's disk
+    # that unpack can exceed 5 minutes, so every attempt was cancelled with
+    # "failed to pull and unpack image: context canceled" and the unpack
+    # redone from scratch — an endless ImagePullBackOff (2026-09-16 bring-up;
+    # a containerd restart only helped by luck). A large FINITE value keeps
+    # the protection against a truly stalled stream (the colima port-forward
+    # wedge) while giving the unpack the time it needs. Same section as the
+    # registry block: v1 [plugins."io.containerd.grpc.v1.cri"], v2
+    # [plugins.'io.containerd.cri.v1.images']; the default config emits the
+    # key in both, but insert it if a future default omits it.
+    pull_timeout = '30m'
+    key_re = re.compile(r"(^[ \t]*image_pull_progress_timeout[ \t]*=[ \t]*)['\"][^'\"]*['\"]", re.M)
+    cfg_text, n = key_re.subn(rf"\g<1>'{pull_timeout}'", cfg_text)
+    if n == 0:
+        cri_header = re.compile(
+            r"(^\[plugins\.['\"](?:io\.containerd\.cri\.v1\.images|io\.containerd\.grpc\.v1\.cri)['\"]\][ \t]*\n)", re.M)
+        cfg_text, n = cri_header.subn(rf"\g<1>  image_pull_progress_timeout = '{pull_timeout}'\n", cfg_text, count=1)
+    if n == 0:
+        print('  Error: could not find the CRI plugin section to set image_pull_progress_timeout in '
+              '`containerd config default` output — inspect: containerd config default | grep -n -B2 progress_timeout',
+              file=sys.stderr)
+        sys.exit(1)
+
     # Point registry config_path at certs.d so per-registry hosts.toml is honored.
     # Handles both containerd v1 ([plugins."io.containerd.grpc.v1.cri".registry])
     # and v2 ([plugins.'io.containerd.cri.v1.images'.registry]) section names and
@@ -208,6 +234,10 @@ def main():
               file=sys.stderr)
         sys.exit(1)
     print(f'  config_path → {certs_d} (verified) ✓')
+    if not re.search(rf"image_pull_progress_timeout\s*=\s*['\"]{pull_timeout}['\"]", written):
+        print(f'  Error: image_pull_progress_timeout not set in {config_toml} after write', file=sys.stderr)
+        sys.exit(1)
+    print(f'  image_pull_progress_timeout → {pull_timeout} (verified) ✓')
 
     # Insecure registry mirror (Mac registry at reg_host:reg_port)
     reg_dir = Path(f'/etc/containerd/certs.d/{reg_host}:{reg_port}')
