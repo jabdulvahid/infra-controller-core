@@ -381,6 +381,7 @@ VPN connects or disconnects. Re-add it with the same command. The scripts
 | share root | `~/nico-tests/vm1/shared` | `~/mac` |
 | repo worktree | `<share>/infra-controller` | `~/mac/infra-controller` |
 | site folder | `<share>/sites/dc1/dev1` | `~/mac/sites/dc1/dev1` |
+| image tarballs in transit | `<site>/images/*.tar` (deleted after import) | same path under `~/mac` |
 | kubeconfig | `<site>/dc1-dev1.kubeconfig.yaml` | same path under `~/mac` |
 | local registry | `localhost:5000` (colima) | `192.168.64.1:5000` |
 
@@ -624,11 +625,16 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
   re-add the route from section 7. It disappears every time the last VM
   stops.
 - **An image pull is stuck**, with the pod Pending and a single "Pulling"
-  event. The download stream through colima's port forward has wedged. On
-  the Mac, `docker logs --since 2m registry | grep -c blobs` prints zero when
-  it is wedged. Run `docker restart registry`; if that is not enough,
-  `sudo systemctl restart containerd` on the VM. Running containers are not
-  affected, and the download resumes.
+  event. Two causes, both fixed at the source since 2026-09-16 but still
+  possible for an image that was not delivered through the share. Either
+  the VM is pulling through colima's ssh port forwarder, which stalls, or a
+  huge layer's unpack outlived containerd's progress watchdog. The scripts
+  now deliver every image into the VM's containerd through the share
+  (`image_delivery.py`) and set the watchdog to 30 minutes, so kubelet finds
+  the image present and never pulls. If it happens anyway:
+  `image_delivery.py <site> <the image ref from the pod's events>` puts the
+  image in place; then `sudo systemctl restart containerd` on the VM drops
+  the stuck pull. Running containers are not affected.
 - **A pull fails with "HTTP response to HTTPS client".** Run `ndev.py <site>
   registry verify` on the VM. If containerd shows ✗, the insecure-registry
   `config_path` is missing; the fix is printed.
@@ -668,6 +674,7 @@ planned. Neither step touches your site folder or your worktree.
 |---|---|---|
 | `check-prereqs.sh [--build]` | Mac | read-only prerequisite check, includes checkout parity |
 | `check-parity.py [repo] [--quiet]` | Mac | does the checkout still match what the nico-dev scripts assume |
+| `image_delivery.py <site> <ref>… [--check]` | Mac | put images into the VM's containerd through the share (never through the registry tunnel) |
 | `onboard-golden.sh --zip Z --dest D` | Mac | golden image ZIP to running site, hands off |
 | `bring-up.py --config X [--dry-run] [--from step]` | Mac | the whole bring-up |
 | `ngc-tags.py --config X` | Mac | deployable NGC tags |

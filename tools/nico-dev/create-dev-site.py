@@ -51,6 +51,9 @@ def parse_args():
     p.add_argument('--nico-dev-folder', required=True,
                    help='nico-dev scripts dir INSIDE the shared folder, e.g. '
                         'claude-notes/nico-dev or nico-dev (validated to exist)')
+    p.add_argument('--vm-ip',   default='192.168.64.126', help='the VM address as the host reaches it (recorded as vm.ip)')
+    p.add_argument('--vm-user', default='nico',           help='the VM login user (recorded as vm.user)')
+    p.add_argument('--vm-ssh-key', default='',            help='host path of the ssh key for the VM (recorded as vm.ssh_key; empty = default identity)')
     p.add_argument('--registry-host',  default='192.168.64.1',
                    help='Mac registry host as seen from VM (default: 192.168.64.1)')
     p.add_argument('--registry-port',  type=int, default=5000,
@@ -153,6 +156,10 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('REDEPLOY_ON_INSUFFICIENT_CPU', args.redeploy_on_insufficient_cpu),
         # DPF as the provisioning path (bringup.yaml dpf:, default true)
         ('DPF_ENABLED',                  args.dpf),
+        # The VM, for host-side scripts (image delivery over ssh)
+        ('VM_IP',      args.vm_ip),
+        ('VM_USER',    args.vm_user),
+        ('VM_SSH_KEY', args.vm_ssh_key or '""'),
         # Images — source of truth for what runs and where it came from
         ('IMAGES_TAG',               'none'),
         ('IMAGES_SOURCE_KIND',       args.images_source_kind),
