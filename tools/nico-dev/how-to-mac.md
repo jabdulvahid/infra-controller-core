@@ -255,7 +255,7 @@ ngc:
   tag: <tag>                           # default tag for every image; ngc-tags.py, below
   # tags:                              # optional: a different tag for one image group
   #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
-  #   flow: <tag>                      #   images, flow = the Flow add-on; unnamed groups use tag
+  #                                    #   images; unnamed groups use tag
   core_image: nvmetal-carbide          # NGC's name for the core image
   # images:                            # optional: NGC names, if NGC publishes an image
   #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
@@ -279,17 +279,18 @@ What the fields mean:
   network prefix inside the VM. Pick two numbers that nothing on your Mac or
   VPN uses. With `underlay: 11` the admin UI ends up at `11.133.1.17`.
 - `ngc`: present for the NGC lane, absent for the source-build lane. `tag`
-  is the default for every image. The optional `tags` map gives one image
-  group a different tag: `core` is the NICo core image, `rest` the six REST
-  images, `flow` the Flow add-on. Each group is one Helm release, so a tag
-  applies to a whole group. Groups you do not name use `tag`. For the
-  source-build lane, set the top-level `tag` instead; it is only a label for
-  the images you build, and all groups share it.
+  is the default for every base image. The optional `tags` map gives one
+  image group a different tag: `core` is the NICo core image, `rest` the six
+  REST images. Each group is one Helm release, so a tag applies to a whole
+  group. Groups you do not name use `tag`. For the source-build lane, set the
+  top-level `tag` instead; it is only a label for the images you build, and
+  both groups share it. Optional charts such as Flow are not configured
+  here; each has its own file, see section 11.
 - `core_image` and `images`: the names NGC publishes under. The names the
   Helm charts expect in the local registry are fixed; only the core differs
   on NGC, `nvmetal-carbide` against `nico` locally. If NGC ever publishes a
-  REST or Flow image under a new name, map it in `images` as local name to
-  NGC name, and nothing else changes.
+  REST image under a new name, map it in `images` as local name to NGC name,
+  and nothing else changes.
 
 Do not set an `ip` field. The VM's address comes from UTM's own subnet. If
 you need a different last octet, set `host_num`; the default is 126. The
@@ -557,17 +558,28 @@ release state.
 ## 11. Add-ons after bring-up
 
 Optional components are installed after the site is up, one script per
-component, run from the Mac. NICo Flow is the first:
+component, run from the Mac, at your discretion. Each add-on has its own
+config file, complete on its own: nothing in it is taken from `bringup.yaml`
+or the site yaml, so a site deployed from NGC can run a locally built add-on
+and the other way round. NICo Flow is the first:
 
 ```bash
-deploy-flow.py <site> --ngc          # NICo Flow, images from NGC at the REST tag
-deploy-flow.py <site> --build
+cp flow-example.yaml ~/nico-tests/vm1/shared/flow.yaml    # then edit: source, ngc.registry, ngc.tag
+vi ~/nico-tests/vm1/shared/flow.yaml
+deploy-flow.py <site> --config ~/nico-tests/vm1/shared/flow.yaml --dry-run
+deploy-flow.py <site> --config ~/nico-tests/vm1/shared/flow.yaml
+deploy-flow.py <site> --status                             # what is installed, from Helm
 deploy-flow.py <site> --uninstall
 ```
 
-The design and the list of other candidates are in `ADDONS.md` and
-`deploying-extras.md`. DPF is not an add-on; it is part of the base site,
-see section 9.
+`<site>` is the site folder; the script takes only the kubeconfig from it.
+The config names the image source, `ngc` or `build`, and everything that
+source needs. Add-ons write nothing into the site yaml: Helm is the record
+of what is installed, and removal is the chart's own uninstall.
+
+The design, the config format shared by every add-on, and the list of other
+candidates are in `ADDONS.md` and `deploying-extras.md`. DPF is not an
+add-on; it is part of the base site, see section 9.
 
 ## 12. Reboots and recovery
 
@@ -656,7 +668,7 @@ planned. Neither step touches your site folder or your worktree.
 | `build-dev-nico.py <site> --tag T` | Mac | build images, push to the colima registry |
 | `deploy-dev-nico.py <site> --tag T` | Mac | full helm deploy, resumable |
 | `redeploy-dev-nico.py <site> --tag T` | Mac | roll the nico release to a tag |
-| `deploy-flow.py <site> --ngc\|--build` | Mac | Flow add-on |
+| `deploy-flow.py <site> --config flow.yaml [--status\|--uninstall]` | Mac | Flow add-on, from its own standalone config |
 | `deploy-dpf-sim.py <site> [--phase-dwell T] [--uninstall]` | Mac | DPF simulator (default site; the `dpf` bring-up step) |
 | `build-nico-clis.py <site> [--mat-only]` | Mac | MAT in a container; admin-cli and nicocli with host toolchains |
 | `configure-clis.py <site>` | Mac | certs, MAT config, wrappers, /etc/hosts |

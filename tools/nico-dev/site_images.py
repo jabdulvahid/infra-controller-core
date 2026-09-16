@@ -1,11 +1,12 @@
 """
 nico-dev — the image model of a site, in one place.
 
-Every NICo image the dev site runs lives in ONE registry under a FIXED set of
-names, in three GROUPS that each map to one Helm release: `core` (the nico
-umbrella), `rest` (the nico-rest umbrella + site-agent), `flow` (the Flow
-add-on). There is one default tag and an optional per-group override, because
-each release takes exactly one tag. This module spells the set out (instead of
+Every BASE image the dev site runs lives in ONE registry under a FIXED set of
+names, in two GROUPS that each map to one Helm release: `core` (the nico
+umbrella) and `rest` (the nico-rest umbrella + site-agent). There is one
+default tag and an optional per-group override, because each release takes
+exactly one tag. Optional charts (Flow, RMS, …) are NOT part of this model:
+each has its own standalone config and script (addon_config.py, deploy-flow.py). This module spells the set out (instead of
 each script carrying its own list) and reads/writes the `images:` section of
 the site yaml, which is the source of truth for what the cluster runs and
 where it came from:
@@ -16,7 +17,6 @@ where it came from:
     tags:                            # per group; each defaults to tag
       core: ngc-v2.2.0-…
       rest: ngc-v2.2.0-…
-      flow: ngc-v2.2.0-…
     source:
       kind: ngc | build              # how the images were produced
       registry: nvcr.io/<org>/<team> # NGC base — every image lives here (ngc)
@@ -24,13 +24,11 @@ where it came from:
       tags:                          # per group NGC tags (bringup.yaml ngc.tags)
         core: v2.2.0-…
         rest: v2.2.0-…
-        flow: v2.2.0-…
       core_image: nvmetal-carbide    # NGC's name for the core image (local: nico)
       token_env: NGC_API_KEY         # env var NAME of the NGC key (never the value)
     names:
       core: nico
       rest: [nico-rest-api, …]
-      flow: [nico-flow]
 
 Writes are line-oriented edits inside the `images:` block so the yaml's
 comments survive (yaml.dump would strip them). Older site yamls without the
@@ -42,21 +40,17 @@ import json
 import re
 from pathlib import Path
 
-# The fixed set. NGC publishes REST and Flow under exactly these names at the
-# same tag as the core image; only the core is named differently on NGC
-# (nvmetal-carbide) and locally (nico).
+# The fixed set of BASE images (local names, as the Helm charts expect them).
+# Only the core is named differently on NGC (nvmetal-carbide) and locally (nico).
 IMAGE_NAMES = {
     'core': 'nico',
     'rest': ['nico-rest-api', 'nico-rest-workflow', 'nico-rest-site-manager',
              'nico-rest-site-agent', 'nico-rest-db', 'nico-rest-cert-manager'],
-    # Flow: one container since upstream #5325 (2026-08-31) removed PSM/NSM
-    # from the flow pod; nico-psm / nico-nsm are still published but no
-    # longer deployed. deploy-flow.py reads the checkout's chart for the
-    # actual set, so older checkouts keep working.
-    'flow': ['nico-flow'],
 }
 NGC_CORE_IMAGE_DEFAULT = 'nvmetal-carbide'
-GROUPS = ('core', 'rest', 'flow')
+GROUPS = ('core', 'rest')
+# Optional charts have their own config; naming them here is a configuration error.
+ADDONS = {'flow': 'flow.yaml + deploy-flow.py'}
 
 # The names NGC publishes under, per LOCAL name. The local names are what the
 # Helm charts expect in the local registry and are fixed by the charts (IMAGE_NAMES);
@@ -65,12 +59,19 @@ GROUPS = ('core', 'rest', 'flow')
 NGC_NAMES_DEFAULT = {
     'core': NGC_CORE_IMAGE_DEFAULT,
     'rest': {n: n for n in IMAGE_NAMES['rest']},
-    'flow': {n: n for n in IMAGE_NAMES['flow']},
 }
 
 
+def _reject_addons(keys, where):
+    hit = sorted(set(keys) & set(ADDONS))
+    if hit:
+        a = hit[0]
+        raise SystemExit(f'Error: {where}: {a} is an optional chart, not part of the base image model — '
+                         f'configure it in {ADDONS[a]} (standalone, run after bring-up), not in bringup.yaml')
+
+
 def parse_names_arg(value):
-    """JSON string (CLI) or dict (yaml) → {'core': str, 'rest': {local: ngc}, 'flow': {...}}
+    """JSON string (CLI) or dict (yaml) → {'core': str, 'rest': {local: ngc}}
     with only the given keys. Local names must be chart names; None/'' → {}."""
     if not value:
         return {}
@@ -80,7 +81,8 @@ def parse_names_arg(value):
         except ValueError as e:
             raise SystemExit(f'Error: images: not valid JSON ({e})')
     if not isinstance(value, dict):
-        raise SystemExit('Error: images: expected a map with keys core, rest, flow')
+        raise SystemExit('Error: images: expected a map with keys core, rest')
+    _reject_addons(value, 'images')
     bad = sorted(set(value) - set(GROUPS))
     if bad:
         raise SystemExit(f'Error: images: unknown image group(s) {", ".join(bad)} '
@@ -90,7 +92,7 @@ def parse_names_arg(value):
         if not isinstance(value['core'], str):
             raise SystemExit('Error: images.core must be the NGC name of the core image (a string)')
         out['core'] = value['core']
-    for g in ('rest', 'flow'):
+    for g in ('rest',):
         m = value.get(g)
         if not m:
             continue
@@ -105,13 +107,12 @@ def parse_names_arg(value):
 
 
 def resolve_ngc_names(overrides=None):
-    """Full {'core': str, 'rest': {local: ngc}, 'flow': {local: ngc}}: defaults with
-    the overrides applied."""
+    """Full {'core': str, 'rest': {local: ngc}}: defaults with the overrides applied."""
     names = copy.deepcopy(NGC_NAMES_DEFAULT)
     ov = parse_names_arg(overrides)
     if 'core' in ov:
         names['core'] = ov['core']
-    for g in ('rest', 'flow'):
+    for g in ('rest',):
         names[g].update(ov.get(g, {}))
     return names
 
@@ -138,6 +139,7 @@ def parse_tags_arg(value):
                 raise SystemExit(f'Error: tags: expected GROUP=TAG, got {part!r}')
             k, v = part.split('=', 1)
             out[k.strip()] = v.strip()
+    _reject_addons(out, 'tags')
     bad = sorted(set(out) - set(GROUPS))
     if bad:
         raise SystemExit(f'Error: tags: unknown image group(s) {", ".join(bad)} '
@@ -156,7 +158,7 @@ def tags_arg(tags):
     return ','.join(f'{g}={t}' for g, t in tags.items() if t)
 
 
-def all_names(groups=('core', 'rest', 'flow')):
+def all_names(groups=GROUPS):
     out = []
     for g in groups:
         v = IMAGE_NAMES[g]
@@ -270,7 +272,7 @@ def record(site_yaml, deployed_tag=None, source=None, registry=None, deployed_ta
     deployed_tags: {group: tag} now running (images.tags.<group>)
     source:        dict with any of kind/registry/tag/core_image/token_env, plus the
                    optional maps 'tags' {group: ngc tag} (images.source.tags) and
-                   'names' {'core': str, 'rest': {local: ngc}, 'flow': {...}}
+                   'names' {'core': str, 'rest': {local: ngc}}
                    (images.source.names)
     registry:      where the cluster pulls from (images.registry)
     """
@@ -302,6 +304,5 @@ def record(site_yaml, deployed_tag=None, source=None, registry=None, deployed_ta
     if not any(re.match(r'^  names:\s*$', l) for l in lines[start:end]):
         lines[end:end] = ['  names:',
                           f'    core: {IMAGE_NAMES["core"]}',
-                          f'    rest: [{", ".join(IMAGE_NAMES["rest"])}]',
-                          f'    flow: [{", ".join(IMAGE_NAMES["flow"])}]']
+                          f'    rest: [{", ".join(IMAGE_NAMES["rest"])}]']
     path.write_text('\n'.join(lines) + '\n')

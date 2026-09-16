@@ -99,9 +99,9 @@ def main():
     p.add_argument('--config', default=None, metavar='FILE',
                    help='bringup yaml — reads ngc.registry + ngc.core_image (or legacy '
                         'ngc.nico_image) and ngc.token_env')
-    p.add_argument('--group', choices=['core', 'rest', 'flow'], default='core',
-                   help='which image group to list tags for (default core; rest = '
-                        'nico-rest-api, flow = nico-flow — all published on one release line)')
+    p.add_argument('--group', choices=['core', 'rest'], default='core',
+                   help='which base image group to list tags for (default core; rest = '
+                        'nico-rest-api). For an add-on image pass --ngc-image nvcr.io/<org>/<team>/<image>')
     p.add_argument('-n', type=int, default=10,
                    help='how many PR builds to show (default 10)')
     p.add_argument('--before', metavar='TAG', default=None,

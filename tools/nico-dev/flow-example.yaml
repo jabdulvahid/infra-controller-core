@@ -1,0 +1,29 @@
+# deploy-flow.py config — copy to your share root as flow.yaml, EDIT, then:
+#   deploy-flow.py <site-folder> --config flow.yaml
+#
+# This file is STANDALONE: nothing is taken from bringup.yaml or the site
+# yaml, so a site deployed from NGC can run a locally built Flow and vice
+# versa. Every optional chart (Flow, RMS, …) has a file like this one, same
+# shape, and its own deploy-<name>.py.
+
+source: ngc                            # ngc = pull the published image; build = build from a checkout
+
+registry: 192.168.64.1:5000            # where the cluster pulls images (nico-dev's default; the
+                                       #   host as the VM sees it, port of the local registry)
+
+# ── source: ngc ─────────────────────────────────────────────────────────
+ngc:
+  registry: nvcr.io/<org>/<team>       # NGC base holding the Flow image (ask your team)
+  tag: <tag>                           # Flow ships on the REST release line: ngc-tags.py --ngc-image nvcr.io/<org>/<team>/nico-flow
+  # images:                            # only if NGC publishes the image under another name
+  #   nico-flow: <ngc name>            #   local chart name: NGC name
+  token_env: NGC_API_KEY               # env var NAME holding your NGC key (never the key itself)
+
+# ── source: build ───────────────────────────────────────────────────────
+# build:
+#   tag: flow-20260916                 # label for the image in the local registry
+#   repo: ~/nico-tests/vm1/shared/infra-controller   # default: the checkout holding these tools
+
+# ── the chart's own knobs ───────────────────────────────────────────────
+chart:
+  flowEnv: development                 # development | staging | production

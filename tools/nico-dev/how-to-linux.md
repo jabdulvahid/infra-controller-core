@@ -113,7 +113,7 @@ ngc:
   tag: <tag>                           # default tag for every image; ngc-tags.py, below
   # tags:                              # optional: a different tag for one image group
   #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
-  #   flow: <tag>                      #   images, flow = the Flow add-on; unnamed groups use tag
+  #                                    #   images; unnamed groups use tag
   core_image: nvmetal-carbide          # NGC's name for the core image
   # images:                            # optional: NGC names, if NGC publishes an image
   #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
@@ -323,17 +323,22 @@ the release state.
 ## 8. Add-ons after bring-up
 
 Optional charts are one script each, run from the host after the site is up,
-images from NGC at the REST tag or from your build:
+at your discretion, from a standalone config file: nothing in it comes from
+`bringup.yaml` or the site yaml, so a site deployed from NGC can run a
+locally built add-on and vice versa. Flow is the first:
 
 ```bash
-deploy-flow.py <site> --ngc          # NICo Flow
-deploy-flow.py <site> --build
+cp flow-example.yaml ~/nico-tests/vm1/shared/flow.yaml    # then edit: source, ngc.registry, ngc.tag
+deploy-flow.py <site> --config ~/nico-tests/vm1/shared/flow.yaml --dry-run
+deploy-flow.py <site> --config ~/nico-tests/vm1/shared/flow.yaml
+deploy-flow.py <site> --status
 deploy-flow.py <site> --uninstall
 ```
 
 The add-on implements the current chart and refuses an older checkout with
-"refresh the worktree". Design notes and the catalog of other charts:
-`ADDONS.md`, `deploying-extras.md`.
+"refresh the worktree". Add-ons write nothing into the site yaml; Helm is
+the record. Design notes, the shared config format and the catalog of other
+charts: `ADDONS.md`, `deploying-extras.md`.
 
 ## 9. Reboots and recovery
 
@@ -407,7 +412,7 @@ is listed in `~/.nico-dev/vms/<vm>.yaml`.
 | `build-dev-nico.py <site> --tag T` | host | build images, push to local registry |
 | `deploy-dev-nico.py <site> --tag T` | host | full helm deploy, resumable |
 | `redeploy-dev-nico.py <site> --tag T` | host | roll the nico release to a tag |
-| `deploy-flow.py <site> --ngc\|--build` | host | Flow add-on |
+| `deploy-flow.py <site> --config flow.yaml [--status\|--uninstall]` | host | Flow add-on, from its own standalone config |
 | `deploy-dpf-sim.py <site> [--phase-dwell T] [--uninstall]` | host | DPF simulator (default site; the `dpf` bring-up step) |
 | `build-nico-clis.py <site>` | host | admin-cli, nicocli, MAT in containers |
 | `configure-clis.py <site>` | host | certs, MAT config, wrappers, /etc/hosts |

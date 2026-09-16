@@ -78,10 +78,10 @@ def main():
     p.add_argument('--ngc-image', default=DEFAULT_NGC_IMAGE,
                    help=f'NGC image repository (default: {DEFAULT_NGC_IMAGE})')
     p.add_argument('--images', default=None, metavar='JSON',
-                   help='NGC image names {"core": ..., "rest": {local: ngc}, "flow": {...}}; '
+                   help='NGC image names {"core": ..., "rest": {local: ngc}}; '
                         'default: images.source.names in the site yaml, else the fixed names')
     p.add_argument('--tags', default=None, metavar='GROUP=TAG,...',
-                   help='per-group NGC tag overrides (core, rest, flow); groups not named '
+                   help='per-group NGC tag overrides (core, rest); groups not named '
                         'use the positional tag (bringup.yaml ngc.tags)')
     p.add_argument('--initial', action='store_true',
                    help='first deploy on a fresh site: run deploy-dev-nico.py '
@@ -125,8 +125,6 @@ def main():
     print(f'  NGC image  : {ngc_ref}')
     print(f'  local tag  : {local_tag}')
     print(f'  REST tag   : {tags["rest"]}' + ('' if tags['rest'] == tags['core'] else '   (override)'))
-    if tags['flow'] != args.ngc_tag:
-        print(f'  Flow tag   : {tags["flow"]}   (recorded for deploy-flow.py --ngc)')
     print(f'  token from : ${args.token_env}')
     print()
 

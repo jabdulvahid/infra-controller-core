@@ -31,11 +31,12 @@ registry:
   port: 5000
   nico_tag: latest     # legacy; images.tag below is the maintained value
 
-# Images — what the cluster runs and where it came from. Every NICo image
-# lives in ONE registry under the fixed names listed, in three groups that
-# each map to one Helm release (core = nico, rest = nico-rest + site-agent,
-# flow = the Flow add-on). One default tag; a group may override it
-# (bringup.yaml ngc.tags). Written by create-dev-site.py; tag(s) and source
+# Images — what the cluster runs and where it came from. Every BASE image
+# lives in ONE registry under the fixed names listed, in two groups that
+# each map to one Helm release (core = nico, rest = nico-rest + site-agent).
+# One default tag; a group may override it (bringup.yaml ngc.tags). Optional
+# charts (Flow, RMS, …) are not recorded here: each has its own standalone
+# config (flow.yaml) and script; Helm is their record. Written by create-dev-site.py; tag(s) and source
 # are updated by the deploy scripts (deploy-nico-from-ngc.py,
 # build-dev-nico.py, deploy-dev-nico.py, redeploy-dev-nico.py) so this block
 # always describes the running site.
@@ -45,7 +46,6 @@ images:
   tags:                           # per group; each defaults to tag
     core: IMAGES_TAG
     rest: IMAGES_TAG
-    flow: IMAGES_TAG
   source:
     kind: IMAGES_SOURCE_KIND      # ngc | build
     registry: IMAGES_SOURCE_REGISTRY      # NGC base nvcr.io/<org>/<team> (ngc)
@@ -53,16 +53,14 @@ images:
     tags:                                 # per group NGC tags; from bringup.yaml ngc.tags
       core: IMAGES_SOURCE_TAG_CORE
       rest: IMAGES_SOURCE_TAG_REST
-      flow: IMAGES_SOURCE_TAG_FLOW
     core_image: IMAGES_SOURCE_CORE_IMAGE  # NGC's core image name (local name: nico)
     token_env: IMAGES_SOURCE_TOKEN_ENV    # env var NAME of the NGC key
-    # NGC image names per group (bringup.yaml ngc.images). Keys under rest/flow are
-    # the LOCAL names the Helm charts expect (fixed); values are what NGC publishes.
+    # NGC image names per group (bringup.yaml ngc.images). Keys under rest are the
+    # LOCAL names the Helm charts expect (fixed); values are what NGC publishes.
 IMAGES_SOURCE_NAMES_BLOCK
   names:
     core: nico
     rest: [nico-rest-api, nico-rest-workflow, nico-rest-site-manager, nico-rest-site-agent, nico-rest-db, nico-rest-cert-manager]
-    flow: [nico-flow]
 
 fabric:
   dc_name: dev
