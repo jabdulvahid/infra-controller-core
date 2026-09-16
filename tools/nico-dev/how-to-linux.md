@@ -399,7 +399,8 @@ is listed in `~/.nico-dev/vms/<vm>.yaml`.
 
 | Script | Runs on | Does |
 |---|---|---|
-| `check-prereqs.sh [--build]` | host | read-only prerequisite check |
+| `check-prereqs.sh [--build]` | host | read-only prerequisite check, includes checkout parity |
+| `check-parity.py [repo] [--quiet]` | host | does the checkout still match what the nico-dev scripts assume |
 | `bring-up.py --config X [--dry-run] [--from step]` | host | the whole bring-up |
 | `dev-down.py --config X [--remove-infra]` | host | the whole teardown |
 | `ngc-tags.py --config X` | host | deployable NGC tags |

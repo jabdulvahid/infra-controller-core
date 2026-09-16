@@ -127,6 +127,21 @@ if [ "$BUILD" = 1 ]; then
     || bad "docker buildx not found" "sudo apt install docker-buildx"
 fi
 
+# ── nico-dev ↔ checkout parity (only when the tools sit inside a checkout) ──
+# nico-dev re-implements setup.sh's phases and embeds chart paths, resource
+# names and values defaults; check-parity.py asserts every such assumption
+# against this repo so upstream drift shows up here, not mid-deploy.
+TOP="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$TOP" ] && [ -d "$TOP/helm-prereqs" ]; then
+  echo "── checkout parity (what the nico-dev scripts assume about this repo) ──"
+  if python3 "$(dirname "$0")/check-parity.py" "$TOP" --quiet; then
+    ok "checkout matches what nico-dev assumes ($TOP)"
+  else
+    bad "checkout drifted from what nico-dev assumes (see ✗ lines above)" \
+        "update the named nico-dev file(s) — not the repo; full list: check-parity.py $TOP"
+  fi
+fi
+
 echo
 if [ "$FAIL" = 0 ]; then
   echo "All checks passed."
