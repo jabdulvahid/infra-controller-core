@@ -53,6 +53,7 @@ Your primary clone stays where it lives. Each VM gets one folder whose
 ```bash
 mkdir -p ~/nico-tests/vm1/shared
 cd ~/projects/infra-controller     # no clone yet? git clone https://github.com/NVIDIA/infra-controller.git
+git fetch origin main              # so the worktree starts from TODAY's main, not the last fetch
 git worktree add -b vm1-work ~/nico-tests/vm1/shared/infra-controller origin/main
 ```
 

@@ -99,11 +99,15 @@ class Checks:
             self.bad(f'{rel} no longer contains {needle!r} ({meaning})', consumer,
                      f'upstream renamed or removed it; update {consumer}')
 
-    def value(self, rel, keys, expected, consumer, meaning):
+    def value(self, rel, keys, expected, consumer, meaning, missing_ok=False):
+        """missing_ok: the assumption also holds when the key does not exist yet
+        (a checkout older than the feature — the old behaviour IS the default)."""
         got = dig(load_yaml(self.repo / rel), *keys)
         label = '.'.join(keys)
         if got == expected:
             self.ok(f'{rel}: {label} = {expected!r} ({meaning})')
+        elif got is None and missing_ok:
+            self.ok(f'{rel}: {label} absent — checkout predates the toggle; {meaning}')
         else:
             self.bad(f'{rel}: {label} is {got!r}, nico-dev assumes {expected!r} ({meaning})', consumer,
                      f'upstream changed the default; decide whether nico-dev follows it, then update {consumer}')
@@ -165,7 +169,7 @@ def run(repo, quiet):
     for k in ('temporal', 'keycloak'):
         c.value('helm-prereqs/values.yaml', (k, 'useHaPostgres'), False,
                 'rest_deploy.py (legacy standalone postgres path; TODO #5694 consolidation)',
-                f'{k} DB stays on the standalone postgres by default')
+                f'{k} DB stays on the standalone postgres by default', missing_ok=True)
 
     # Add-ons (Flow, …) are NOT checked here: each add-on script carries its own
     # chart-shape preflight, so an add-on's drift breaks that add-on, never the bring-up.
