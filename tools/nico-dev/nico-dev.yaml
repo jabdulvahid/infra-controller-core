@@ -56,6 +56,9 @@ images:
       flow: IMAGES_SOURCE_TAG_FLOW
     core_image: IMAGES_SOURCE_CORE_IMAGE  # NGC's core image name (local name: nico)
     token_env: IMAGES_SOURCE_TOKEN_ENV    # env var NAME of the NGC key
+    # NGC image names per group (bringup.yaml ngc.images). Keys under rest/flow are
+    # the LOCAL names the Helm charts expect (fixed); values are what NGC publishes.
+IMAGES_SOURCE_NAMES_BLOCK
   names:
     core: nico
     rest: [nico-rest-api, nico-rest-workflow, nico-rest-site-manager, nico-rest-site-agent, nico-rest-db, nico-rest-cert-manager]

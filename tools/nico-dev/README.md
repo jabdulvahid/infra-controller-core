@@ -82,7 +82,8 @@ vi bringup-mysite.yaml
   instead of compiling. The model is one registry base, one default tag, a
   fixed set of image names in three groups (core, six REST, Flow; spelled
   out under `images.names` in your site yaml). `tags: {core|rest|flow: <tag>}`
-  gives one group a different tag; each group is one Helm release. Needs an
+  gives one group a different tag; each group is one Helm release. `images:`
+  maps local chart names to NGC names if NGC ever renames one. Needs an
   NGC API key with registry-read on that org/team. To pick a tag:
   ```bash
   ngc-tags.py --config bringup-mysite.yaml        # latest builds + dates + arm64

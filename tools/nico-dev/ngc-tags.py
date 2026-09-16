@@ -113,14 +113,22 @@ def main():
         import yaml
         cfg = yaml.safe_load(Path(args.config).expanduser().read_text()) or {}
         ngc = cfg.get('ngc') or {}
+        names_cfg = ngc.get('images') or {}
+        core_name = names_cfg.get('core') or ngc.get('core_image', 'nvmetal-carbide')
         if ngc.get('registry'):
-            args.ngc_image = f"{ngc['registry']}/{ngc.get('core_image', 'nvmetal-carbide')}"
+            args.ngc_image = f"{ngc['registry']}/{core_name}"
         else:
             args.ngc_image = ngc.get('nico_image', args.ngc_image)
-        args.token_env = ngc.get('token_env', args.token_env)
+    else:
+        names_cfg = {}
     if args.group != 'core' and args.ngc_image:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location('site_images', Path(__file__).resolve().parent / 'site_images.py')
+        _si = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_si)
+        group_names = _si.resolve_ngc_names(names_cfg)[args.group]      # {local: ngc}
         base = args.ngc_image.rsplit('/', 1)[0]
-        args.ngc_image = f"{base}/{'nico-rest-api' if args.group == 'rest' else 'nico-flow'}"
+        args.ngc_image = f"{base}/{next(iter(group_names.values()))}"
 
     if not args.ngc_image:
         raise SystemExit('Error: no image. Pass --ngc-image, --config, or '

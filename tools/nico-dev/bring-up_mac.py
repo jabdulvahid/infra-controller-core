@@ -212,6 +212,8 @@ def build_steps(args):
                  f' --dpf {str(args.dpf).lower()}'
                  + (f' --images-source-tags {_site_images.tags_arg(args.ngc_tags)}'
                     if args.ngc_tags else '')
+                 + (f' --images-source-names {shlex.quote(_site_images.names_arg(args.ngc_images))}'
+                    if args.ngc_images else '')
                  + (f' --images-source-kind ngc'
                     f' --images-source-registry {args.ngc_registry}'
                     f' --images-source-tag {args.ngc_tag}'
@@ -283,6 +285,8 @@ def apply_ngc_mode(steps, args, site_mac):
         ngc_cmd += ['--ngc-image', args.ngc_image]
     if args.ngc_tags:
         ngc_cmd += ['--tags', _site_images.tags_arg(args.ngc_tags)]
+    if args.ngc_images:
+        ngc_cmd += ['--images', _site_images.names_arg(args.ngc_images)]
     ngc_step = (
         'ngc', 'Mac', 'Deploy pre-built image from NGC (no source build)',
         [ngc_cmd],
@@ -357,6 +361,9 @@ def main():
                    help='deploy this pre-built NGC image tag instead of '
                         'building from source (replaces the build+nico '
                         'steps — the quickest onboarding path)')
+    p.add_argument('--ngc-images', default=None, metavar='JSON',
+                   help='NGC image names when NGC publishes under different names: '
+                        '{"core": "...", "rest": {"<local>": "<ngc>"}, "flow": {...}} (config: ngc.images)')
     p.add_argument('--ngc-tags', default=None, metavar='GROUP=TAG,...',
                    help='per-group NGC tag overrides: core (nico), rest (six REST images), '
                         'flow (Flow add-on); groups not named use --ngc-tag (config: ngc.tags)')
@@ -404,7 +411,7 @@ def main():
         groups = {
             # ngc: registry (base for ALL images) + tag + core_image + token_env;
             # nico_image/nico_tag are the legacy spelling (still accepted)
-            'ngc': {'registry': 'ngc_registry', 'tag': 'ngc_tag', 'tags': 'ngc_tags',
+            'ngc': {'registry': 'ngc_registry', 'tag': 'ngc_tag', 'tags': 'ngc_tags', 'images': 'ngc_images',
                     'core_image': 'ngc_core_image', 'token_env': 'token_env',
                     'nico_tag': 'ngc_tag', 'nico_image': 'ngc_image'},
             'vm': {'cpus': 'vm_cpus', 'mem_mb': 'vm_mem_mb',
@@ -439,6 +446,10 @@ def main():
     # the core image has a non-conventional name there. Accept the legacy
     # full path (nico_image / --ngc-image / $NICO_NGC_IMAGE) by splitting it.
     if args.ngc_tag:
+        # NGC image names (ngc.images); images.core overrides the legacy core_image
+        args.ngc_images = _site_images.parse_names_arg(args.ngc_images)
+        if args.ngc_images.get('core'):
+            args.ngc_core_image = args.ngc_images['core']
         legacy = args.ngc_image or os.environ.get('NICO_NGC_IMAGE')
         if args.ngc_registry:
             args.ngc_core_image = args.ngc_core_image or 'nvmetal-carbide'
@@ -449,6 +460,8 @@ def main():
                           if args.ngc_registry else None)
     # per-group tag overrides: yaml map or CLI 'core=T,rest=T'; validated here
     args.ngc_tags = _site_images.parse_tags_arg(args.ngc_tags) if args.ngc_tag else {}
+    if not args.ngc_tag:
+        args.ngc_images = {}
     if not args.tag:
         args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
     if args.ip_explicit:

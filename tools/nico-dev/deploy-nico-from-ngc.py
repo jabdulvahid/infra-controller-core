@@ -77,6 +77,9 @@ def main():
                         '(default: NGC_API_KEY). The value is never printed.')
     p.add_argument('--ngc-image', default=DEFAULT_NGC_IMAGE,
                    help=f'NGC image repository (default: {DEFAULT_NGC_IMAGE})')
+    p.add_argument('--images', default=None, metavar='JSON',
+                   help='NGC image names {"core": ..., "rest": {local: ngc}, "flow": {...}}; '
+                        'default: images.source.names in the site yaml, else the fixed names')
     p.add_argument('--tags', default=None, metavar='GROUP=TAG,...',
                    help='per-group NGC tag overrides (core, rest, flow); groups not named '
                         'use the positional tag (bringup.yaml ngc.tags)')
@@ -106,6 +109,13 @@ def main():
     # one default tag, optional per-group override; each group is one Helm release
     tags = site_images.resolve_group_tags(args.ngc_tag, args.tags)
     local_tags = {g: f'ngc-{t}' for g, t in tags.items()}
+    # NGC names: --images, else the site yaml's recorded map, else the defaults
+    site_yamls = [f for f in Path(site).glob('*.yaml') if '.kubeconfig' not in f.name]
+    recorded = {}
+    if len(site_yamls) == 1:
+        import yaml as _yaml
+        recorded = site_images.read(_yaml.safe_load(site_yamls[0].read_text()) or {})['source']['names']
+    names = site_images.resolve_ngc_names(site_images.parse_names_arg(args.images) or recorded)
     ngc_ref = f'{args.ngc_image}:{tags["core"]}'
     local_tag = local_tags['core']
     local_ref = f'localhost:{REGISTRY_PORT}/nico:{local_tag}'
@@ -148,15 +158,16 @@ def main():
     # deploy references — zero build, version-matched with the core by
     # construction. Fallback if a tag is missing: build them from the
     # checkout (--rest-only; version skew vs the core is then possible).
-    rest_images = site_images.IMAGE_NAMES['rest']      # the fixed set, one place
+    rest_images = site_images.IMAGE_NAMES['rest']      # the fixed local (chart) names, one place
     ngc_base, ngc_core_name = site_images.split_ngc_image(args.ngc_image)
     rest_tag, rest_local = tags['rest'], local_tags['rest']
     print(f'Step 5: REST images from NGC ({ngc_base}/*:{rest_tag})...')
     fell_back = False
     for i, image in enumerate(rest_images, 1):
-        src = f'{ngc_base}/{image}:{rest_tag}'
+        ngc_name = names['rest'].get(image, image)
+        src = f'{ngc_base}/{ngc_name}:{rest_tag}'
         dst = f'localhost:{REGISTRY_PORT}/{image}:{rest_local}'
-        print(f'  [{i}/{len(rest_images)}] {image}')
+        print(f'  [{i}/{len(rest_images)}] {image}' + (f'  (NGC: {ngc_name})' if ngc_name != image else ''))
         r = run(['docker', 'pull', '--platform', f'linux/{DOCKER_ARCH}', src],
                 f'pull {image}', check=False)
         if r.returncode != 0:
@@ -178,11 +189,10 @@ def main():
     # Record the source in the site yaml (source of truth) BEFORE deploying,
     # so a failed deploy still leaves the provenance behind; the deploy
     # script records images.tag itself on success.
-    site_yamls = [f for f in Path(site).glob('*.yaml') if '.kubeconfig' not in f.name]
     if len(site_yamls) == 1:
         site_images.record(site_yamls[0], source={
             'kind': 'ngc', 'registry': ngc_base, 'tag': args.ngc_tag, 'tags': tags,
-            'core_image': ngc_core_name, 'token_env': args.token_env})
+            'core_image': ngc_core_name, 'token_env': args.token_env, 'names': names})
         print(f'  site yaml images.source updated ({site_yamls[0].name})')
 
     deploy = 'deploy-dev-nico.py' if args.initial else 'redeploy-dev-nico.py'

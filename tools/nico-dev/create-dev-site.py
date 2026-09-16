@@ -73,6 +73,9 @@ def parse_args():
                    help='NGC base nvcr.io/<org>/<team> — every image lives there (ngc)')
     p.add_argument('--images-source-tag', default='',
                    help='NGC tag to deploy (ngc) / build tag (build) — the default for every image group')
+    p.add_argument('--images-source-names', default='', metavar='JSON',
+                   help='NGC image names as JSON {"core": ..., "rest": {local: ngc}, "flow": {...}}; '
+                        'unnamed ones keep their defaults (bringup.yaml ngc.images)')
     p.add_argument('--images-source-tags', default='', metavar='GROUP=TAG,...',
                    help='per-group NGC tag overrides (core, rest, flow); groups not named use '
                         '--images-source-tag (bringup.yaml ngc.tags)')
@@ -131,6 +134,14 @@ def rewrite(content, pfx, dc_name, site_name, args):
     _spec.loader.exec_module(_si)
     _group_tags = _si.resolve_group_tags(args.images_source_tag or '',
                                          getattr(args, 'images_source_tags', ''))
+    _names = _si.resolve_ngc_names(getattr(args, 'images_source_names', ''))
+    if args.images_source_core_image and args.images_source_core_image != _si.NGC_CORE_IMAGE_DEFAULT \
+            and 'core' not in _si.parse_names_arg(getattr(args, 'images_source_names', '')):
+        _names['core'] = args.images_source_core_image        # legacy spelling still wins if given alone
+    import yaml as _yaml
+    _names_block = '\n'.join('    ' + l for l in _yaml.safe_dump({'names': _names}, sort_keys=False,
+                                                                  default_flow_style=False).rstrip().splitlines())
+    content = content.replace('IMAGES_SOURCE_NAMES_BLOCK', _names_block)
 
     replacements = [
         # Shared folder paths
