@@ -55,9 +55,10 @@ overlay: 12                       #   prefixes. Pick octets nothing on your
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
 # NGC pre-built (quickest onboarding — no source build, no Rust).
 # The image model: EVERY NICo image — the core, the six REST images, the
-# three Flow images — lives in ONE NGC registry base at ONE tag under fixed
-# names (spelled out as images.names in your site yaml). Only the core has a
-# different name on NGC (nvmetal-carbide) than in the local registry (nico).
+# Flow image (one since upstream #5325 folded PSM and NSM into it) — lives in
+# ONE NGC registry base under fixed local names (spelled out as images.names
+# in your site yaml), with one default tag. Only the core has a different
+# name on NGC (nvmetal-carbide) than in the local registry (nico).
 # ngc:
 #   registry: nvcr.io/<org>/<team>     # base — all images live here
 #   tag: v2.2.0-pr-441-g1234567        # default tag for every image (ngc-tags.py)
