@@ -349,7 +349,8 @@ def main():
     _spec = _ilu.spec_from_file_location('site_images', Path(__file__).parent / 'site_images.py')
     _si = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_si)
-    _si.record(site_yaml, deployed_tag=args.tag)
+    # redeploy rolls the core release only → images.tag and images.tags.core
+    _si.record(site_yaml, deployed_tag=args.tag, deployed_tags={'core': args.tag})
     print(f'  site yaml images.tag = {args.tag} ✓')
 
     # helm re-renders nico-api-config-files, silently dropping the

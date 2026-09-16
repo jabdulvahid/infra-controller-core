@@ -224,9 +224,13 @@ def main():
     images = IMAGES
     chart_problem = check_chart_generation(chart, prereqs_dir)
 
-    # tag: default = what nico-rest runs (flow ships on the REST release line)
+    # tag: default = the flow group's tag recorded in the site yaml (bringup.yaml
+    # ngc.tags.flow, else the site's default tag), else what nico-rest runs
+    # (flow ships on the REST release line)
+    img_cfg = site_images.read(cfg)
     rest_tag = helm_values('nico-rest', 'nico-rest', env).get('global', {}).get('image', {}).get('tag', '')
-    tag = args.tag or rest_tag
+    recorded_flow = img_cfg['tags'].get('flow', '')
+    tag = args.tag or (recorded_flow if recorded_flow not in ('', 'none') else '') or rest_tag
     if not tag:
         sys.exit('Error: cannot determine the tag (nico-rest not deployed?) — pass --tag')
 
@@ -308,8 +312,8 @@ def main():
     elif args.ngc:
         # defaults come from the site yaml's images.source (written by the
         # NGC deploy), so no flags are needed on a site deployed from NGC
-        src_cfg = site_images.read(cfg)['source']
-        ngc_tag = args.ngc_tag or src_cfg.get('tag') or tag.removeprefix('ngc-')
+        src_cfg = img_cfg['source']
+        ngc_tag = args.ngc_tag or src_cfg['tags'].get('flow') or src_cfg.get('tag') or tag.removeprefix('ngc-')
         base = (args.ngc_image or src_cfg.get('registry')
                 or os.environ.get('NICO_NGC_IMAGE', '').rsplit('/', 1)[0])
         token_env = args.token_env if args.token_env != 'NGC_API_KEY' else (src_cfg.get('token_env') or 'NGC_API_KEY')

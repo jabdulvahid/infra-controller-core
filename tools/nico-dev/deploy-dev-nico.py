@@ -453,6 +453,9 @@ def main():
     p.add_argument('site')
     p.add_argument('--tag', default=None,
                    help='Image tag to deploy (overrides registry.nico_tag in site yaml)')
+    p.add_argument('--rest-tag', default=None,
+                   help='Image tag for the REST releases (default: the core tag; '
+                        'deploy-nico-from-ngc.py passes bringup.yaml ngc.tags.rest)')
     p.add_argument('--skip-to', default=None,
                    help=f'Resume: skip releases BEFORE this one, deploy it and all after '
                         f'({", ".join(DEPLOY_ORDER)})')
@@ -491,6 +494,11 @@ def main():
     reg_port = cfg.get('registry', {}).get('port', 5000)
     registry = f'{reg_host}:{reg_port}'
     nico_tag = cfg.get('registry', {}).get('nico_tag', 'latest')
+    # REST releases take their own tag: --rest-tag (deploy-nico-from-ngc.py passes
+    # bringup.yaml ngc.tags.rest), else the core tag (a source build tags both alike)
+    rest_tag = args.rest_tag or nico_tag
+    if rest_tag != nico_tag:
+        print(f'  REST images tag: {rest_tag} (core: {nico_tag})')
     print(f'\nPreflight: checking registry {registry} has nico:{nico_tag}...')
     # Accept EVERY manifest flavour: Docker with the containerd image store
     # (Linux hosts) pushes OCI manifests, and registry:2 answers a request
@@ -760,7 +768,7 @@ def main():
             print('\nInstalling nico-rest umbrella...')
             heal_stuck_release('nico-rest', 'nico-rest', kubeconfig)
             rest_deploy.deploy_nico_rest(repo, rest_dir, kubeconfig,
-                                         registry, nico_tag,
+                                         registry, rest_tag,
                                          vals_dir / 'nico-rest-dev.yaml')
 
         if not skip('nico-rest-site-agent'):
@@ -768,7 +776,7 @@ def main():
             heal_stuck_release('nico-rest-site-agent', 'nico-rest', kubeconfig)
             s_uuid = rest_deploy.site_uuid(site_folder)
             rest_deploy.deploy_site_agent(repo, kubeconfig, registry,
-                                          nico_tag, s_uuid)
+                                          rest_tag, s_uuid)
 
     here = Path(__file__).resolve().parent
     print(f'\n{"="*55}')
@@ -780,8 +788,11 @@ def main():
             'site_images', Path(__file__).resolve().parent / 'site_images.py')
         _si = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_si)
-        _si.record(site_yaml, deployed_tag=args.tag)
-        print(f'  site yaml images.tag = {args.tag} ✓')
+        _deployed = {'core': args.tag}
+        if rest_enabled:
+            _deployed['rest'] = rest_tag
+        _si.record(site_yaml, deployed_tag=args.tag, deployed_tags=_deployed)
+        print(f'  site yaml images.tag = {args.tag}' + (f', images.tags.rest = {rest_tag}' if rest_enabled else '') + ' ✓')
     print(f'\n  Verify:')
     print(f'    kubectl --kubeconfig {kubeconfig} get pods -n nico-system')
     if rest_enabled:

@@ -72,7 +72,10 @@ def parse_args():
     p.add_argument('--images-source-registry', default='',
                    help='NGC base nvcr.io/<org>/<team> — every image lives there (ngc)')
     p.add_argument('--images-source-tag', default='',
-                   help='NGC tag to deploy (ngc) / build tag (build)')
+                   help='NGC tag to deploy (ngc) / build tag (build) — the default for every image group')
+    p.add_argument('--images-source-tags', default='', metavar='GROUP=TAG,...',
+                   help='per-group NGC tag overrides (core, rest, flow); groups not named use '
+                        '--images-source-tag (bringup.yaml ngc.tags)')
     p.add_argument('--images-source-core-image', default='nvmetal-carbide',
                    help="NGC's name for the core image (default nvmetal-carbide; local name is nico)")
     p.add_argument('--images-source-token-env', default='NGC_API_KEY',
@@ -122,6 +125,12 @@ def derive_prefixes(o, ov):
 def rewrite(content, pfx, dc_name, site_name, args):
     o  = pfx['_underlay_octet']
     ov = pfx['_overlay_octet']
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location('site_images', Path(__file__).resolve().parent / 'site_images.py')
+    _si = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_si)
+    _group_tags = _si.resolve_group_tags(args.images_source_tag or '',
+                                         getattr(args, 'images_source_tags', ''))
 
     replacements = [
         # Shared folder paths
@@ -137,6 +146,10 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('IMAGES_TAG',               'none'),
         ('IMAGES_SOURCE_KIND',       args.images_source_kind),
         ('IMAGES_SOURCE_REGISTRY',   args.images_source_registry or '""'),
+        # per-group tags BEFORE the plain one (prefix match)
+        ('IMAGES_SOURCE_TAG_CORE',   _group_tags['core'] or '""'),
+        ('IMAGES_SOURCE_TAG_REST',   _group_tags['rest'] or '""'),
+        ('IMAGES_SOURCE_TAG_FLOW',   _group_tags['flow'] or '""'),
         ('IMAGES_SOURCE_TAG',        args.images_source_tag or '""'),
         ('IMAGES_SOURCE_CORE_IMAGE', args.images_source_core_image),
         ('IMAGES_SOURCE_TOKEN_ENV',  args.images_source_token_env),

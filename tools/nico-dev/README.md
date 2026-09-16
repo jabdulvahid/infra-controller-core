@@ -78,11 +78,12 @@ vi bringup-mysite.yaml
 ```
 
 - **NGC pre-built** (`ngc:` block: `registry`, `tag`, `core_image`,
-  `token_env`) — the quickest path: pulls ready-made images instead of
-  compiling. The model is one registry base, one tag, a fixed set of image
-  names (core + six REST + three Flow; spelled out under `images.names` in
-  your site yaml). Needs an NGC API key with registry-read on that
-  org/team. To pick a tag:
+  `token_env`, optional `tags`) — the quickest path: pulls ready-made images
+  instead of compiling. The model is one registry base, one default tag, a
+  fixed set of image names in three groups (core, six REST, Flow; spelled
+  out under `images.names` in your site yaml). `tags: {core|rest|flow: <tag>}`
+  gives one group a different tag; each group is one Helm release. Needs an
+  NGC API key with registry-read on that org/team. To pick a tag:
   ```bash
   ngc-tags.py --config bringup-mysite.yaml        # latest builds + dates + arm64
   ngc-tags.py --config bringup-mysite.yaml --before v2.3.0   # page back

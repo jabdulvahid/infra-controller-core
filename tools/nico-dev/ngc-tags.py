@@ -97,7 +97,11 @@ def main():
     p.add_argument('--token-env', default='NGC_API_KEY', metavar='VAR',
                    help='env var NAME holding the NGC key (default: NGC_API_KEY)')
     p.add_argument('--config', default=None, metavar='FILE',
-                   help='bringup yaml — reads ngc.nico_image / ngc.token_env')
+                   help='bringup yaml — reads ngc.registry + ngc.core_image (or legacy '
+                        'ngc.nico_image) and ngc.token_env')
+    p.add_argument('--group', choices=['core', 'rest', 'flow'], default='core',
+                   help='which image group to list tags for (default core; rest = '
+                        'nico-rest-api, flow = nico-flow — all published on one release line)')
     p.add_argument('-n', type=int, default=10,
                    help='how many PR builds to show (default 10)')
     p.add_argument('--before', metavar='TAG', default=None,
@@ -109,8 +113,14 @@ def main():
         import yaml
         cfg = yaml.safe_load(Path(args.config).expanduser().read_text()) or {}
         ngc = cfg.get('ngc') or {}
-        args.ngc_image = ngc.get('nico_image', args.ngc_image)
+        if ngc.get('registry'):
+            args.ngc_image = f"{ngc['registry']}/{ngc.get('core_image', 'nvmetal-carbide')}"
+        else:
+            args.ngc_image = ngc.get('nico_image', args.ngc_image)
         args.token_env = ngc.get('token_env', args.token_env)
+    if args.group != 'core' and args.ngc_image:
+        base = args.ngc_image.rsplit('/', 1)[0]
+        args.ngc_image = f"{base}/{'nico-rest-api' if args.group == 'rest' else 'nico-flow'}"
 
     if not args.ngc_image:
         raise SystemExit('Error: no image. Pass --ngc-image, --config, or '
@@ -156,9 +166,9 @@ def main():
         print(f'\nLatest release: {rels[-1]}'
               + (f'   (previous: {", ".join(rels[-4:-1][::-1])})'
                  if len(rels) > 1 else ''))
-    print('\nPick a tag → ngc.nico_tag in your bringup yaml. Note: nico does '
-          'not\nsupport schema downgrades — on an EXISTING site, never '
-          'deploy a tag\nolder than what is running.')
+    print(f'\nPick a tag → ngc.tag (every image) or ngc.tags.{args.group} (this group '
+          'only) in your bringup yaml.\nNote: nico does not support schema downgrades — '
+          'on an EXISTING site, never deploy a tag\nolder than what is running.')
 
 
 if __name__ == '__main__':
