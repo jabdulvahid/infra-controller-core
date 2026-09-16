@@ -54,25 +54,23 @@ overlay: 12                       #   prefixes. Pick octets nothing on your
 
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
 # NGC pre-built (quickest onboarding — no source build, no Rust).
-# The image model: EVERY NICo image — the core, the six REST images, the
-# Flow image (one since upstream #5325 folded PSM and NSM into it) — lives in
-# ONE NGC registry base under fixed local names (spelled out as images.names
-# in your site yaml), with one default tag. Only the core has a different
-# name on NGC (nvmetal-carbide) than in the local registry (nico).
+# The image model: every BASE image — the core and the six REST images — lives
+# in ONE NGC registry base under fixed local names (spelled out as images.names
+# in your site yaml), with one default tag. Only the core has a different name
+# on NGC (nvmetal-carbide) than in the local registry (nico). Optional charts
+# (Flow, RMS, …) are deployed after bring-up from their OWN yaml: see
+# flow-example.yaml and deploy-flow.py. Nothing about them belongs here.
 # ngc:
 #   registry: nvcr.io/<org>/<team>     # base — all images live here
 #   tag: v2.2.0-pr-441-g1234567        # default tag for every image (ngc-tags.py)
 #   tags:                              # optional per-group overrides; each defaults to tag
 #     core: v2.2.0-pr-440-g89abcde     #   the NICo core image (the nico release)
 #     rest: v2.2.0-pr-441-g1234567     #   the six REST images (nico-rest + site-agent)
-#     flow: v2.2.0-pr-441-g1234567     #   the Flow add-on (deploy-flow.py --ngc)
 #   core_image: nvmetal-carbide        # NGC's name for the core image (default)
 #   images:                            # optional: NGC image names, if NGC publishes one
-#     core: nvmetal-carbide            #   under a different name. Keys under rest/flow are
-#     rest:                            #   the LOCAL names the Helm charts expect (fixed);
+#     core: nvmetal-carbide            #   under a different name. Keys under rest are the
+#     rest:                            #   LOCAL names the Helm charts expect (fixed);
 #       nico-rest-api: nico-rest-api   #   values are the NGC names. Unnamed = same name.
-#     flow:
-#       nico-flow: nico-flow
 #   token_env: NGC_API_KEY             # env var NAME holding your NGC key
 #   (legacy spelling still accepted: nico_image: <registry>/<core_image>, nico_tag: <tag>)
 #

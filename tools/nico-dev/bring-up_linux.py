@@ -388,10 +388,10 @@ def main():
                         'steps — the quickest onboarding path)')
     p.add_argument('--ngc-images', default=None, metavar='JSON',
                    help='NGC image names when NGC publishes under different names: '
-                        '{"core": "...", "rest": {"<local>": "<ngc>"}, "flow": {...}} (config: ngc.images)')
+                        '{"core": "...", "rest": {"<local>": "<ngc>"}} (config: ngc.images)')
     p.add_argument('--ngc-tags', default=None, metavar='GROUP=TAG,...',
-                   help='per-group NGC tag overrides: core (nico), rest (six REST images), '
-                        'flow (Flow add-on); groups not named use --ngc-tag (config: ngc.tags)')
+                   help='per-group NGC tag overrides: core (nico), rest (six REST images); '
+                        'groups not named use --ngc-tag (config: ngc.tags). Add-ons: their own yaml')
     p.add_argument('--ngc-registry', default=None, metavar='BASE',
                    help='NGC base nvcr.io/<org>/<team> — EVERY NICo image (core, '
                         'REST, Flow) lives there at the same tag (config: ngc.registry)')

@@ -159,8 +159,6 @@ def run(repo, quiet):
                'rest_deploy.py (Keycloak in namespace nico-rest)', 'the Keycloak in-cluster URL host')
     c.path('helm/rest/nico-rest/Chart.yaml', 'rest_deploy.py deploy_nico_rest', 'the REST umbrella chart')
     c.path('helm/rest/nico-rest-site-agent/Chart.yaml', 'rest_deploy.py deploy_site_agent')
-    c.contains('helm/rest/nico-rest-site-agent/values.yaml', 'FLOW_GRPC_ENABLED',
-               'deploy-flow.py (site-agent --set envConfig.FLOW_GRPC_ENABLED)', 'the site-agent Flow switch')
     # #5694 (2026-09-04): Temporal/Keycloak DB consolidation onto nico-pg-cluster is
     # opt-in upstream; nico-dev still deploys the standalone postgres (legacy path).
     # TODO (nico-dev): adopt the consolidation for fresh sites — decision pending.
@@ -169,19 +167,12 @@ def run(repo, quiet):
                 'rest_deploy.py (legacy standalone postgres path; TODO #5694 consolidation)',
                 f'{k} DB stays on the standalone postgres by default')
 
-    c.section('images (site_images.py — the fixed local names; build-dev-nico.py, deploy-flow.py --build)')
-    for name in site_images.IMAGE_NAMES['rest'] + site_images.IMAGE_NAMES['flow']:
+    # Add-ons (Flow, …) are NOT checked here: each add-on script carries its own
+    # chart-shape preflight, so an add-on's drift breaks that add-on, never the bring-up.
+    c.section('base images (site_images.py — the fixed local names; build-dev-nico.py)')
+    for name in site_images.IMAGE_NAMES['rest']:
         c.path(f'rest-api/docker/production/Dockerfile.{name}', 'site_images.IMAGE_NAMES / build-dev-nico.py',
                f'the {name} image')
-    c.path('helm/charts/nico-flow/Chart.yaml', 'deploy-flow.py')
-    c.path('helm/charts/nico-flow/templates/namespace.yaml', 'deploy-flow.py (pre-applies it)')
-    flow_imgs = set((dig(load_yaml(repo / 'helm/charts/nico-flow/values.yaml'), 'images') or {}).keys())
-    if flow_imgs == {'flow'}:
-        c.ok('helm/charts/nico-flow/values.yaml: one flow container (post-#5325 chart)')
-    else:
-        c.bad(f'helm/charts/nico-flow/values.yaml images = {sorted(flow_imgs)}; nico-dev implements the '
-              f'single-container chart', 'deploy-flow.py, site_images.IMAGE_NAMES[flow]',
-              'the Flow chart changed shape; update deploy-flow.py and the flow image list')
     for arch in ('aarch64', 'x86_64'):
         c.path(f'dev/docker/Dockerfile.build-container-{arch}', 'build-dev-nico.py (source-build lane)')
 

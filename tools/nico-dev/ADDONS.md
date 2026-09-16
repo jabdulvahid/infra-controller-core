@@ -95,13 +95,38 @@ stays for the ESO-synced secrets.
 
 ## The pattern for the next add-ons
 
-`deploy-<chart>.py <site> [--ngc|--build] [--tag T] [--uninstall] [--dry-run]`:
-resolve the site the same way every nico-dev script does (both share
-views), read the deployed tag to default `--tag`, get images (build loop
-or NGC pull + retag), enable prerequisites through `--reuse-values`
-upgrades of releases nico-dev already owns, pre-apply certificates, install
-the chart, flip any consumer flags, print the endpoints. Reuse helpers from
-existing modules by **import**, never by editing them.
+Ruling (Jasmeer, 2026-09-16): core, REST and DPF are the base; optional
+charts are a growing list with their own cadence, and the base must be
+insulated from them. So:
+
+- **`bringup.yaml` and the base image model know nothing about add-ons.**
+  Naming an add-on there (`ngc.tags.flow`, `ngc.images.flow`) is rejected
+  with a pointer to the add-on's own file.
+- **One standalone yaml per add-on** (`flow.yaml`, `rms.yaml`, …), same
+  shape for all, loaded and validated by `addon_config.py`. Nothing is
+  inherited from the site yaml, so an NGC-deployed site can run a locally
+  built add-on and vice versa. Required fields are errors, not defaults.
+  What the add-on needs from the site comes from elsewhere: the kubeconfig
+  from the site folder, the chart from the checkout holding the tools (or
+  `build.repo`), the registry and NGC key from the add-on yaml.
+- **One script per add-on**: `deploy-<name>.py <site-folder> --config
+  <name>.yaml [--status] [--uninstall] [--dry-run]`. It implements the
+  CURRENT chart and refuses older checkouts; its preflight carries its own
+  chart-shape assertions, separate from the base parity check.
+- **No site yaml writes.** Helm is the record of what is installed
+  (`--status` reads it); cleanup is the chart's own uninstall. These are
+  disposable sites, so no ledger is needed.
+
+The one coupling the Flow chart's design forces: its database, credential
+sync and namespace are rendered by nico-prereqs and its enablement flag sits
+on the site-agent chart, so `deploy-flow.py` runs `helm upgrade --reuse-values`
+on those two base *releases*. It touches no base script and no site yaml.
+
+Mechanically: get images (build loop or NGC pull + retag, names from the
+config), enable prerequisites through `--reuse-values` upgrades of releases
+nico-dev already owns, pre-apply certificates, install the chart, flip any
+consumer flags, print the endpoints. Reuse helpers from existing modules by
+**import**, never by editing them.
 
 ## About "rms"
 

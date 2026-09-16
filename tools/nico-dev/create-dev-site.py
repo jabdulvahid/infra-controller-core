@@ -74,10 +74,10 @@ def parse_args():
     p.add_argument('--images-source-tag', default='',
                    help='NGC tag to deploy (ngc) / build tag (build) — the default for every image group')
     p.add_argument('--images-source-names', default='', metavar='JSON',
-                   help='NGC image names as JSON {"core": ..., "rest": {local: ngc}, "flow": {...}}; '
+                   help='NGC image names as JSON {"core": ..., "rest": {local: ngc}}; '
                         'unnamed ones keep their defaults (bringup.yaml ngc.images)')
     p.add_argument('--images-source-tags', default='', metavar='GROUP=TAG,...',
-                   help='per-group NGC tag overrides (core, rest, flow); groups not named use '
+                   help='per-group NGC tag overrides (core, rest); groups not named use '
                         '--images-source-tag (bringup.yaml ngc.tags)')
     p.add_argument('--images-source-core-image', default='nvmetal-carbide',
                    help="NGC's name for the core image (default nvmetal-carbide; local name is nico)")
@@ -160,7 +160,6 @@ def rewrite(content, pfx, dc_name, site_name, args):
         # per-group tags BEFORE the plain one (prefix match)
         ('IMAGES_SOURCE_TAG_CORE',   _group_tags['core'] or '""'),
         ('IMAGES_SOURCE_TAG_REST',   _group_tags['rest'] or '""'),
-        ('IMAGES_SOURCE_TAG_FLOW',   _group_tags['flow'] or '""'),
         ('IMAGES_SOURCE_TAG',        args.images_source_tag or '""'),
         ('IMAGES_SOURCE_CORE_IMAGE', args.images_source_core_image),
         ('IMAGES_SOURCE_TOKEN_ENV',  args.images_source_token_env),
