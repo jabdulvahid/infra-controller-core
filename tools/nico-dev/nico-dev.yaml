@@ -26,6 +26,13 @@ nico_repo_folder: NICO_REPO_FOLDER
 nico_dev_folder: NICO_DEV_FOLDER
 
 # Host container registry — Docker registry:2 on the host, VM pulls via 192.168.64.1
+# The VM — recorded by create-dev-site.py from bring-up.py. Host-side scripts
+# reach it over ssh (image delivery through the share, see image_delivery.py).
+vm:
+  ip: VM_IP
+  user: VM_USER
+  ssh_key: VM_SSH_KEY          # host path of the private key (or empty: default identity)
+
 registry:
   host: 192.168.64.1   # host IP as seen from the VM
   port: 5000

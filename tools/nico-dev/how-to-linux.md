@@ -172,6 +172,7 @@ bring-up adds it; it does not survive a host reboot.
 | share root | `~/nico-tests/vm1/shared` | `~/mac` (mount name is historical) |
 | repo worktree | `<share>/infra-controller` | `~/mac/infra-controller` |
 | site folder | `<share>/sites/dc1/dev1` | `~/mac/sites/dc1/dev1` |
+| image tarballs in transit | `<site>/images/*.tar` (deleted after import) | same path under `~/mac` |
 | kubeconfig | `<site>/dc1-dev1.kubeconfig.yaml` | same path under `~/mac` |
 
 The share is virtiofs and passes your uid through: files the guest writes are
@@ -407,6 +408,7 @@ is listed in `~/.nico-dev/vms/<vm>.yaml`.
 |---|---|---|
 | `check-prereqs.sh [--build]` | host | read-only prerequisite check, includes checkout parity |
 | `check-parity.py [repo] [--quiet]` | host | does the checkout still match what the nico-dev scripts assume |
+| `image_delivery.py <site> <ref>… [--check]` | host | put images into the VM's containerd through the share (never through the registry tunnel) |
 | `bring-up.py --config X [--dry-run] [--from step]` | host | the whole bring-up |
 | `dev-down.py --config X [--remove-infra]` | host | the whole teardown |
 | `ngc-tags.py --config X` | host | deployable NGC tags |

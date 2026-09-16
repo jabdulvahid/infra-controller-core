@@ -225,6 +225,9 @@ def build_steps(args):
                  f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev'
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
                  f' --dpf {str(args.dpf).lower()}'
+                 f' --vm-ip {args.ip} --vm-user {args.user}'
+                 + (f' --vm-ssh-key {shlex.quote(str(Path(args.ssh_key).expanduser()).removesuffix(".pub"))}'
+                    if args.ssh_key else '')
                  + (f' --images-source-tags {_site_images.tags_arg(args.ngc_tags)}'
                     if args.ngc_tags else '')
                  + (f' --images-source-names {shlex.quote(_site_images.names_arg(args.ngc_images))}'

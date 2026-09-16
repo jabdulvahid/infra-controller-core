@@ -233,6 +233,11 @@ def render_manifests(repo, namespace, image_ref, phase_dwell, resources):
     c['args'] = [a for a in c.get('args', []) if not a.startswith(('--dpf-namespace=', '--phase-dwell='))]
     c['args'] += [f'--dpf-namespace={namespace}', f'--phase-dwell={phase_dwell}']
     c['resources'] = resources
+    # The image is delivered into containerd through the share (image_delivery.py);
+    # with IfNotPresent kubelet never contacts the registry tunnel for it. Upstream's
+    # Always + rollout-restart idiom is replaced by delivering the new content and
+    # restarting (deliver() re-imports when --rebuild produced a new image).
+    c['imagePullPolicy'] = 'IfNotPresent'
     docs = [d for d in yaml.safe_load_all(rbac) if d] + [mgr]
     return docs
 
@@ -342,10 +347,21 @@ def main():
     print('  ✓ preflight ok')
 
     # ── image ─────────────────────────────────────────────────────────────
+    built = False
     if args.dry_run or args.rebuild or not registry_has(push_reg, image, tag):
         build_image(repo, push_reg, image, tag, dry_run=args.dry_run)
+        built = True
     else:
         print(f'\n  image {image}:{tag} already in the registry ✓  (--rebuild to rebuild)')
+    # into the VM's containerd through the share, not the registry tunnel
+    _spec = _ilu.spec_from_file_location('image_delivery', HERE / 'image_delivery.py')
+    _idl = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_idl)
+    if built and not args.dry_run and _idl.vm_has(cfg, site_folder, [image_ref]):
+        # a rebuild under the same tag: containerd still holds the old content under
+        # this name; ctr import replaces it, so force the delivery
+        _idl.run_on_vm(cfg, site_folder, f'sudo ctr -n k8s.io images rm {image_ref}', check=False)
+    _idl.deliver(cfg, site_folder, [image_ref], label=f'{image}-{tag}', push_reg=push_reg, dry_run=args.dry_run)
 
     # ── deploy ────────────────────────────────────────────────────────────
     print('\nDeploying the simulator')

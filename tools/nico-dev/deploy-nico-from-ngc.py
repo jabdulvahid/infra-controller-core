@@ -83,6 +83,9 @@ def main():
     p.add_argument('--tags', default=None, metavar='GROUP=TAG,...',
                    help='per-group NGC tag overrides (core, rest); groups not named '
                         'use the positional tag (bringup.yaml ngc.tags)')
+    p.add_argument('--no-import', action='store_true',
+                   help='skip the image delivery through the share (the VM then pulls '
+                        'through the registry tunnel — the stall-prone path)')
     p.add_argument('--initial', action='store_true',
                    help='first deploy on a fresh site: run deploy-dev-nico.py '
                         'instead of redeploy-dev-nico.py')
@@ -110,7 +113,6 @@ def main():
     tags = site_images.resolve_group_tags(args.ngc_tag, args.tags)
     local_tags = {g: f'ngc-{t}' for g, t in tags.items()}
     # NGC names: --images, else the site yaml's recorded map, else the defaults
-    site_yamls = [f for f in Path(site).glob('*.yaml') if '.kubeconfig' not in f.name]
     recorded = {}
     if len(site_yamls) == 1:
         import yaml as _yaml
@@ -150,6 +152,7 @@ def main():
     run(['docker', 'tag', ngc_ref, local_ref], 'docker tag')
     run(['docker', 'push', local_ref], 'docker push')
 
+    site_yamls = [f for f in Path(site).glob('*.yaml') if '.kubeconfig' not in f.name]
     # REST images: CI publishes them alongside the core image, SAME tag,
     # same org/team (verified 2026-08-31: nico-rest-db's tag list includes
     # v2.2.0-pr-441-gc594e35f3). Pull + retag + push the six the base
@@ -183,6 +186,21 @@ def main():
     if not fell_back:
         print(f'  REST images pulled + pushed ✓ ({len(rest_images)}, '
               f'tag {rest_tag} → {rest_local})')
+
+    # Deliver the images into the VM's containerd through the share, so kubelet
+    # never pulls them through the registry tunnel (stalls; and the 9 GB layer
+    # unpack that outlived containerd's watchdog). imagePullPolicy is
+    # IfNotPresent everywhere, so a present image is simply used.
+    if not args.no_import and len(site_yamls) == 1:
+        import yaml as _yaml
+        _spec = importlib.util.spec_from_file_location('image_delivery', here / 'image_delivery.py')
+        _idl = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_idl)
+        site_cfg = _yaml.safe_load(site_yamls[0].read_text()) or {}
+        vm_registry = site_images.read(site_cfg)['registry']          # as the VM names it
+        refs = [f'{vm_registry}/nico:{local_tag}'] + [f'{vm_registry}/{img}:{rest_local}' for img in rest_images]
+        print('Step 5b: Deliver images to the VM through the share...')
+        _idl.deliver(site_cfg, site, refs, label=local_tag, push_reg=f'localhost:{REGISTRY_PORT}')
 
     # Record the source in the site yaml (source of truth) BEFORE deploying,
     # so a failed deploy still leaves the provenance behind; the deploy

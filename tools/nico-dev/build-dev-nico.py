@@ -318,7 +318,22 @@ def main():
         print(f'\n  REST images built and pushed ✓ '
               f'({len(rest_images)} images, tag {args.tag})')
 
+    def _deliver(refs):
+        # kubelet must never pull these through the registry tunnel (stalls) —
+        # put them straight into the VM's containerd via the share.
+        import importlib.util as _ilu2
+        _s2 = _ilu2.spec_from_file_location('image_delivery', Path(__file__).resolve().parent / 'image_delivery.py')
+        _idl = _ilu2.module_from_spec(_s2); _s2.loader.exec_module(_idl)
+        _s3 = _ilu2.spec_from_file_location('site_images', Path(__file__).resolve().parent / 'site_images.py')
+        _si2 = _ilu2.module_from_spec(_s3); _s3.loader.exec_module(_si2)
+        vm_registry = _si2.read(cfg)['registry']
+        print('\nStep 5b: Deliver images to the VM through the share...')
+        _idl.deliver(cfg, Path(site_yaml).parent, [f'{vm_registry}/{r}' for r in refs], label=args.tag, push_reg=push_reg)
+
+    rest_built = not (args.skip_rest or not rest_enabled)
     if args.rest_only:
+        if rest_built:
+            _deliver([f'{img}:{args.tag}' for img in rest_images])
         print(f'\n{"="*55}')
         print(f'  REST-only build + push complete ✓  (tag {args.tag})')
         print(f'{"="*55}')
@@ -342,6 +357,7 @@ def main():
     docker_push(build_ctr)
     docker_push(runtime_ctr)
     docker_push(nico_img)
+    _deliver([f'nico:{args.tag}'] + ([f'{img}:{args.tag}' for img in rest_images] if rest_built else []))
 
     # images.source in the site yaml: these images came from a local build
     import importlib.util as _ilu
