@@ -94,8 +94,14 @@ with your main clone but has its own files:
 ```bash
 mkdir -p ~/nico-tests/vm1/shared
 cd ~/projects/infra-controller     # no clone yet? git clone https://github.com/NVIDIA/infra-controller.git
+git fetch origin main              # so the worktree starts from TODAY's main, not the last fetch
 git worktree add -b vm1-work ~/nico-tests/vm1/shared/infra-controller origin/main
 ```
+
+The fetch matters: the NICo images you deploy are built from current main,
+and the Helm charts come from this worktree, so both should be from the same
+day. A worktree cut from a stale local copy of main pairs old charts with new
+images.
 
 Next, add the nico-dev tools to that worktree. This is called grafting. The
 tools land in `tools/nico-dev` as untracked, git-ignored files, so they never
