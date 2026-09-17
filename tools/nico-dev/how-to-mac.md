@@ -461,7 +461,7 @@ ssh nico@192.168.64.126 '~/mac/sites/dc1/dev1/run-mat.sh'
 local disk on the VM, installs the binary, stages everything under
 `/etc/machine-a-tron/dc1/`, and launches MAT under `sudo`. The log is
 `/var/log/machine-a-tron-dc1.log` on the VM. Watch machines appear with
-`run-admin-cli.sh machine list`.
+`run-admin-cli.sh machine show` (no argument lists them all).
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset
 the fleet:
