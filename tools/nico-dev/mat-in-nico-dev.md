@@ -371,3 +371,69 @@ both write `DPU.status.phase`; `deploy-dpf-sim.py` refuses when it finds the
 operator. The simulator's Go types are pinned to the doca-platform release
 whose CRDs ship in `crates/dpf/crds`; both come from the same checkout, so
 they agree as long as the site is built from one tree.
+
+## 14. Running the admin CLI from the VM
+
+The admin CLI belongs on the VM for the same reason MAT does: everything it
+needs is already there. The API container ships a Linux build of
+`nico-admin-cli`, the API VIP lives on the fabric inside the VM, so no route
+has to be added on the Mac, and the site's kubeconfig in the site folder is
+enough to issue the client certificate from Vault. Nothing is compiled.
+
+```bash
+ssh nico@192.168.64.126
+get-admin-cli.sh ~/mac/sites/<dc>/<site>
+~/mac/sites/<dc>/<site>/run-admin-cli.sh version
+```
+
+`get-admin-cli.sh` refuses to run on the Mac, because the binary it extracts
+is a Linux ELF. It does two things:
+
+1. Picks a **running** `nico-api` pod (the label also matches the completed
+   `nico-api-migrate` job pod, which cannot be exec'ed into), copies
+   `/opt/carbide/nico-admin-cli` out of it with `exec` + `cat` (the container
+   has no `tar`, so `kubectl cp` does not work) and installs it as
+   `/usr/local/bin/nico-admin-cli`.
+2. Runs `configure-clis.py <site> --admin-cli-only` on the VM. That issues the
+   admin client certificate from Vault into `<site>/certs/admin/`, writes the
+   wrapper `<site>/run-admin-cli.sh`, and adds `nico-api.<dc>-<site>` to the
+   VM's `/etc/hosts`, pointing at the API VIP.
+
+The wrapper is small and worth knowing. It exports `API_URL`
+(`https://nico-api.<dc>-<site>:443`), `ROOT_CA_PATH`, `CLIENT_CERT_PATH` and
+`CLIENT_KEY_PATH` from the site's `certs/admin/` folder and then calls
+`nico-admin-cli` from `$PATH` with your arguments. Always call the wrapper:
+the bare binary dials the API by its in-cluster name and fails outside the
+cluster. The `version` subcommand prints `IGNORING SERVER CERT`; that is
+expected, every other subcommand verifies the server against the site CA.
+
+Two things to know about the wrapper file itself:
+
+- **It bakes the absolute site path of the machine that generated it.**
+  `configure-clis.py` writes the same file name whether it runs on the Mac or
+  on the VM, and the share shows one copy to both. If you later run
+  `configure-clis.py <site>` on the Mac, for MAT, the wrapper is rewritten
+  with the Mac path and stops working on the VM (`machine list` says the
+  certificate files do not exist). Run `get-admin-cli.sh` again on the VM, or
+  `configure-clis.py <site> --admin-cli-only` there; either restores the VM
+  paths in seconds. The MAT files are untouched by the `--admin-cli-only` run.
+- **The binary should match the API.** After deploying a new nico tag, run
+  `get-admin-cli.sh` again so the CLI is the one that shipped with that API;
+  a CLI from an older image usually still works but can lack new subcommands
+  or print fields the API no longer has.
+
+Commands you will use during a MAT run:
+
+```bash
+S=~/mac/sites/<dc>/<site>
+$S/run-admin-cli.sh machine show                          # the fleet, with lifecycle state (no argument = all)
+$S/run-admin-cli.sh machine show <machine-id>             # one machine in full
+$S/run-admin-cli.sh dpf disable <host-machine-id>         # send one host down the iPXE path (before ingestion; section 13)
+$S/run-admin-cli.sh site-explorer get-report endpoint     # what the explorer has found, with its errors
+```
+
+Where things live on the VM: the binary at `/usr/local/bin/nico-admin-cli`,
+the certificate and key in `<site>/certs/admin/` on the share (readable from
+the Mac too; they are client credentials for the site, treat them as such),
+and the wrapper at `<site>/run-admin-cli.sh`. Building your own admin CLI
+from a worktree is section 10.

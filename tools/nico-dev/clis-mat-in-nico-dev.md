@@ -99,11 +99,13 @@ later, DHCP requests being answered. The same log is written to
 
 ```bash
 ssh nico@192.168.64.126
-~/mac/sites/dc1/dev1/run-admin-cli.sh machine list
+~/mac/sites/dc1/dev1/run-admin-cli.sh machine show
 ```
 
-Run it every minute or so. Hosts and DPUs appear first as discovered
-endpoints, then as machines walking through their lifecycle, and finally with
+`machine show` without an argument lists every machine; with a machine ID it
+shows one in full. Run it every minute or so. Hosts and DPUs appear first as
+discovered endpoints, visible with `run-admin-cli.sh site-explorer get-report
+endpoint`, then as machines walking through their lifecycle, and finally with
 the state `Ready`. The default fleet simulates GB200 NVL hosts, the slowest
 platform profile MAT has: a simulated power-on alone takes ten minutes, so
 expect fifteen to twenty-five minutes before the whole fleet is `Ready`. The
@@ -126,8 +128,8 @@ power-cycles the host when the simulator asks for it. Nothing is flashed;
 only the status transitions are reproduced.
 
 If you want one host to take the older iPXE path instead, disable DPF for
-that host before NICo ingests it, that is, right after it appears in the
-machine list and before it leaves its first states:
+that host before NICo ingests it, that is, right after it appears in
+`machine show` and before it leaves its first states:
 
 ```bash
 ~/mac/sites/dc1/dev1/run-admin-cli.sh dpf disable <host-machine-id>
@@ -139,7 +141,7 @@ case reset the fleet, section 8, and disable earlier on the next run.
 ## 7. Stop MAT
 
 Press Ctrl-C in the MAT terminal. MAT deletes its machines from NICo on the
-way out. Check that the machine list is empty afterwards; if it is not, the
+way out. Check that `machine show` lists nothing afterwards; if it does, the
 shutdown was interrupted before cleanup, and the reset in the next section
 puts things right.
 
@@ -184,7 +186,7 @@ section 10.
 | `run-mat.sh` stops at once saying the binary is not ELF | the build did not finish, or an old Mac binary is in `<site>/mat/` | rebuild with section 2 |
 | machines appear, then every endpoint shows a lockout error | the fleet was not reset since the last run | section 8, then restart MAT |
 | hosts sit in `dpuinit` and never move | the DPF simulator is not running | `kubectl -n dpf-operator-system get pods` on the VM; `mat-in-nico-dev.md` section 13 |
-| `machine list` says the API is unreachable | the wrapper was generated on the other side of the share, or the API VIP route is gone | rerun section 1 on the VM; `how-to-mac.md` section 7 for the route |
+| `machine show` says the API is unreachable | the wrapper was generated on the other side of the share, or the API VIP route is gone | rerun section 1 on the VM; `how-to-mac.md` section 7 for the route |
 | a DPU parks in `Rebooting` | the host's mock did not finish its power cycle | the MAT log; `run-admin-cli.sh machine show <host>` |
 
 Everything else, symptom by symptom, is in the failure catalog of
