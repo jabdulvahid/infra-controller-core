@@ -413,7 +413,7 @@ Two things to know about the wrapper file itself:
   `configure-clis.py` writes the same file name whether it runs on the Mac or
   on the VM, and the share shows one copy to both. If you later run
   `configure-clis.py <site>` on the Mac, for MAT, the wrapper is rewritten
-  with the Mac path and stops working on the VM (`machine list` says the
+  with the Mac path and stops working on the VM (`machine show` says the
   certificate files do not exist). Run `get-admin-cli.sh` again on the VM, or
   `configure-clis.py <site> --admin-cli-only` there; either restores the VM
   paths in seconds. The MAT files are untouched by the `--admin-cli-only` run.

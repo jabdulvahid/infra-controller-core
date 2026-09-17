@@ -249,7 +249,7 @@ ssh nico@192.168.64.126 '~/mac/sites/dc1/dev1/run-mat.sh'
 under `/usr/local/bin`, stages everything under `/etc/machine-a-tron/dc1/`,
 ensures the API hostname in `/etc/hosts`, and launches MAT under `sudo`. Log:
 `/var/log/machine-a-tron-dc1.log` on the VM. Watch from the host with
-`<site>/run-admin-cli.sh machine list`.
+`<site>/run-admin-cli.sh machine show` (no argument lists them all).
 
 Between runs, after stopping MAT and before starting it again:
 
