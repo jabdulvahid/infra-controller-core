@@ -415,6 +415,9 @@ route does. Then tunnel through SSH instead: run
 
 ## 9. CLIs and MAT
 
+The full step-by-step, with what to expect at each stage, is
+`clis-mat-in-nico-dev.md`. This section is the summary.
+
 **The admin CLI, without compiling anything.** The NICo API container
 already contains the admin CLI binary. This script copies it out, issues the
 client certificates it needs, and writes a wrapper script. Run it on the VM:
