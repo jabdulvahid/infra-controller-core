@@ -427,7 +427,7 @@ def render(server, logs, admin_cli, interval, width=120, dpf=None):
     if not dpus:
         L.append([('  (none yet)', HDR)])
     else:
-        L.append([(f'  {"dpu id":<44} {"type":<10} {"healthy":<8} {"version status":<16} {"dpf":<14} state', HDR)])
+        L.append([(f'  {"dpu id":<44} {"type":<12} {"healthy":<8} {"version status":<16} {"dpf":<18} state', HDR)])
         for r in dpus:
             did = col(r, 'dpu id', 'dpuid', 'id')
             st = col(r, 'state')
@@ -437,9 +437,9 @@ def render(server, logs, admin_cli, interval, width=120, dpf=None):
             if drow:
                 dpf_txt = ('enabled' if col(drow, 'enabled').lower() in ('true', 'yes') else 'disabled') + \
                           (' +ingested' if col(drow, 'used for ingestion', 'usedforingestion').lower() in ('true', 'yes') else '')
-            L.append([(f'  {short(did, 44):<44} {short(col(r, "dpu type", "dputype", "type"), 10):<10} ', PLAIN),
+            L.append([(f'  {short(did, 44):<44} {short(col(r, "dpu type", "dputype", "type"), 12):<12} ', PLAIN),
                       (f'{short(healthy, 8):<8}', OK if healthy.lower() in ('true', 'yes', 'healthy') else (WIP if healthy else PLAIN)),
-                      (f' {short(col(r, "version status", "versionstatus"), 16):<16} {short(dpf_txt, 14):<14} ', PLAIN),
+                      (f' {short(col(r, "version status", "versionstatus"), 16):<16} {short(dpf_txt, 18):<18} ', PLAIN),
                       (st, state_style(st))])
     L.append([])
 
