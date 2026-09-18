@@ -437,3 +437,23 @@ the certificate and key in `<site>/certs/admin/` on the share (readable from
 the Mac too; they are client credentials for the site, treat them as such),
 and the wrapper at `<site>/run-admin-cli.sh`. Building your own admin CLI
 from a worktree is section 10.
+
+**nicocli, the REST CLI, follows the same idea with one difference.** The
+`nico-rest-api` image ships it at `/app/nicocli`, but that image is
+distroless: no shell, no `cat`, no `tar`, so nothing can be copied out of a
+running pod. `get-nicocli.sh <site>` therefore runs on the Mac and takes the
+binary from the image in docker's store (`docker create` + `docker cp`,
+nothing runs), pulling it from the local registry first on the source-build
+lane where `buildx --push` leaves no local copy. It writes
+`<site>/run-nicocli.sh`, a self-locating wrapper that exports
+`NICO_BASE_URL` (the REST NodePort, `http://<vm-ip>:30388`), `NICO_ORG`
+(`ncx`) and `NICO_TOKEN`. The token comes from
+`helm-prereqs/keycloak/get-token.sh`, which mints a client-credentials token
+for the `ncx-service` client by running a curl pod inside the cluster
+(Keycloak is ClusterIP only), and is cached in `<site>/.nicocli-token` for 25
+minutes of its 30-minute lifetime. The wrapper always uses the site's own
+kubeconfig, whatever `KUBECONFIG` the shell carries, so it works from a Mac
+shell that points at another cluster. On the VM it runs the extracted Linux
+binary; on a Mac it runs a `nicocli` from PATH if you built one with
+`build-nico-clis.py`. `--bootstrap` runs the two `current` calls a fresh site
+needs; `--refresh-token` discards the cache.

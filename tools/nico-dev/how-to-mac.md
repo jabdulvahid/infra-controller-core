@@ -520,19 +520,25 @@ remove it. Advanced settings live in the site yaml under `nico-system.dpf`.
 What the simulator reproduces, what it does not, and its failure catalog are
 in section 13 of `mat-in-nico-dev.md`.
 
-**nicocli.** The REST-surface CLI needs a token that is minted inside the
-cluster:
+**nicocli, without compiling anything.** The REST API image ships the
+REST-surface CLI, built from the same commit as the API. One script on the
+Mac copies it out of the image and writes a wrapper that knows the API
+address, the organisation and how to get a token:
 
 ```bash
-TOKEN=$(bash <repo>/helm-prereqs/keycloak/get-token.sh)
-nicocli --base-url http://192.168.64.126:30388 --token "$TOKEN" --org ncx infrastructure-provider current
-nicocli --base-url http://192.168.64.126:30388 --token "$TOKEN" --org ncx tenant current
-nicocli --base-url http://192.168.64.126:30388 --token "$TOKEN" --org ncx vpc list
+get-nicocli.sh <site>                       # Mac: binary → <site>/nicocli/, wrapper → <site>/run-nicocli.sh
+ssh nico@192.168.64.126
+~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap    # once per fresh site
+~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
 ```
 
-On a fresh site the two `current` calls must come first. They create the
-organisation's provider and tenant objects; every other call returns 403
-until they exist.
+The binary is a Linux build, so the wrapper runs it on the VM; on the Mac
+the same wrapper uses a `nicocli` from your PATH if you built one. The
+wrapper mints a token inside the cluster on first use and caches it for 25
+minutes; `--refresh-token` in front of a command forces a new one. On a
+fresh site `--bootstrap` must come first. It creates the organisation's
+provider and tenant objects; every other call returns 403 with "Org does not
+have a Tenant associated" until they exist.
 
 ## 10. The dev loop
 
@@ -699,7 +705,8 @@ planned. Neither step touches your site folder or your worktree.
 | `build-nico-clis.py <site> [--mat-only]` | Mac | MAT in a container; admin-cli and nicocli with host toolchains |
 | `configure-clis.py <site>` | Mac | certs, MAT config, wrappers, /etc/hosts |
 | `get-admin-cli.sh <site>` | VM | admin CLI from the API container, no build |
-| `run-admin-cli.sh`, `run-mat.sh` | Mac / VM | generated wrappers in the site folder |
+| `get-nicocli.sh <site>` | Mac | REST CLI from the REST API image, no build; writes `run-nicocli.sh` |
+| `run-admin-cli.sh`, `run-nicocli.sh`, `run-mat.sh` | Mac / VM | generated wrappers in the site folder |
 | `reset-mat-state.py <site> --yes` | Mac | fleet back to time zero |
 | `ndev.py <site> [sub]` | Mac or VM | status, fabric, BGP, registry, DPU |
 | `restart-ordered.sh [--cold]` | VM | ordered recovery after a reboot |
