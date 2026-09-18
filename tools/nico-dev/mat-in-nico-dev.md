@@ -193,12 +193,22 @@ with `configure-clis.py` — it is fully derived from the site yaml.
 # baseline (from the site yaml's repo, e.g. ~/golden/infra-controller @ main)
 python3 build-nico-clis.py <site> --mat-only --skip-nicocli
 
-# feature build (from your worktree)
-python3 build-nico-clis.py <site> --mat-only --skip-nicocli --repo ~/projects/nico-mat
+# feature build (from your worktree) — --out-dir is REQUIRED with --repo, so
+# the feature binary can never overwrite the baseline in {site}/mat/
+python3 build-nico-clis.py <site> --mat-only --skip-nicocli --repo ~/projects/nico-mat --out-dir <site>/mat-dev
 
-# either way, on the VM — run-mat.sh detects the changed binary and reinstalls
-~/mac/sites/<dc>/<site>/run-mat.sh
+# on the VM: one run script per build (copy run-mat.sh, change MAT_BIN/MAT_CONFIG)
+~/mac/sites/<dc>/<site>/run-mat.sh          # baseline
+~/mac/sites/<dc>/<site>/run-mat-dev.sh      # feature
 ```
+
+For a clean A/B the baseline must come from the feature branch's OWN base
+commit, not from whatever the site's checkout happens to be: a detached
+worktree at that commit (`git worktree add --detach <dir> <base-sha>`) built
+with `--repo <dir> --out-dir <site>/mat-base` differs from the feature build
+by exactly the feature's diff. Each source checkout gets its own cargo target
+volume (`nico-mat-target-<id>`), so the first build per checkout is cold;
+sharing one volume across checkouts reused stale crates (20260918-#1).
 
 Baseline and feature runs use the identical launch path, so any behavior
 difference is your code, not the harness. Incremental rebuilds are ~1–2 min
