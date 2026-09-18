@@ -53,6 +53,21 @@ OPTIONAL = {'BomValidating', 'Validation', 'Measuring'}
 END_STATE = 'Ready'
 
 
+SUB_RE = re.compile(r'\{\s*state:\s*([A-Za-z_]+)', re.I)
+
+
+def compact(state):
+    """Shorter, readable form of a NICo state string for the table."""
+    m = SUB_RE.search(state)
+    top = state.split('/')[0]
+    canon = next((x for x in MILESTONES if x.lower() == top.lower()), top)
+    if m:
+        inner = m.group(1)
+        return f'{canon}/Dpf:{inner}' if 'dpfstates' in state.lower() else f'{canon}/{inner}'
+    rest = state.split('/', 1)[1] if '/' in state else ''
+    return f'{canon}/{rest}' if rest else canon
+
+
 def milestone_of(state):
     """(milestone, sub_state) for a NICo state string like 'HostInitializing/Discovered'."""
     top, _, sub = state.partition('/')
@@ -93,11 +108,15 @@ def run_cli(admin_cli, args, timeout=60):
 
 def parse_table(text):
     """Parse a prettytable-style table (| cells |, +---+ borders) into a list of
-    dicts keyed by lower-cased header. Tolerates box-drawing borders too."""
+    dicts keyed by lower-cased header. Tolerates box-drawing borders too. A
+    wrapped cell continues on a following line whose key column (the first
+    non-empty header, e.g. Id or Address) is empty; those lines are merged
+    into the row above instead of counted as rows."""
     rows = []
     header = None
+    key_idx = None
     for raw in text.splitlines():
-        line = raw.strip()
+        line = ANSI_RE.sub('', raw).strip()
         if not line or set(line) <= set('+-=|│┼─┌┐└┘├┤┬┴ '):
             continue
         if '|' in line:
@@ -108,6 +127,12 @@ def parse_table(text):
             continue
         if header is None:
             header = [c.lower() for c in cells]
+            key_idx = next((i for i, h in enumerate(header) if h), 0)
+            continue
+        if len(cells) == len(header) and rows and not cells[key_idx]:
+            for i, c in enumerate(cells):            # continuation of the previous row
+                if c:
+                    rows[-1][header[i]] = (rows[-1].get(header[i], '') + c).strip()
             continue
         if len(cells) != len(header):
             # a wrapped continuation line: append to the previous row's cells
@@ -154,6 +179,7 @@ def fetch_server(admin_cli):
 
 
 # ── MAT logs ─────────────────────────────────────────────────────────────────
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
 KV_RE = re.compile(r'(\bmat_host_id|\bdpu_index|\bapi_state|\bstate|\bbooted_os)=(\S+)')
 TIMER_RE = re.compile(r'Timer armed: (\w+) \((\w+)\)')
 DUR_RE = re.compile(r'duration=(\S+)')
@@ -198,6 +224,7 @@ class MatLog:
 
     def _ingest(self, line):
         self.lines += 1
+        line = ANSI_RE.sub('', line)
         m = TS_RE.match(line)
         ts = m.group(1) if m else None
         if ts:
@@ -251,28 +278,28 @@ def render(server, logs, admin_cli, interval, width=120):
 
     # endpoints
     L.append('ENDPOINTS (site explorer)')
-    L.append(f'  {"address":<18} {"type":<7} {"vendor":<12} {"pre-ingestion":<18} {"machine":<38} last error')
+    L.append(f'  {"address":<14} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error')
     eps = server.get('endpoints', [])
     if not eps:
         L.append('  (none yet)')
     for r in eps:
-        L.append(f'  {short(col(r, "address"), 18):<18} {short(col(r, "type"), 7):<7} '
-                 f'{short(col(r, "vendor"), 12):<12} {short(col(r, "pre-ingestion state", "preingestionstate"), 18):<18} '
-                 f'{short(col(r, "machineid", "machine id", "machine"), 38):<38} '
-                 f'{short(col(r, "last exploration error", "lastexplorationerror"), max(10, width - 100))}')
+        L.append(f'  {short(col(r, "address"), 14):<14} {short(col(r, "type"), 5):<5} '
+                 f'{short(col(r, "vendor"), 8):<8} {short(col(r, "pre-ingestion state", "preingestionstate"), 14):<14} '
+                 f'{short(col(r, "machineid", "machine id", "machine"), 44):<44} '
+                 f'{short(col(r, "last exploration error", "lastexplorationerror"), max(10, width - 96))}')
     L.append('')
 
     # machines
     L.append(f'MACHINES (NICo)   end state: {END_STATE}   milestones: {" > ".join(MILESTONES)}')
-    L.append(f'  {"id":<38} {"type":<5} {"state":<44} {"milestone":<17} to-go')
+    L.append(f'  {"id":<44} {"type":<6} {"milestone":<17} {"to-go":<6} state (full, as NICo reports it)')
     if not machines:
         L.append('  (none yet)')
     for r in machines:
         state = col(r, 'state')
         m, _ = milestone_of(state)
         mark = ' ✓' if state.lower().startswith('ready') else (' ✗' if state.lower().startswith('failed') else '')
-        L.append(f'  {short(col(r, "id"), 38):<38} {short(col(r, "type"), 5):<5} {short(state, 44):<44} '
-                 f'{short(m, 17):<17} {to_go(state)}{mark}')
+        L.append(f'  {short(col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} '
+                 f'{to_go(state) + mark:<6} {state}')
     L.append('')
 
     # MAT logs
