@@ -37,8 +37,8 @@ SITE_YAML="$(ls "$SITE"/*.yaml 2>/dev/null | grep -v '\.kubeconfig\.yaml$' | hea
 [[ -n "$SITE_YAML" ]] || { echo "Error: no site yaml in $SITE" >&2; exit 1; }
 
 # ── read what we need from the site yaml ─────────────────────────────────────
-read -r REST_TAG REG_PORT VM_IP REPO_FOLDER < <(python3 - "$SITE_YAML" <<'PYEOF'
-import sys, yaml
+read -r REST_TAG REG_PORT VM_IP REPO_FOLDER VM_SITE < <(python3 - "$SITE_YAML" "$SITE" <<'PYEOF'
+import sys, os, yaml
 c = yaml.safe_load(open(sys.argv[1])) or {}
 img = c.get('images') or {}
 tags = img.get('tags') or {}
@@ -46,7 +46,12 @@ tag = tags.get('rest') or img.get('tag') or (c.get('registry') or {}).get('nico_
 port = (c.get('registry') or {}).get('port', 5000)
 vm_ip = (c.get('vm') or {}).get('ip') or '192.168.64.126'
 repo = c.get('nico_repo_folder') or 'infra-controller-core'
-print(tag, port, vm_ip, repo)
+# the same site folder as the VM sees it: <nico_mac_folder>/x -> <nico_vm_folder>/x
+site = os.path.realpath(sys.argv[2])
+mac_root = os.path.realpath(os.path.expanduser(c.get('nico_mac_folder', ''))).rstrip('/')
+vm_root = (c.get('nico_vm_folder') or '').rstrip('/')
+vm_site = vm_root + site[len(mac_root):] if mac_root and vm_root and site.startswith(mac_root + '/') else '<site-on-the-VM>'
+print(tag, port, vm_ip, repo, vm_site)
 PYEOF
 )
 [[ -n "$REST_TAG" ]] || { echo "Error: the site yaml records no images tag yet — deploy nico first" >&2; exit 1; }
@@ -149,7 +154,8 @@ chmod 755 "$WRAPPER"
 echo "  $WRAPPER ✓"
 
 echo
-echo "Done. On the VM:"
-echo "  ${SITE/#$HOME/~}/run-nicocli.sh --bootstrap     # once per fresh site"
+echo "Done. On the VM (ssh $VM_IP):"
+echo "  $VM_SITE/run-nicocli.sh --bootstrap     # once per fresh site"
+echo "  $VM_SITE/run-nicocli.sh vpc list"
+echo "On the Mac the same wrapper works if a Mac nicocli is on your PATH:"
 echo "  ${SITE/#$HOME/~}/run-nicocli.sh vpc list"
-echo "(the site path on the VM is under its share mount, e.g. ~/mac/sites/<dc>/<site>)"
