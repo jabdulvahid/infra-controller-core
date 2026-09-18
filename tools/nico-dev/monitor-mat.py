@@ -255,77 +255,100 @@ class MatLog:
 
 
 # ── rendering ────────────────────────────────────────────────────────────────
+# A screen is a list of lines; a line is a list of (text, style) segments so the
+# curses view can colour them (k9s-style: sections blue, title teal, column
+# headers dim, states by meaning) while plain text just joins the segments.
+TITLE, SECTION, HDR, OK, WIP, BAD, NUM, PLAIN = 'title', 'section', 'hdr', 'ok', 'wip', 'bad', 'num', ''
+
+
 def short(s, n):
     s = s or ''
     return s if len(s) <= n else s[:max(0, n - 1)] + '…'
 
 
+def state_style(state):
+    st = (state or '').lower()
+    if st.startswith('ready') or st in ('machineup', 'complete'):
+        return OK
+    if st.startswith('failed') or 'error' in st:
+        return BAD
+    return WIP
+
+
 def render(server, logs, admin_cli, interval, width=120):
-    """Build the screen as a list of text lines."""
     now = datetime.now().strftime('%H:%M:%S')
     L = []
-    L.append(f'MAT run monitor  {now}  refresh {interval}s   admin-cli: {short(admin_cli, 60)}')
     machines = server.get('machines', [])
     ready = sum(1 for r in machines if col(r, 'state').lower().startswith('ready'))
     failed = sum(1 for r in machines if col(r, 'state').lower().startswith('failed'))
     hosts = sum(1 for r in machines if 'dpu' not in col(r, 'type').lower())
-    L.append(f'expected machines: {len(server.get("expected", []))}    endpoints: {len(server.get("endpoints", []))}'
-             f'    machines: {len(machines)} ({hosts} hosts, {len(machines) - hosts} DPUs)'
-             f'    Ready: {ready}/{len(machines)}    Failed: {failed}')
+    L.append([('MAT run monitor', TITLE), (f'  {now}  refresh {interval}s   admin-cli: {short(admin_cli, 60)}', PLAIN)])
+    L.append([('expected machines: ', PLAIN), (str(len(server.get('expected', []))), NUM),
+              ('    endpoints: ', PLAIN), (str(len(server.get('endpoints', []))), NUM),
+              ('    machines: ', PLAIN), (str(len(machines)), NUM), (f' ({hosts} hosts, {len(machines) - hosts} DPUs)', PLAIN),
+              ('    Ready: ', PLAIN), (f'{ready}/{len(machines)}', OK if machines and ready == len(machines) else NUM),
+              ('    Failed: ', PLAIN), (str(failed), BAD if failed else PLAIN)])
     for e in server.get('errors', []):
-        L.append(f'  ! {e}')
-    L.append('')
+        L.append([(f'  ! {e}', BAD)])
+    L.append([])
 
-    # endpoints
-    L.append('ENDPOINTS (site explorer)')
-    L.append(f'  {"address":<14} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error')
+    L.append([('ENDPOINTS (site explorer)', SECTION)])
+    L.append([(f'  {"address":<14} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)])
     eps = server.get('endpoints', [])
     if not eps:
-        L.append('  (none yet)')
+        L.append([('  (none yet)', HDR)])
     for r in eps:
-        L.append(f'  {short(col(r, "address"), 14):<14} {short(col(r, "type"), 5):<5} '
-                 f'{short(col(r, "vendor"), 8):<8} {short(col(r, "pre-ingestion state", "preingestionstate"), 14):<14} '
-                 f'{short(col(r, "machineid", "machine id", "machine"), 44):<44} '
-                 f'{short(col(r, "last exploration error", "lastexplorationerror"), max(10, width - 96))}')
-    L.append('')
+        pre = col(r, 'pre-ingestion state', 'preingestionstate')
+        err = col(r, 'last exploration error', 'lastexplorationerror')
+        L.append([(f'  {short(col(r, "address"), 14):<14} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
+                  (f'{short(pre, 14):<14}', state_style(pre)),
+                  (f' {short(col(r, "machineid", "machine id", "machine"), 44):<44} ', PLAIN),
+                  (short(err, max(10, width - 96)), BAD if err else PLAIN)])
+    L.append([])
 
-    # machines
-    L.append(f'MACHINES (NICo)   end state: {END_STATE}   milestones: {" > ".join(MILESTONES)}')
-    L.append(f'  {"id":<44} {"type":<6} {"milestone":<17} {"to-go":<6} state (full, as NICo reports it)')
+    L.append([('MACHINES (NICo)', SECTION), (f'   end state: {END_STATE}   milestones: {" > ".join(MILESTONES)}', PLAIN)])
+    L.append([(f'  {"id":<44} {"type":<6} {"milestone":<17} {"to-go":<6} state (full, as NICo reports it)', HDR)])
     if not machines:
-        L.append('  (none yet)')
+        L.append([('  (none yet)', HDR)])
     for r in machines:
         state = col(r, 'state')
         m, _ = milestone_of(state)
-        mark = ' ✓' if state.lower().startswith('ready') else (' ✗' if state.lower().startswith('failed') else '')
-        L.append(f'  {short(col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} '
-                 f'{to_go(state) + mark:<6} {state}')
-    L.append('')
+        sty = state_style(state)
+        mark = ' ✓' if sty == OK else (' ✗' if sty == BAD else '')
+        L.append([(f'  {short(col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} ', PLAIN),
+                  (f'{to_go(state) + mark:<6}', sty), (' ' + state, sty)])
+    L.append([])
 
-    # MAT logs
     for log in logs:
-        L.append(f'MAT ({os.path.basename(log.path)})'
-                 + (f'   lines: {log.lines}   span {log.first_ts[11:] if log.first_ts else "?"}–{log.last_ts[11:] if log.last_ts else "?"}'
-                    if log.lines else '')
-                 + (f'   firmware-refresh noise lines: {log.firmware_noise}' if log.firmware_noise else ''))
+        head = [(f'MAT ({os.path.basename(log.path)})', SECTION)]
+        if log.lines:
+            head.append((f'   lines: {log.lines}   span {log.first_ts[11:] if log.first_ts else "?"}–{log.last_ts[11:] if log.last_ts else "?"}', PLAIN))
+        if log.firmware_noise:
+            head.append((f'   firmware-refresh noise lines: {log.firmware_noise}', HDR))
+        L.append(head)
         if log.error:
-            L.append(f'  ! {log.error}')
+            L.append([(f'  ! {log.error}', BAD)])
         elif not log.machines:
-            L.append('  (no machine iteration lines yet)')
+            L.append([('  (no machine iteration lines yet)', HDR)])
         else:
-            L.append(f'  {"mat_host_id":<38} {"dpu":<4} {"MAT state":<22} {"API state (as MAT sees it)":<34} {"booted OS":<10} {"last timer":<30} at')
+            L.append([(f'  {"mat_host_id":<38} {"dpu":<4} {"MAT state":<22} {"API state (as MAT sees it)":<34} {"booted OS":<10} {"last timer":<30} at', HDR)])
             with_state = [(k, r) for k, r in log.machines.items() if r['state'] != '?']
             only_bmc = len(log.machines) - len(with_state)
             for (host, dpu), rec in sorted(with_state, key=lambda kv: (kv[0][0], kv[0][1] or '')):
-                L.append(f'  {host:<38} {(dpu or "host"):<4} {short(rec["state"], 22):<22} '
-                         f'{short(rec["api_state"], 34):<34} {short(rec["booted_os"], 10):<10} '
-                         f'{short(rec["timer"], 30):<30} {rec["ts"]}')
+                L.append([(f'  {host:<38} {(dpu or "host"):<4} ', PLAIN),
+                          (f'{short(rec["state"], 22):<22}', state_style(rec['state'])),
+                          (f' {short(rec["api_state"], 34):<34} {short(rec["booted_os"], 10):<10} ', PLAIN),
+                          (f'{short(rec["timer"], 30):<30}', NUM), (f' {rec["ts"]}', PLAIN)])
             if only_bmc:
-                L.append(f'  (+{only_bmc} ids seen only in BMC-mock lines, no iteration state — the DPU BMC mocks)')
-        L.append('')
+                L.append([(f'  (+{only_bmc} ids seen only in BMC-mock lines, no iteration state — the DPU BMC mocks)', HDR)])
+        L.append([])
     if not logs:
-        L.append('MAT logs: none given (server view only). Add --mat-log <file> for MAT\'s own view.')
+        L.append([("MAT logs: none given (server view only). Add --mat-log <file> for MAT's own view.", HDR)])
     return L
+
+
+def plain(lines):
+    return '\n'.join(''.join(t for t, _ in line) for line in lines)
 
 
 def run_plain(admin_cli, logs, interval, once):
@@ -333,7 +356,7 @@ def run_plain(admin_cli, logs, interval, once):
         server = fetch_server(admin_cli)
         for log in logs:
             log.refresh()
-        print('\n'.join(render(server, logs, admin_cli, interval)))
+        print(plain(render(server, logs, admin_cli, interval)))
         if once:
             return
         print('-' * 100, flush=True)
@@ -344,8 +367,27 @@ def run_tui(admin_cli, logs, interval):
     def main(stdscr):
         curses.curs_set(0)
         stdscr.nodelay(True)
+        attrs = {PLAIN: curses.A_NORMAL}
+        if curses.has_colors():
+            curses.start_color()
+            curses.use_default_colors()
+            pairs = {TITLE: curses.COLOR_CYAN, SECTION: curses.COLOR_BLUE, OK: curses.COLOR_GREEN,
+                     WIP: curses.COLOR_YELLOW, BAD: curses.COLOR_RED, NUM: curses.COLOR_MAGENTA, HDR: -1}
+            for i, (name, color) in enumerate(pairs.items(), start=1):
+                curses.init_pair(i, color, -1)
+                attrs[name] = curses.color_pair(i)
+            attrs[TITLE] |= curses.A_BOLD
+            attrs[SECTION] |= curses.A_BOLD
+            attrs[BAD] |= curses.A_BOLD
+            attrs[HDR] = curses.A_DIM
+        else:
+            for name in (TITLE, SECTION):
+                attrs[name] = curses.A_BOLD
+            attrs[HDR] = curses.A_DIM
+            for name in (OK, WIP, BAD, NUM):
+                attrs[name] = curses.A_NORMAL
         last = 0
-        lines = ['starting…']
+        lines = [[('starting…', HDR)]]
         while True:
             now = time.time()
             if now - last >= interval:
@@ -356,11 +398,16 @@ def run_tui(admin_cli, logs, interval):
                 last = now
             h, w = stdscr.getmaxyx()
             stdscr.erase()
-            for i, line in enumerate(lines[:h - 2]):
-                try:
-                    stdscr.addnstr(i, 0, line, w - 1)
-                except curses.error:
-                    pass
+            for y, line in enumerate(lines[:h - 2]):
+                x = 0
+                for text, style in line:
+                    if x >= w - 1:
+                        break
+                    try:
+                        stdscr.addnstr(y, x, text, w - 1 - x, attrs.get(style, curses.A_NORMAL))
+                    except curses.error:
+                        pass
+                    x += len(text)
             remaining = max(0, int(interval - (time.time() - last)))
             try:
                 stdscr.addnstr(h - 1, 0, f'q quit   r refresh now   next refresh in {remaining}s', w - 1, curses.A_REVERSE)
