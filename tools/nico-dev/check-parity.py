@@ -80,6 +80,11 @@ class Checks:
         print(f'      depends: {consumer}')
         print(f'      → {hint}')
 
+    def warn(self, text, hint):
+        """Not a broken assumption, but a state that has bitten before."""
+        print(f'  ! {text}')
+        print(f'      → {hint}')
+
     def path(self, rel, consumer, what=None):
         p = self.repo / rel
         if p.exists():
@@ -123,6 +128,43 @@ class Checks:
 
 
 # ── the assumptions ──────────────────────────────────────────────────────────
+UPSTREAM_URL = 'https://github.com/dsx-ai-factory/infra-controller'
+
+
+def checkout_freshness(c, repo):
+    """Is this checkout at (or ahead of) upstream main? A site built from a
+    fork's stale main pairs old charts and RBAC with images built elsewhere
+    (20260918-#3/#4). Needs the network; silent when it is unavailable."""
+    c.section('checkout vs upstream main (informational)')
+    try:
+        tip = subprocess.run(['git', 'ls-remote', UPSTREAM_URL, 'refs/heads/main'],
+                             capture_output=True, text=True, timeout=20).stdout.split()
+        head = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'],
+                              capture_output=True, text=True, timeout=20).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        c.ok('upstream unreachable — skipped')
+        return
+    if not tip or not head:
+        c.ok('could not determine upstream main or HEAD — skipped')
+        return
+    tip = tip[0]
+    known = subprocess.run(['git', '-C', str(repo), 'cat-file', '-e', f'{tip}^{{commit}}'],
+                           capture_output=True).returncode == 0
+    if not known:
+        c.warn(f'upstream main {tip[:9]} is not in this checkout\'s history — the checkout was cut '
+               f'from a fork or an old fetch',
+               f'git fetch {UPSTREAM_URL} main, then rebase or recreate the worktree from that; '
+               f'a site checkout behind upstream pairs old charts/RBAC with newer images')
+        return
+    behind = subprocess.run(['git', '-C', str(repo), 'rev-list', '--count', f'{head}..{tip}'],
+                            capture_output=True, text=True).stdout.strip()
+    if behind and behind != '0':
+        c.warn(f'checkout is {behind} commits behind upstream main {tip[:9]}',
+               f'fine for a pinned site; for a NEW site fetch {UPSTREAM_URL} main first')
+    else:
+        c.ok(f'checkout contains upstream main {tip[:9]}')
+
+
 def run(repo, quiet):
     c = Checks(repo, quiet)
 
@@ -204,6 +246,7 @@ def run(repo, quiet):
         c.bad(f'dpf-sim-controller manager.yaml args = {args}', 'deploy-dpf-sim.py render_manifests',
               'the simulator flags changed; update render_manifests in deploy-dpf-sim.py')
 
+    checkout_freshness(c, repo)
     return c.fail
 
 
