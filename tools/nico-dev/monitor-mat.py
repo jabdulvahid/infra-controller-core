@@ -15,6 +15,9 @@ refreshed every 30 s, in a full-screen text UI or as plain text.
   --interval    seconds between refreshes (default 30).
   --once        one refresh, plain text, exit (for scripts and pasting).
   --no-tui      plain text every interval instead of the curses screen.
+  --kubeconfig  for the DPF section (default: the *.kubeconfig.yaml next to the
+                admin CLI wrapper, i.e. the site folder). --no-dpf skips it.
+  --dpf-namespace  where the DPF resources live (default dpf-operator-system).
 
 What it shows
   1. Expected machines registered with NICo (count; MAT registers its hosts).
@@ -22,7 +25,12 @@ What it shows
      machine each became, the last exploration error.
   3. Machines: state as NICo reports it, the lifecycle milestone that state
      belongs to, how many milestones remain to Ready, and Ready/Failed marks.
-  4. MAT's own view per mock host and DPU, from the log: MAT FSM state, the
+  4. DPUs as NICo sees them (`dpu status`: state, health, firmware status) and
+     as DPF sees them (kubectl: every DPU resource with its phase, where that
+     phase sits on the simulator's happy path, how many phases remain, how long
+     it has been in the phase, and whether the node has a host reboot pending),
+     plus the simulator pod's state.
+  5. MAT's own view per mock host and DPU, from the log: MAT FSM state, the
      API state MAT last observed, the OS it booted, the last timer it armed.
      (Every MAT log line inside a machine's iteration span ends with
      mat_host_id=… [dpu_index=…] api_state=… state=… booted_os=…; the monitor
@@ -37,6 +45,7 @@ when the optional ones are disabled.
 """
 
 import argparse
+import json
 import curses
 import os
 import re
@@ -89,6 +98,88 @@ def to_go(state):
     if len(rest) == len(mandatory):
         return str(len(rest))
     return f'{len(mandatory)}-{len(rest)}'
+
+
+# ── DPF (doca-platform v26.4.0 phases, in the order the simulator walks them) ──
+DPF_PATH = ['Initializing', 'Node Effect', 'Pending', 'Prepare BFB', 'DPU Config',
+            'Config FW Parameters', 'Initialize Interface', 'OS Installing', 'Rebooting',
+            'DPU Cluster Config', 'Host Network Configuration', 'Node Effect Removal', 'Ready']
+DPF_GATED = {'Node Effect': 'waits for the node-effect hold', 'Rebooting': 'waits for NICo to power-cycle the host'}
+ANN_REBOOT_REQUIRED = 'provisioning.dpu.nvidia.com/dpunode-external-reboot-required'
+ANN_PHASE_ENTERED = 'sim.dpu.nvidia.com/phase-entered-at'
+ANN_REBOOT_REQUESTED = 'sim.dpu.nvidia.com/node-reboot-requested-at'
+ANN_REBOOT_COMPLETED = 'sim.dpu.nvidia.com/node-reboot-completed-at'
+
+
+def dpf_to_go(phase):
+    if phase in DPF_PATH:
+        return str(len(DPF_PATH) - 1 - DPF_PATH.index(phase))
+    return '-'
+
+
+def age(ts):
+    """'3m12s' since an RFC3339 timestamp, or ''."""
+    if not ts:
+        return ''
+    try:
+        t = datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S')
+        d = int((datetime.utcnow() - t).total_seconds())
+        return f'{d // 60}m{d % 60:02d}s' if d >= 60 else f'{d}s'
+    except ValueError:
+        return ''
+
+
+def kubectl_json(kubeconfig, args, timeout=30):
+    env = dict(os.environ, KUBECONFIG=kubeconfig) if kubeconfig else os.environ
+    try:
+        r = subprocess.run(['kubectl'] + args + ['-o', 'json'], capture_output=True, text=True,
+                           timeout=timeout, env=env)
+    except FileNotFoundError:
+        return None, 'kubectl: not found'
+    except subprocess.TimeoutExpired:
+        return None, 'kubectl: timed out'
+    if r.returncode != 0:
+        return None, (r.stderr.strip().splitlines() or ['kubectl failed'])[-1][:160]
+    try:
+        return json.loads(r.stdout), None
+    except ValueError:
+        return None, 'kubectl: unparsable output'
+
+
+def fetch_dpf(kubeconfig, namespace):
+    out = {'errors': [], 'dpus': [], 'nodes': {}, 'devices': 0, 'sim': ''}
+    d, err = kubectl_json(kubeconfig, ['-n', namespace, 'get', 'dpus'])
+    if err:
+        out['errors'].append(f'dpus: {err}')
+    else:
+        for it in d.get('items', []):
+            m, st, sp = it['metadata'], it.get('status', {}) or {}, it.get('spec', {}) or {}
+            ann = m.get('annotations') or {}
+            out['dpus'].append({'name': m['name'], 'node': sp.get('dpuNodeName') or sp.get('nodeName') or '',
+                                'phase': st.get('phase') or '', 'since': ann.get(ANN_PHASE_ENTERED, ''),
+                                'error': next((c.get('message', '') for c in st.get('conditions', [])
+                                               if c.get('status') == 'False' and c.get('type', '').endswith('Ready')), '')})
+    d, err = kubectl_json(kubeconfig, ['-n', namespace, 'get', 'dpunodes'])
+    if err:
+        out['errors'].append(f'dpunodes: {err}')
+    else:
+        for it in d.get('items', []):
+            ann = it['metadata'].get('annotations') or {}
+            out['nodes'][it['metadata']['name']] = {
+                'reboot_required': ann.get(ANN_REBOOT_REQUIRED, ''),
+                'reboot_requested': ann.get(ANN_REBOOT_REQUESTED, ''),
+                'reboot_completed': ann.get(ANN_REBOOT_COMPLETED, ''),
+                'dpus': len((it.get('spec') or {}).get('dpus') or [])}
+    d, err = kubectl_json(kubeconfig, ['-n', namespace, 'get', 'dpudevices'])
+    if not err:
+        out['devices'] = len(d.get('items', []))
+    d, err = kubectl_json(kubeconfig, ['-n', namespace, 'get', 'pods'])
+    if not err:
+        for it in d.get('items', []):
+            if it['metadata']['name'].startswith('dpf-sim-controller'):
+                cs = (it.get('status', {}).get('containerStatuses') or [{}])[0]
+                out['sim'] = f"{it['status'].get('phase', '?')}, restarts {cs.get('restartCount', 0)}"
+    return out
 
 
 # ── admin CLI ────────────────────────────────────────────────────────────────
@@ -175,6 +266,16 @@ def fetch_server(admin_cli):
     out['machines'] = parse_table(text) if text else []
     if err:
         out['errors'].append(f'machine show: {err}')
+
+    text, err = run_cli(admin_cli, ['dpu', 'status'])
+    out['dpus'] = parse_table(text) if text else []
+    if err:
+        out['errors'].append(f'dpu status: {err}')
+
+    text, err = run_cli(admin_cli, ['dpf', 'show'])
+    out['dpf'] = {col(r, 'id'): r for r in parse_table(text)} if text else {}
+    if err:
+        out['errors'].append(f'dpf show: {err}')
     return out
 
 
@@ -275,7 +376,7 @@ def state_style(state):
     return WIP
 
 
-def render(server, logs, admin_cli, interval, width=120):
+def render(server, logs, admin_cli, interval, width=120, dpf=None):
     now = datetime.now().strftime('%H:%M:%S')
     L = []
     machines = server.get('machines', [])
@@ -319,6 +420,63 @@ def render(server, logs, admin_cli, interval, width=120):
                   (f'{to_go(state) + mark:<6}', sty), (' ' + state, sty)])
     L.append([])
 
+    # DPUs as NICo sees them
+    L.append([('DPUS (NICo: dpu status, dpf show)', SECTION)])
+    dpus = server.get('dpus', [])
+    dpf_rows = server.get('dpf', {})
+    if not dpus:
+        L.append([('  (none yet)', HDR)])
+    else:
+        L.append([(f'  {"dpu id":<44} {"type":<10} {"healthy":<8} {"version status":<16} {"dpf":<14} state', HDR)])
+        for r in dpus:
+            did = col(r, 'dpu id', 'dpuid', 'id')
+            st = col(r, 'state')
+            healthy = col(r, 'healthy')
+            drow = dpf_rows.get(did) or {}
+            dpf_txt = ''
+            if drow:
+                dpf_txt = ('enabled' if col(drow, 'enabled').lower() in ('true', 'yes') else 'disabled') + \
+                          (' +ingested' if col(drow, 'used for ingestion', 'usedforingestion').lower() in ('true', 'yes') else '')
+            L.append([(f'  {short(did, 44):<44} {short(col(r, "dpu type", "dputype", "type"), 10):<10} ', PLAIN),
+                      (f'{short(healthy, 8):<8}', OK if healthy.lower() in ('true', 'yes', 'healthy') else (WIP if healthy else PLAIN)),
+                      (f' {short(col(r, "version status", "versionstatus"), 16):<16} {short(dpf_txt, 14):<14} ', PLAIN),
+                      (st, state_style(st))])
+    L.append([])
+
+    # DPUs as DPF sees them
+    if dpf is not None:
+        n = len(dpf['dpus'])
+        ready = sum(1 for d in dpf['dpus'] if d['phase'] == 'Ready')
+        err_n = sum(1 for d in dpf['dpus'] if d['phase'] == 'Error')
+        head = [('DPF (kubectl)', SECTION),
+                (f'   DPUNodes: {len(dpf["nodes"])}   DPUDevices: {dpf["devices"]}   DPUs: {n}   Ready: ', PLAIN),
+                (f'{ready}/{n}', OK if n and ready == n else NUM), ('   Error: ', PLAIN), (str(err_n), BAD if err_n else PLAIN),
+                ('   simulator: ', PLAIN), (dpf['sim'] or 'not found', OK if dpf['sim'].startswith('Running') else BAD)]
+        L.append(head)
+        for e in dpf['errors']:
+            L.append([(f'  ! {e}', BAD)])
+        L.append([(f'  happy path: {" > ".join(DPF_PATH)}', HDR)])
+        if not dpf['dpus']:
+            L.append([('  (no DPU resources yet — NICo creates them once the host reaches DPUInitializing)', HDR)])
+        else:
+            L.append([(f'  {"dpu":<50} {"phase":<28} {"to-go":<6} {"in phase":<9} node reboot', HDR)])
+            for d in sorted(dpf['dpus'], key=lambda x: x['name']):
+                node = dpf['nodes'].get(d['node'] or d['name'].split('-device-')[0], {})
+                reboot = ''
+                if node.get('reboot_required') == 'true':
+                    reboot = 'REQUIRED — waiting for NICo to power-cycle the host'
+                elif node.get('reboot_completed'):
+                    reboot = f'done {age(node["reboot_completed"])} ago'
+                elif node.get('reboot_requested'):
+                    reboot = f'requested {age(node["reboot_requested"])} ago'
+                sty = OK if d['phase'] == 'Ready' else (BAD if d['phase'] == 'Error' else WIP)
+                L.append([(f'  {short(d["name"], 50):<50} ', PLAIN), (f'{short(d["phase"], 28):<28}', sty),
+                          (f' {dpf_to_go(d["phase"]):<6} {age(d["since"]):<9} ', PLAIN),
+                          (reboot + (f'  {d["error"]}' if d['error'] else ''), BAD if 'REQUIRED' in reboot or d['error'] else PLAIN)])
+                if d['phase'] in DPF_GATED and d['phase'] != 'Ready':
+                    L.append([(f'  {"":<50} ({DPF_GATED[d["phase"]]})', HDR)])
+        L.append([])
+
     for log in logs:
         head = [(f'MAT ({os.path.basename(log.path)})', SECTION)]
         if log.lines:
@@ -351,19 +509,20 @@ def plain(lines):
     return '\n'.join(''.join(t for t, _ in line) for line in lines)
 
 
-def run_plain(admin_cli, logs, interval, once):
+def run_plain(admin_cli, logs, interval, once, dpf_cfg=None):
     while True:
         server = fetch_server(admin_cli)
+        dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
         for log in logs:
             log.refresh()
-        print(plain(render(server, logs, admin_cli, interval)))
+        print(plain(render(server, logs, admin_cli, interval, dpf=dpf)))
         if once:
             return
         print('-' * 100, flush=True)
         time.sleep(interval)
 
 
-def run_tui(admin_cli, logs, interval):
+def run_tui(admin_cli, logs, interval, dpf_cfg=None):
     def main(stdscr):
         curses.curs_set(0)
         stdscr.nodelay(True)
@@ -392,9 +551,10 @@ def run_tui(admin_cli, logs, interval):
             now = time.time()
             if now - last >= interval:
                 server = fetch_server(admin_cli)
+                dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
                 for log in logs:
                     log.refresh()
-                lines = render(server, logs, admin_cli, interval, width=stdscr.getmaxyx()[1])
+                lines = render(server, logs, admin_cli, interval, width=stdscr.getmaxyx()[1], dpf=dpf)
                 last = now
             h, w = stdscr.getmaxyx()
             stdscr.erase()
@@ -431,15 +591,26 @@ def main():
     p.add_argument('--interval', type=int, default=30, help='seconds between refreshes (default 30)')
     p.add_argument('--once', action='store_true', help='one plain-text refresh, then exit')
     p.add_argument('--no-tui', action='store_true', help='plain text instead of the full-screen view')
+    p.add_argument('--kubeconfig', default=None, help='for the DPF section (default: *.kubeconfig.yaml next to the admin CLI wrapper)')
+    p.add_argument('--dpf-namespace', default='dpf-operator-system')
+    p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
     a = p.parse_args()
     logs = [MatLog(f) for f in a.mat_log]
+    dpf_cfg = None
+    if not a.no_dpf:
+        kc = a.kubeconfig
+        if not kc:
+            site_dir = os.path.dirname(os.path.abspath(a.admin_cli))
+            found = sorted(f for f in os.listdir(site_dir) if f.endswith('.kubeconfig.yaml')) if os.path.isdir(site_dir) else []
+            kc = os.path.join(site_dir, found[0]) if found else None
+        dpf_cfg = (kc, a.dpf_namespace)
     if a.once or a.no_tui or not sys.stdout.isatty():
         try:
-            run_plain(a.admin_cli, logs, a.interval, a.once)
+            run_plain(a.admin_cli, logs, a.interval, a.once, dpf_cfg)
         except KeyboardInterrupt:
             pass
     else:
-        run_tui(a.admin_cli, logs, a.interval)
+        run_tui(a.admin_cli, logs, a.interval, dpf_cfg)
 
 
 if __name__ == '__main__':
