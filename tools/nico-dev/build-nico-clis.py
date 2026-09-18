@@ -190,6 +190,12 @@ def _docker_required(what):
         sys.exit(1)
 
 
+def _checkout_id(repo_path):
+    """Short stable id of a source checkout (its real path), for per-checkout caches."""
+    import hashlib
+    return hashlib.sha1(str(Path(repo_path).resolve()).encode()).hexdigest()[:8]
+
+
 def container_cargo_build(repo_path, crate, binary, dest_dir, label):
     """Build one workspace crate inside a linux/<host-arch> rust container and
     deliver the release binary to dest_dir, owned by the invoking user.
@@ -198,7 +204,8 @@ def container_cargo_build(repo_path, crate, binary, dest_dir, label):
     system packages the workspace's build scripts need (protoc for
     carbide-rpc, cmake/ssl — the set the repo's own build container installs).
     Built once per rust version, cached. Named docker volumes hold the target
-    dir and crate cache, so rebuilds are incremental across crates.
+    dir (one per source checkout — see below) and the crate cache (shared), so
+    rebuilds are incremental across crates.
     """
     rust_ver = _repo_rust_version(repo_path)
     image = f'nico-mat-build:{rust_ver}'   # historical name; shared by all crates
@@ -224,11 +231,20 @@ def container_cargo_build(repo_path, crate, binary, dest_dir, label):
     dest_dir = Path(dest_dir).expanduser()
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    # One target volume PER SOURCE CHECKOUT. Every checkout is mounted at the
+    # same /src, so cargo cannot tell two worktrees apart by path; it decides
+    # freshness by mtime, and a file checked out later in one worktree is
+    # "newer" than an edit made earlier in another. Sharing the volume across
+    # worktrees therefore reused a baseline crate for a feature build
+    # (20260918-#1) — a wrong binary, silently, whenever it happened to link.
+    # The registry cache (immutable crate sources) stays shared.
+    target_volume = f'nico-mat-target-{_checkout_id(repo_path)}'
     print(f'  First build: ~10-20 min (pulls {image} once)  |  incremental: ~1-2 min')
+    print(f'  cargo target volume: {target_volume} (one per source checkout)')
     run(['docker', 'run', '--rm', '--platform', f'linux/{DOCKER_ARCH}',
          '-v', f'{Path(repo_path).resolve()}:/src']
         + _worktree_git_mount(repo_path) +
-        ['-v', 'nico-mat-target:/target',
+        ['-v', f'{target_volume}:/target',
          '-v', 'nico-mat-cargo-registry:/usr/local/cargo/registry',
          '-v', f'{dest_dir.resolve()}:/out',
          '-w', '/src',
