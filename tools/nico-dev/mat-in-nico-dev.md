@@ -213,9 +213,10 @@ sharing one volume across checkouts reused stale crates (20260918-#1).
 Baseline and feature runs use the identical launch path, so any behavior
 difference is your code, not the harness. Incremental rebuilds are ~1–2 min
 (warm named volumes). Logs: `sudo tail -f /var/log/machine-a-tron-<dc>.log`.
-Watch progression: `run-admin-cli.sh site-explorer get-report endpoint`,
-`run-admin-cli.sh machine show`, or the admin GUI at
-`https://<u>.133.1.17/admin`.
+Watch progression: `run-monitor-mat.sh` (both sides on one screen, see
+`clis-mat-in-nico-dev.md` §5), or by hand with `run-admin-cli.sh
+site-explorer get-report endpoint`, `run-admin-cli.sh machine show`, or the
+admin GUI at `https://<u>.133.1.17/admin`.
 
 ## 10. Custom builds: your own binary, the site's certs
 

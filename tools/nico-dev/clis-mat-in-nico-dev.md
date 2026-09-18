@@ -119,6 +119,23 @@ sudo tail -f /var/log/machine-a-tron-dc1.log
 
 The admin UI shows the same machines in its browser view.
 
+**One screen for the whole run.** `monitor-mat.py` asks the admin CLI for the
+expected machines, the explorer's endpoints and the machines, reads the MAT
+log for MAT's own view of each mock, and redraws every 30 seconds. For each
+machine it shows the state NICo reports, the lifecycle milestone that state
+belongs to, and how many milestones remain before `Ready`. On the VM:
+
+```bash
+run-monitor-mat.sh            # full screen; q quits, r refreshes now
+run-monitor-mat.sh --once     # one plain-text snapshot, good for pasting
+```
+
+`run-monitor-mat.sh` has the site and log paths for `dc1/dev1` written in;
+edit its first lines for another site, or call `monitor-mat.py` directly with
+`--admin-cli <site>/run-admin-cli.sh` and one `--mat-log <file>` per log. It
+works before any MAT run too, showing the server side alone. MAT logs are
+root-owned, so the launcher uses `sudo` when it has to.
+
 ## 6. Which provisioning path your hosts take
 
 A nico-dev site created by the how-to has DPF enabled, so every host MAT
