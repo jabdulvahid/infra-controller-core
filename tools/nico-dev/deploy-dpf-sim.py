@@ -204,6 +204,26 @@ def registry_has(reg, image, tag):
         return False
 
 
+def sim_source_id(repo):
+    """Short id of the simulator source in this checkout: the last commit that
+    touched dev/k8s/dpf-sim-controller, plus '-dirty' when the tree has local
+    edits there. The image tag carries it, so an image the registry already has
+    can only be reused when it was built from the same source as the RBAC and
+    CRDs rendered from this checkout (20260918-#3: a tag built from a newer
+    tree was reused with an older checkout's Role → the simulator could not
+    list DPUDeployments and every host sat in DPUInitializing/WaitingForReady)."""
+    try:
+        sha = subprocess.run(['git', '-C', str(repo), 'log', '-1', '--format=%h', '--', SIM_DIR],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+        dirty = subprocess.run(['git', '-C', str(repo), 'status', '--porcelain', '--', SIM_DIR],
+                               capture_output=True, text=True, timeout=30).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        sha, dirty = '', ''
+    if not sha:
+        return 'nogit'
+    return sha + ('-dirty' if dirty else '')
+
+
 def build_image(repo, push_reg, image, tag, dry_run=False):
     sim_dir = repo / SIM_DIR
     if not (sim_dir / 'Dockerfile').is_file():
@@ -288,6 +308,8 @@ def main():
     registry = img['registry']                                   # as the VM pulls
     push_reg = f'localhost:{registry.rsplit(":", 1)[-1]}'        # as this host pushes
     tag = args.tag or (img.get('tag') if img.get('tag') not in ('', 'none', None) else None) or 'dev'
+    # <site tag>-sim<source id>: see sim_source_id()
+    tag = f'{tag}-sim{sim_source_id(repo)}'
     ns = dpf['namespace']
     image = dpf['sim']['image']
     dwell = args.phase_dwell or dpf['sim']['phase_dwell']

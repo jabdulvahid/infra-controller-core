@@ -93,15 +93,25 @@ with your main clone but has its own files:
 
 ```bash
 mkdir -p ~/nico-tests/vm1/shared
-cd ~/projects/infra-controller     # no clone yet? git clone https://github.com/NVIDIA/infra-controller.git
-git fetch origin main              # so the worktree starts from TODAY's main, not the last fetch
-git worktree add -b vm1-work ~/nico-tests/vm1/shared/infra-controller origin/main
+cd ~/projects/infra-controller     # no clone yet? git clone https://github.com/dsx-ai-factory/infra-controller.git
+git remote -v                      # which remote is NVIDIA's repository? below it is called UPSTREAM
+git fetch UPSTREAM main            # so the worktree starts from TODAY's NVIDIA main, not the last fetch
+git worktree add -b vm1-work ~/nico-tests/vm1/shared/infra-controller UPSTREAM/main
 ```
 
-The fetch matters: the NICo images you deploy are built from current main,
-and the Helm charts come from this worktree, so both should be from the same
-day. A worktree cut from a stale local copy of main pairs old charts with new
-images.
+Replace `UPSTREAM` with the name of the remote that points at
+`github.com/dsx-ai-factory/infra-controller`. In a plain clone that is
+`origin`. If you work from a personal fork, `origin` is your fork and its
+`main` is only as new as your last sync; use the remote that points at
+NVIDIA's repository, usually `upstream`.
+
+The fetch and the remote matter: the NICo images you deploy are built from
+current main, and the Helm charts, the DPF simulator's RBAC and the
+simulator's own source come from this worktree, so all of them should be
+from the same day. A worktree cut from a stale main pairs old charts and
+permissions with newer images; one such case left every host stuck in
+`DPUInitializing` because the simulator's role predated its code.
+`check-prereqs.sh` reports how far the checkout is behind upstream main.
 
 Next, add the nico-dev tools to that worktree. This is called grafting. The
 tools land in `tools/nico-dev` as untracked, git-ignored files, so they never
