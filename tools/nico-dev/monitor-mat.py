@@ -314,10 +314,14 @@ def render(server, logs, admin_cli, interval, width=120):
             L.append('  (no machine iteration lines yet)')
         else:
             L.append(f'  {"mat_host_id":<38} {"dpu":<4} {"MAT state":<22} {"API state (as MAT sees it)":<34} {"booted OS":<10} {"last timer":<30} at')
-            for (host, dpu), rec in log.machines.items():
+            with_state = [(k, r) for k, r in log.machines.items() if r['state'] != '?']
+            only_bmc = len(log.machines) - len(with_state)
+            for (host, dpu), rec in sorted(with_state, key=lambda kv: (kv[0][0], kv[0][1] or '')):
                 L.append(f'  {host:<38} {(dpu or "host"):<4} {short(rec["state"], 22):<22} '
                          f'{short(rec["api_state"], 34):<34} {short(rec["booted_os"], 10):<10} '
                          f'{short(rec["timer"], 30):<30} {rec["ts"]}')
+            if only_bmc:
+                L.append(f'  (+{only_bmc} ids seen only in BMC-mock lines, no iteration state — the DPU BMC mocks)')
         L.append('')
     if not logs:
         L.append('MAT logs: none given (server view only). Add --mat-log <file> for MAT\'s own view.')
