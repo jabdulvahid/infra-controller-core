@@ -220,7 +220,6 @@ def gen_mat_toml(cfg, site_folder):
 # NOTE: MAT runs on the VM, not Mac — br-{dc_name}-internet is a VM bridge.
 # Nothing to copy: the VM sees this site folder via the share; run run-mat.sh there.
 carbide_api_url = "https://nico-api.{dc_name}-{sitename}:443"
-tui_enabled = false
 # /var/log, NOT /tmp: MAT runs as root and fs.protected_regular=2 blocks
 # O_CREAT on another user's files in sticky dirs (even for root) — a fixed
 # name in /tmp dies with a bare EACCES before the logger exists.
@@ -236,8 +235,6 @@ type = "api"   # API mode — no physical DHCP relay needed
 hw_type = "wiwynn_gb200_nvl"
 host_count = 2
 dpu_per_host_count = 1
-vpc_count = 0
-subnets_per_vpc = 0
 # Canonical relay names (MAT #5229). The old admin_dhcp_relay_address was a
 # MISNOMER for the underlay relay (DPU OOB boot + switch NVOS); pointing it
 # at the admin gateway wedged DPU OOB DHCP once nico #5084 started
@@ -245,8 +242,10 @@ subnets_per_vpc = 0
 # segment's gateway — BMC and DPU-OOB share the management underlay.
 bmc_dhcp_relay_address = "{mat_gw}"       # rack-mat-hosts gateway (underlay-typed)
 underlay_dhcp_relay_address = "{mat_gw}"  # DPU OOB boot relay — MUST map to an underlay-typed segment
-host_reboot_delay = 10
-dpu_reboot_delay = 5
+# Timings come from the per-platform profile (hw_type) since #5306; override per
+# field under [machines.rack-mat-hosts.timing_overrides.host] / .dpu, and speed
+# the whole run up with acceleration_factor (e.g. 0.1). The old
+# host_reboot_delay / dpu_reboot_delay keys are parsed but ignored.
 '''
 
 
