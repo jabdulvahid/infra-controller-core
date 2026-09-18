@@ -179,7 +179,33 @@ your build never overwrite each other. The details, including a custom
 `mat-config.toml` with timing overrides, are in `mat-in-nico-dev.md`,
 section 10.
 
-## 10. When something does not look right
+## 10. nicocli, the REST CLI
+
+Everything above talks to NICo's core API. The REST API has its own CLI,
+`nicocli`, and the REST API image ships it, so you do not compile this one
+either. On the Mac:
+
+```bash
+get-nicocli.sh <site>
+```
+
+This copies the binary out of the REST API image into `<site>/nicocli/` and
+writes `<site>/run-nicocli.sh`. The binary is a Linux build, so use the
+wrapper on the VM. The first call mints an access token inside the cluster,
+which takes a few seconds, and caches it for 25 minutes.
+
+```bash
+ssh nico@192.168.64.126
+~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap    # once per fresh site
+~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
+```
+
+`--bootstrap` creates the organisation's provider and tenant objects. Until
+it has run once, every other call fails with "Org does not have a Tenant
+associated". If a command fails with an authentication error after the site
+was redeployed, put `--refresh-token` in front of it once.
+
+## 11. When something does not look right
 
 | What you see | What it usually means | Where to look |
 |---|---|---|

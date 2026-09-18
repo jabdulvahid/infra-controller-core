@@ -223,7 +223,11 @@ No-build alternative for the admin CLI, on the VM:
 `get-admin-cli.sh ~/mac/sites/dc1/dev1` extracts the binary shipped in the
 API container, version-matched by construction.
 
-`nicocli`, the REST-surface CLI, needs a token minted inside the cluster:
+`nicocli`, the REST-surface CLI, can also be taken from the REST API image
+instead of built: `get-nicocli.sh <site>` copies it out and writes
+`<site>/run-nicocli.sh`, which mints and caches the token for you; on a
+Linux host the binary runs locally. Run `run-nicocli.sh --bootstrap` once on
+a fresh site. By hand, it needs a token minted inside the cluster:
 
 ```bash
 TOKEN=$(bash <repo>/helm-prereqs/keycloak/get-token.sh)
