@@ -51,6 +51,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from collections import OrderedDict
 import warnings
@@ -552,12 +553,32 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
     err_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'monitor-mat.stderr')
     sys.stderr = open(err_path, 'a')
 
+    # Fetching (admin CLI + kubectl, several seconds on the VM) runs in a
+    # background thread so the screen keeps answering keys and resizes.
+    data = {'server': {'errors': ['loading…']}, 'dpf': None, 'at': 0.0, 'busy': False}
+    lock = threading.Lock()
+    wake = threading.Event()
+    stop = threading.Event()
+
+    def fetcher():
+        while not stop.is_set():
+            with lock:
+                data['busy'] = True
+            server = fetch_server(admin_cli)
+            dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
+            for log in logs:
+                log.refresh()
+            with lock:
+                data.update(server=server, dpf=dpf, at=time.time(), busy=False)
+            wake.wait(interval)
+            wake.clear()
+
     def main(stdscr):
         curses.curs_set(0)
         stdscr.nodelay(True)
         show = set(DEFAULT_SHOW)
         keys = {k: name for name, k, _ in SECTIONS}
-        data = {'server': {'errors': ['loading…']}, 'dpf': None}
+        threading.Thread(target=fetcher, daemon=True).start()
         attrs = {PLAIN: curses.A_NORMAL}
         if curses.has_colors():
             curses.start_color()
@@ -577,17 +598,11 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
             attrs[HDR] = curses.A_DIM
             for name in (OK, WIP, BAD, NUM):
                 attrs[name] = curses.A_NORMAL
-        last = 0
         while True:
-            now = time.time()
-            if now - last >= interval:
-                data['server'] = fetch_server(admin_cli)
-                data['dpf'] = fetch_dpf(*dpf_cfg) if dpf_cfg else None
-                for log in logs:
-                    log.refresh()
-                last = now
+            with lock:
+                server, dpf, at, busy = data['server'], data['dpf'], data['at'], data['busy']
             h, w = stdscr.getmaxyx()
-            lines = render(data['server'], logs, admin_cli, interval, width=w, dpf=data['dpf'], show=show)
+            lines = render(server, logs, admin_cli, interval, width=w, dpf=dpf, show=show)
             stdscr.erase()
             for y, line in enumerate(lines[:h - 2]):
                 x = 0
@@ -599,18 +614,20 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
                     except curses.error:
                         pass
                     x += len(text)
-            remaining = max(0, int(interval - (time.time() - last)))
+            remaining = max(0, int(interval - (time.time() - at))) if at else 0
+            status = 'refreshing…' if busy else f'next in {remaining}s'
             toggles = '  '.join(f'{k}:{name}{"" if name in show else "(off)"}' for name, k, _ in SECTIONS)
             try:
-                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  next in {remaining}s   toggle: {toggles}', w - 1, curses.A_REVERSE)
+                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  {status}   toggle: {toggles}', w - 1, curses.A_REVERSE)
             except curses.error:
                 pass
             stdscr.refresh()
             ch = stdscr.getch()
             if ch in (ord('q'), ord('Q'), 27):
+                stop.set(); wake.set()
                 return
             if ch in (ord('r'), ord('R')):
-                last = 0
+                wake.set()
             elif ch == curses.KEY_RESIZE:
                 curses.update_lines_cols()
                 stdscr.clear()
@@ -618,7 +635,7 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
                 name = keys[chr(ch).lower()]
                 show.symmetric_difference_update({name})
                 stdscr.clear()
-            curses.napms(300)
+            curses.napms(150)
     curses.wrapper(main)
 
 
