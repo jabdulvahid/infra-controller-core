@@ -520,25 +520,54 @@ remove it. Advanced settings live in the site yaml under `nico-system.dpf`.
 What the simulator reproduces, what it does not, and its failure catalog are
 in section 13 of `mat-in-nico-dev.md`.
 
-**nicocli, without compiling anything.** The REST API image ships the
-REST-surface CLI, built from the same commit as the API. One script on the
-Mac copies it out of the image and writes a wrapper that knows the API
-address, the organisation and how to get a token:
+**nicocli, without compiling anything.** The REST API has its own CLI,
+`nicocli`, and the REST API image ships it, built from the same commit as
+the API. Four steps get it working on the VM.
+
+*Step 1, on the Mac: extract the CLI.* This copies the binary out of the
+REST API image already in docker's store and writes a wrapper. It takes a
+few seconds:
 
 ```bash
-get-nicocli.sh <site>                       # Mac: binary → <site>/nicocli/, wrapper → <site>/run-nicocli.sh
-ssh nico@192.168.64.126
-~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap    # once per fresh site
-~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
+get-nicocli.sh <share>/sites/dc1/dev1
 ```
 
-The binary is a Linux build, so the wrapper runs it on the VM; on the Mac
-the same wrapper uses a `nicocli` from your PATH if you built one. The
-wrapper mints a token inside the cluster on first use and caches it for 25
-minutes; `--refresh-token` in front of a command forces a new one. On a
-fresh site `--bootstrap` must come first. It creates the organisation's
-provider and tenant objects; every other call returns 403 with "Org does not
-have a Tenant associated" until they exist.
+Three steps end with a check mark, then a "Done" block prints the two
+commands to run next, with the site path as the VM sees it. The results are
+`<site>/nicocli/nicocli`, a Linux build, and `<site>/run-nicocli.sh`, the
+wrapper. Both are on the share, so the VM sees them at once.
+
+*Step 2, on the VM: bootstrap the organisation, once per fresh site.*
+
+```bash
+ssh nico@192.168.64.126
+~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap
+```
+
+The first call pauses a few seconds while a token is minted inside the
+cluster. Then two commands run, `infrastructure-provider current` and
+`tenant current`, each printing a JSON object: they create the
+organisation's provider and tenant. Until this has run once, every other
+command answers "Org does not have a Tenant associated".
+
+*Step 3, on the VM: use it.*
+
+```bash
+~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
+~/mac/sites/dc1/dev1/run-nicocli.sh --help
+```
+
+Always go through the wrapper. It supplies the API address, the
+organisation `ncx` and the token; the bare binary knows none of them. The
+token is cached for 25 minutes and renewed on its own. If a command ever
+fails with an authentication error, put `--refresh-token` in front of it
+once.
+
+*Step 4, when to repeat what.* Step 1 again after you deploy a new nico tag,
+so the CLI matches the API. Step 2 never again for this site. Nothing to do
+between MAT runs; the REST side is untouched by the fleet reset. On the Mac
+the same wrapper works too, if you built a Mac `nicocli` with
+`build-nico-clis.py`; otherwise it tells you to use the VM.
 
 ## 10. The dev loop
 
