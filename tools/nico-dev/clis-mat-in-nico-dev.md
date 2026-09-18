@@ -120,10 +120,16 @@ sudo tail -f /var/log/machine-a-tron-dc1.log
 The admin UI shows the same machines in its browser view.
 
 **One screen for the whole run.** `monitor-mat.py` asks the admin CLI for the
-expected machines, the explorer's endpoints and the machines, reads the MAT
-log for MAT's own view of each mock, and redraws every 30 seconds. For each
-machine it shows the state NICo reports, the lifecycle milestone that state
-belongs to, and how many milestones remain before `Ready`. On the VM:
+expected machines, the explorer's endpoints, the machines and the DPUs,
+asks Kubernetes for the DPF resources, reads the MAT log for MAT's own view
+of each mock, and redraws every 30 seconds. For each machine it shows the
+state NICo reports, the lifecycle milestone that state belongs to, and how
+many milestones remain before `Ready`. For each DPU it shows NICo's view
+(`dpu status`, `dpf show`) and DPF's view: the DPU resource's phase, where
+that phase sits on the simulator's path, how many phases remain, how long it
+has been there, and whether the host has a reboot pending that NICo must
+perform. The simulator pod's state is on the same line, so a stuck DPF path
+is visible at a glance. On the VM:
 
 ```bash
 run-monitor-mat.sh            # full screen; q quits, r refreshes now
@@ -132,9 +138,10 @@ run-monitor-mat.sh --once     # one plain-text snapshot, good for pasting
 
 `run-monitor-mat.sh` has the site and log paths for `dc1/dev1` written in;
 edit its first lines for another site, or call `monitor-mat.py` directly with
-`--admin-cli <site>/run-admin-cli.sh` and one `--mat-log <file>` per log. It
-works before any MAT run too, showing the server side alone. MAT logs are
-root-owned, so the launcher uses `sudo` when it has to.
+`--admin-cli <site>/run-admin-cli.sh` and one `--mat-log <file>` per log. The
+DPF section finds the kubeconfig next to the wrapper; `--no-dpf` skips it on
+a site without DPF. It works before any MAT run too, showing the server side
+alone. MAT logs are root-owned, so the launcher uses `sudo` when it has to.
 
 ## 6. Which provisioning path your hosts take
 
