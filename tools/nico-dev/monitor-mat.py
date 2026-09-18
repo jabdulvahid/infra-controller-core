@@ -53,7 +53,8 @@ import subprocess
 import sys
 import time
 from collections import OrderedDict
-from datetime import datetime
+import warnings
+from datetime import datetime, timezone
 
 # ── the lifecycle path (top-level milestones, in order) ──────────────────────
 MILESTONES = ['Created', 'DpuDiscovering', 'DPUInitializing', 'HostInitializing',
@@ -122,8 +123,8 @@ def age(ts):
     if not ts:
         return ''
     try:
-        t = datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S')
-        d = int((datetime.utcnow() - t).total_seconds())
+        t = datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
+        d = int((datetime.now(timezone.utc) - t).total_seconds())
         return f'{d // 60}m{d % 60:02d}s' if d >= 60 else f'{d}s'
     except ValueError:
         return ''
@@ -360,6 +361,9 @@ class MatLog:
 # curses view can colour them (k9s-style: sections blue, title teal, column
 # headers dim, states by meaning) while plain text just joins the segments.
 TITLE, SECTION, HDR, OK, WIP, BAD, NUM, PLAIN = 'title', 'section', 'hdr', 'ok', 'wip', 'bad', 'num', ''
+# sections, their toggle key, and whether they show by default
+SECTIONS = [('endpoints', 'e', False), ('machines', 'm', True), ('dpus', 'u', False), ('dpf', 'd', True), ('mat', 'l', True)]
+DEFAULT_SHOW = {name for name, _, on in SECTIONS if on}
 
 
 def short(s, n):
@@ -376,7 +380,8 @@ def state_style(state):
     return WIP
 
 
-def render(server, logs, admin_cli, interval, width=120, dpf=None):
+def render(server, logs, admin_cli, interval, width=120, dpf=None, show=None):
+    show = show if show is not None else DEFAULT_SHOW
     now = datetime.now().strftime('%H:%M:%S')
     L = []
     machines = server.get('machines', [])
@@ -393,58 +398,73 @@ def render(server, logs, admin_cli, interval, width=120, dpf=None):
         L.append([(f'  ! {e}', BAD)])
     L.append([])
 
-    L.append([('ENDPOINTS (site explorer)', SECTION)])
-    L.append([(f'  {"address":<14} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)])
-    eps = server.get('endpoints', [])
-    if not eps:
-        L.append([('  (none yet)', HDR)])
-    for r in eps:
-        pre = col(r, 'pre-ingestion state', 'preingestionstate')
-        err = col(r, 'last exploration error', 'lastexplorationerror')
-        L.append([(f'  {short(col(r, "address"), 14):<14} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
-                  (f'{short(pre, 14):<14}', state_style(pre)),
-                  (f' {short(col(r, "machineid", "machine id", "machine"), 44):<44} ', PLAIN),
-                  (short(err, max(10, width - 96)), BAD if err else PLAIN)])
-    L.append([])
+    if 'endpoints' not in show:
+        L.append([('ENDPOINTS', SECTION), (f'  {len(server.get("endpoints", []))} (hidden — e to show)', HDR)])
+        L.append([])
+    else:
+      L.append([('ENDPOINTS (site explorer)', SECTION)])
+      L.append([(f'  {"address":<14} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)])
+      eps = server.get('endpoints', [])
+      if not eps:
+          L.append([('  (none yet)', HDR)])
+      for r in eps:
+          pre = col(r, 'pre-ingestion state', 'preingestionstate')
+          err = col(r, 'last exploration error', 'lastexplorationerror')
+          L.append([(f'  {short(col(r, "address"), 14):<14} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
+                    (f'{short(pre, 14):<14}', state_style(pre)),
+                    (f' {short(col(r, "machineid", "machine id", "machine"), 44):<44} ', PLAIN),
+                    (short(err, max(10, width - 96)), BAD if err else PLAIN)])
+      L.append([])
 
-    L.append([('MACHINES (NICo)', SECTION), (f'   end state: {END_STATE}   milestones: {" > ".join(MILESTONES)}', PLAIN)])
-    L.append([(f'  {"id":<44} {"type":<6} {"milestone":<17} {"to-go":<6} state (full, as NICo reports it)', HDR)])
-    if not machines:
-        L.append([('  (none yet)', HDR)])
-    for r in machines:
-        state = col(r, 'state')
-        m, _ = milestone_of(state)
-        sty = state_style(state)
-        mark = ' ✓' if sty == OK else (' ✗' if sty == BAD else '')
-        L.append([(f'  {short(col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} ', PLAIN),
-                  (f'{to_go(state) + mark:<6}', sty), (' ' + state, sty)])
-    L.append([])
+    if 'machines' not in show:
+        L.append([('MACHINES', SECTION), (f'  {len(machines)} (hidden — m to show)', HDR)])
+        L.append([])
+    else:
+      L.append([('MACHINES (NICo)', SECTION), (f'   end state: {END_STATE}   milestones: {" > ".join(MILESTONES)}', PLAIN)])
+      L.append([(f'  {"id":<44} {"type":<6} {"milestone":<17} {"to-go":<6} state (full, as NICo reports it)', HDR)])
+      if not machines:
+          L.append([('  (none yet)', HDR)])
+      for r in machines:
+          state = col(r, 'state')
+          m, _ = milestone_of(state)
+          sty = state_style(state)
+          mark = ' ✓' if sty == OK else (' ✗' if sty == BAD else '')
+          L.append([(f'  {short(col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} ', PLAIN),
+                    (f'{to_go(state) + mark:<6}', sty), (' ' + state, sty)])
+      L.append([])
 
     # DPUs as NICo sees them
-    L.append([('DPUS (NICo: dpu status, dpf show)', SECTION)])
-    dpus = server.get('dpus', [])
-    dpf_rows = server.get('dpf', {})
-    if not dpus:
-        L.append([('  (none yet)', HDR)])
+    if 'dpus' not in show:
+        L.append([('DPUS (NICo)', SECTION), (f'  {len(server.get("dpus", []))} (hidden — u to show)', HDR)])
+        L.append([])
     else:
-        L.append([(f'  {"dpu id":<44} {"type":<12} {"healthy":<8} {"version status":<16} {"dpf":<18} state', HDR)])
-        for r in dpus:
-            did = col(r, 'dpu id', 'dpuid', 'id')
-            st = col(r, 'state')
-            healthy = col(r, 'healthy')
-            drow = dpf_rows.get(did) or {}
-            dpf_txt = ''
-            if drow:
-                dpf_txt = ('enabled' if col(drow, 'enabled').lower() in ('true', 'yes') else 'disabled') + \
-                          (' +ingested' if col(drow, 'used for ingestion', 'usedforingestion').lower() in ('true', 'yes') else '')
-            L.append([(f'  {short(did, 44):<44} {short(col(r, "dpu type", "dputype", "type"), 12):<12} ', PLAIN),
-                      (f'{short(healthy, 8):<8}', OK if healthy.lower() in ('true', 'yes', 'healthy') else (WIP if healthy else PLAIN)),
-                      (f' {short(col(r, "version status", "versionstatus"), 16):<16} {short(dpf_txt, 18):<18} ', PLAIN),
-                      (st, state_style(st))])
-    L.append([])
+      L.append([('DPUS (NICo: dpu status, dpf show)', SECTION)])
+      dpus = server.get('dpus', [])
+      dpf_rows = server.get('dpf', {})
+      if not dpus:
+          L.append([('  (none yet)', HDR)])
+      else:
+          L.append([(f'  {"dpu id":<44} {"type":<12} {"healthy":<8} {"version status":<16} {"dpf":<18} state', HDR)])
+          for r in dpus:
+              did = col(r, 'dpu id', 'dpuid', 'id')
+              st = col(r, 'state')
+              healthy = col(r, 'healthy')
+              drow = dpf_rows.get(did) or {}
+              dpf_txt = ''
+              if drow:
+                  dpf_txt = ('enabled' if col(drow, 'enabled').lower() in ('true', 'yes') else 'disabled') + \
+                            (' +ingested' if col(drow, 'used for ingestion', 'usedforingestion').lower() in ('true', 'yes') else '')
+              L.append([(f'  {short(did, 44):<44} {short(col(r, "dpu type", "dputype", "type"), 12):<12} ', PLAIN),
+                        (f'{short(healthy, 8):<8}', OK if healthy.lower() in ('true', 'yes', 'healthy') else (WIP if healthy else PLAIN)),
+                        (f' {short(col(r, "version status", "versionstatus"), 16):<16} {short(dpf_txt, 18):<18} ', PLAIN),
+                        (st, state_style(st))])
+      L.append([])
 
     # DPUs as DPF sees them
-    if dpf is not None:
+    if dpf is not None and 'dpf' not in show:
+        L.append([('DPF', SECTION), (f'  {len(dpf["dpus"])} DPUs, {sum(1 for d in dpf["dpus"] if d["phase"] == "Ready")} Ready (hidden — d to show)', HDR)])
+        L.append([])
+    elif dpf is not None:
         n = len(dpf['dpus'])
         ready = sum(1 for d in dpf['dpus'] if d['phase'] == 'Ready')
         err_n = sum(1 for d in dpf['dpus'] if d['phase'] == 'Error')
@@ -477,7 +497,10 @@ def render(server, logs, admin_cli, interval, width=120, dpf=None):
                     L.append([(f'  {"":<50} ({DPF_GATED[d["phase"]]})', HDR)])
         L.append([])
 
-    for log in logs:
+    if logs and 'mat' not in show:
+        L.append([('MAT', SECTION), (f'  {len(logs)} log(s) (hidden — l to show)', HDR)])
+        L.append([])
+    for log in (logs if 'mat' in show else []):
         head = [(f'MAT ({os.path.basename(log.path)})', SECTION)]
         if log.lines:
             head.append((f'   lines: {log.lines}   span {log.first_ts[11:] if log.first_ts else "?"}–{log.last_ts[11:] if log.last_ts else "?"}', PLAIN))
@@ -515,7 +538,7 @@ def run_plain(admin_cli, logs, interval, once, dpf_cfg=None):
         dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
         for log in logs:
             log.refresh()
-        print(plain(render(server, logs, admin_cli, interval, dpf=dpf)))
+        print(plain(render(server, logs, admin_cli, interval, dpf=dpf, show={n for n, _, _ in SECTIONS})))   # plain text: everything
         if once:
             return
         print('-' * 100, flush=True)
@@ -523,9 +546,18 @@ def run_plain(admin_cli, logs, interval, once, dpf_cfg=None):
 
 
 def run_tui(admin_cli, logs, interval, dpf_cfg=None):
+    # nothing may write to the terminal behind curses' back: Python warnings
+    # and any stray stderr go to a file instead
+    warnings.simplefilter('ignore')
+    err_path = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'monitor-mat.stderr')
+    sys.stderr = open(err_path, 'a')
+
     def main(stdscr):
         curses.curs_set(0)
         stdscr.nodelay(True)
+        show = set(DEFAULT_SHOW)
+        keys = {k: name for name, k, _ in SECTIONS}
+        data = {'server': {'errors': ['loading…']}, 'dpf': None}
         attrs = {PLAIN: curses.A_NORMAL}
         if curses.has_colors():
             curses.start_color()
@@ -546,17 +578,16 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
             for name in (OK, WIP, BAD, NUM):
                 attrs[name] = curses.A_NORMAL
         last = 0
-        lines = [[('starting…', HDR)]]
         while True:
             now = time.time()
             if now - last >= interval:
-                server = fetch_server(admin_cli)
-                dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
+                data['server'] = fetch_server(admin_cli)
+                data['dpf'] = fetch_dpf(*dpf_cfg) if dpf_cfg else None
                 for log in logs:
                     log.refresh()
-                lines = render(server, logs, admin_cli, interval, width=stdscr.getmaxyx()[1], dpf=dpf)
                 last = now
             h, w = stdscr.getmaxyx()
+            lines = render(data['server'], logs, admin_cli, interval, width=w, dpf=data['dpf'], show=show)
             stdscr.erase()
             for y, line in enumerate(lines[:h - 2]):
                 x = 0
@@ -569,8 +600,9 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
                         pass
                     x += len(text)
             remaining = max(0, int(interval - (time.time() - last)))
+            toggles = '  '.join(f'{k}:{name}{"" if name in show else "(off)"}' for name, k, _ in SECTIONS)
             try:
-                stdscr.addnstr(h - 1, 0, f'q quit   r refresh now   next refresh in {remaining}s', w - 1, curses.A_REVERSE)
+                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  next in {remaining}s   toggle: {toggles}', w - 1, curses.A_REVERSE)
             except curses.error:
                 pass
             stdscr.refresh()
@@ -579,7 +611,14 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
                 return
             if ch in (ord('r'), ord('R')):
                 last = 0
-            curses.napms(500)
+            elif ch == curses.KEY_RESIZE:
+                curses.update_lines_cols()
+                stdscr.clear()
+            elif 0 <= ch < 256 and chr(ch).lower() in keys:
+                name = keys[chr(ch).lower()]
+                show.symmetric_difference_update({name})
+                stdscr.clear()
+            curses.napms(300)
     curses.wrapper(main)
 
 
