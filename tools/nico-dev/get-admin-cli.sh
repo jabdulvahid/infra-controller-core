@@ -5,9 +5,10 @@
 #
 # The api container ships the admin-cli binary (Linux, VM arch — hence VM,
 # not Mac). This extracts it to /usr/local/bin, then runs
-# configure-clis.py --admin-cli-only HERE so the certs and the
-# run-admin-cli.sh wrapper carry VM-side paths (the wrapper bakes the
-# absolute site path at generation time).
+# configure-clis.py --admin-cli-only to issue the admin certs and write the
+# run-admin-cli.sh wrapper. The wrapper locates the site folder relative to
+# itself, so it works from either side of the share no matter where it was
+# generated; running configure-clis.py on the Mac later does not break it.
 #
 # Afterwards:  <site>/run-admin-cli.sh version
 
