@@ -384,10 +384,11 @@ def gen_run_admin_cli_sh(cfg, site_folder):
     dc_name  = cfg['fabric'].get('dc_name', 'dev')
     sitename = hv.get('sitename', dc_name)
     api_host = f'nico-api.{dc_name}-{sitename}'
-    abs_site = Path(site_folder).expanduser().resolve()
     return f'''\
 #!/usr/bin/env bash
 # Run nico-admin-cli for this site. Requires nico-admin-cli in $PATH.
+# Works from the Mac and from the VM: the site folder is found relative to
+# this script, so it does not matter on which side it was generated.
 #
 # Note: the 'version' subcommand shows 'IGNORING SERVER CERT' — this is expected.
 # All other subcommands perform real TLS verification with the site CA.
@@ -397,7 +398,8 @@ def gen_run_admin_cli_sh(cfg, site_folder):
 #   sudo route -n add -net <service_vips_prefix> <vm-ip>
 
 set -euo pipefail
-SITE="{abs_site}"
+# Self-locating: resolves to the site folder on whichever side runs it.
+SITE="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
 
 API_URL="https://{api_host}:443" \\
 ROOT_CA_PATH="$SITE/certs/admin/ca.pem" \\
