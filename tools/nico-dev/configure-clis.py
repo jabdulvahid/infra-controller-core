@@ -384,6 +384,7 @@ def gen_run_admin_cli_sh(cfg, site_folder):
     dc_name  = cfg['fabric'].get('dc_name', 'dev')
     sitename = hv.get('sitename', dc_name)
     api_host = f'nico-api.{dc_name}-{sitename}'
+    api_vip  = hv.get('net-plan', {}).get('api_vip', '')
     return f'''\
 #!/usr/bin/env bash
 # Run nico-admin-cli for this site. Requires nico-admin-cli in $PATH.
@@ -400,6 +401,21 @@ def gen_run_admin_cli_sh(cfg, site_folder):
 set -euo pipefail
 # Self-locating: resolves to the site folder on whichever side runs it.
 SITE="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+
+# nico-admin-cli dials the API by name. Nothing serves that name but
+# /etc/hosts, and an unresolvable name makes the CLI hang instead of failing,
+# so make sure the entry exists on whichever side runs this (as run-mat.sh
+# does on the VM); if it cannot be added, say exactly what to do and stop.
+API_HOST="{api_host}"
+API_VIP="{api_vip}"
+if ! grep -qE "[[:space:]]${{API_HOST}}([[:space:]]|$)" /etc/hosts; then
+    echo "run-admin-cli: adding ${{API_VIP}} ${{API_HOST}} to /etc/hosts (sudo)..." >&2
+    if ! echo "${{API_VIP}} ${{API_HOST}}  # nico-dev" | sudo tee -a /etc/hosts >/dev/null; then
+        echo "Error: ${{API_HOST}} is not in /etc/hosts and could not be added; the CLI would hang." >&2
+        echo "Add it and retry:  echo '${{API_VIP}} ${{API_HOST}}' | sudo tee -a /etc/hosts" >&2
+        exit 1
+    fi
+fi
 
 API_URL="https://{api_host}:443" \\
 ROOT_CA_PATH="$SITE/certs/admin/ca.pem" \\

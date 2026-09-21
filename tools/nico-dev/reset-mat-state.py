@@ -87,7 +87,9 @@ def main():
 
     # ── 1. machines ───────────────────────────────────────────────────────────
     print('\nStep 1: force-delete machines')
-    out = admin_cli('machine', 'show').stdout or ''
+    # check=True: if the wrapper cannot reach the API, stop here with its message
+    # instead of "deleting" nothing and reporting a clean reset.
+    out = admin_cli('machine', 'show', check=True).stdout or ''
     ids = sorted({w for line in out.splitlines() for w in line.split()
                   if w.startswith('fm100') and len(w) > 50})
     for mid in ids:
