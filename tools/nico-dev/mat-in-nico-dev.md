@@ -355,7 +355,9 @@ Redfish and clears the reboot annotation. In nico-dev the operator's half is
 played by upstream's `dev/k8s/dpf-sim-controller`, deployed by
 `deploy-dpf-sim.py` as the `dpf` bring-up step. Nothing is flashed and no
 DPU OS boots; only the status transitions NICo observes are reproduced, on a
-per-phase timer (`nico-system.dpf.sim.phase_dwell` in the site yaml).
+per-phase timer (`nico-system.dpf.sim.phase_dwell` in the site yaml), with OS
+Installing optionally held longer (`nico-system.dpf.sim.os_install_dwell`, or
+`deploy-dpf-sim.py --os-install-dwell`) to model a slow BFB install.
 
 What decides the path is per host: the site flag (`[dpf] enabled` in the API
 config, from `dpf:` in bringup.yaml) AND the host's own DPF flag. MAT

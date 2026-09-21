@@ -525,8 +525,11 @@ The older iPXE provisioning path is still available in two ways:
 
 To redeploy the simulator later, run `deploy-dpf-sim.py <site>`. Useful
 options are `--phase-dwell 30s` for a slower walk through the phases,
-`--rebuild` after you changed the simulator's code, and `--uninstall` to
-remove it. Advanced settings live in the site yaml under `nico-system.dpf`.
+`--os-install-dwell 5m` to hold each DPU in OS Installing that long while the
+other phases keep their pace, `--rebuild` after you changed the simulator's
+code, `--repo <checkout>` to build it from another checkout such as a feature
+worktree, and `--uninstall` to remove it. Advanced settings live in the site
+yaml under `nico-system.dpf`.
 What the simulator reproduces, what it does not, and its failure catalog are
 in section 13 of `mat-in-nico-dev.md`.
 
@@ -740,7 +743,7 @@ planned. Neither step touches your site folder or your worktree.
 | `deploy-dev-nico.py <site> --tag T` | Mac | full helm deploy, resumable |
 | `redeploy-dev-nico.py <site> --tag T` | Mac | roll the nico release to a tag |
 | `deploy-flow.py <site> --config flow.yaml [--status\|--uninstall]` | Mac | Flow add-on, from its own standalone config |
-| `deploy-dpf-sim.py <site> [--phase-dwell T] [--uninstall]` | Mac | DPF simulator (default site; the `dpf` bring-up step) |
+| `deploy-dpf-sim.py <site> [--phase-dwell T] [--os-install-dwell T] [--repo DIR] [--uninstall]` | Mac | DPF simulator (default site; the `dpf` bring-up step) |
 | `build-nico-clis.py <site> [--mat-only]` | Mac | MAT in a container; admin-cli and nicocli with host toolchains |
 | `configure-clis.py <site>` | Mac | certs, MAT config, wrappers, /etc/hosts |
 | `get-admin-cli.sh <site>` | VM | admin CLI from the API container, no build |
