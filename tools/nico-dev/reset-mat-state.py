@@ -100,8 +100,16 @@ def main():
 
     # ── 2. expected machines ──────────────────────────────────────────────────
     print('Step 2: erase expected machines')
-    r = admin_cli('expected-machine', 'erase')
-    print(f'  {"✓" if r.returncode == 0 else (r.stderr or r.stdout).strip()[:80]}')
+    # `erase` needs --confirm; without it the CLI prints a reminder and exits 0,
+    # which this step used to report as a checkmark while erasing nothing
+    # (20260921-#2). Prove the outcome by listing afterwards.
+    admin_cli('expected-machine', 'erase', '--confirm', check=True)
+    left = admin_cli('expected-machine', 'show', check=True).stdout or ''
+    left_rows = [l for l in left.splitlines() if l.startswith('| ') and not l.startswith('| Serial')]
+    if left_rows:
+        print(f'  ! {len(left_rows)} expected machine(s) still present after erase', file=sys.stderr)
+        sys.exit(1)
+    print('  ✓')
 
     # ── 3. explored endpoints ─────────────────────────────────────────────────
     print('Step 3: delete explored endpoints')
