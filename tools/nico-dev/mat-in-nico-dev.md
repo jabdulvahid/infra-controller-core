@@ -185,6 +185,7 @@ with `configure-clis.py` — it is fully derived from the site yaml.
 | mocks reachable from VM, `connection refused` from nico | MAT prefix not advertised into BGP (leaf-mat) | `generate-dev-fabric.py` |
 | ALL endpoints `connection refused` (SITEEXPLORER-101), MAT healthy, single `0.0.0.0:443` listener, `ip addr` shows no BMC IPs | new-architecture MAT (no per-machine aliases) + missing kernel local route for the BMC prefix — typically after a VM reboot | `run-mat.sh` ensures the local route (20260825-#2) |
 | `Vault cert issue failed:` (empty) in configure-clis | static `root` token (dev-mode fossil) + `curl -f` eating the 403 body | `configure-clis.py` |
+| `run-admin-cli.sh` hangs, or `reset-mat-state.py` sits at "Step 1: force-delete machines" | `nico-api.<dc>-<site>` not in this side's `/etc/hosts` (entry is written where `configure-clis.py` ran; `get-admin-cli.sh` on the VM leaves the Mac without it); the lookup goes to DNS and stalls | wrapper template in `configure-clis.py` adds the entry or fails fast; `reset-mat-state.py` aborts on the first failed call (20260921-#1) |
 | machines stall at discovery, PermissionDenied "interface and source IP" | `allow_insecure_discovery` placed after a TOML `[section]` → scoped into that section, not root-level | values generator (nico-sim lesson; verify in the live configmap) |
 
 ## 9. The feature-development loop (e.g. epic #3796)
@@ -417,6 +418,11 @@ The wrapper is small and worth knowing. It exports `API_URL`
 the bare binary dials the API by its in-cluster name and fails outside the
 cluster. The `version` subcommand prints `IGNORING SERVER CERT`; that is
 expected, every other subcommand verifies the server against the site CA.
+Before dialing, the wrapper checks that `nico-api.<dc>-<site>` is in
+`/etc/hosts` on the side it runs on and adds it with `sudo` if not, the same
+way `run-mat.sh` does on the VM; nothing but `/etc/hosts` serves that name,
+and an unresolvable name makes the CLI hang rather than fail. If it cannot add
+the entry it prints the one-liner to run and exits.
 
 Two things to know about the wrapper file itself:
 

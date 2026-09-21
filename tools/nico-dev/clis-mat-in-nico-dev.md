@@ -41,6 +41,11 @@ The last command prints the CLI version and the API version. If it does, the
 CLI reaches the API. Always call the wrapper `run-admin-cli.sh`; the bare
 binary dials the API by its in-cluster name and fails outside the cluster.
 
+The wrapper dials the API as `nico-api.<dc>-<site>`, a name that exists only
+in `/etc/hosts`. The first call on each side of the share may ask for your
+password once: the wrapper adds that name to `/etc/hosts` if it is missing.
+The same wrapper works from the Mac and from the VM.
+
 ## 2. Build MAT, on the Mac
 
 MAT is built inside a Linux container on the Mac, because it runs on the VM
@@ -238,6 +243,8 @@ was redeployed, put `--refresh-token` in front of it once.
 | hosts sit in `dpuinit` and never move | the DPF simulator is not running | `kubectl -n dpf-operator-system get pods` on the VM; `mat-in-nico-dev.md` section 13 |
 | `machine show` says the API is unreachable | the wrapper was generated on the other side of the share, or the API VIP route is gone | rerun section 1 on the VM; `how-to-mac.md` section 7 for the route |
 | a DPU parks in `Rebooting` | the host's mock did not finish its power cycle | the MAT log; `run-admin-cli.sh machine show <host>` |
+| `run-admin-cli.sh` prints "not in `/etc/hosts` and could not be added" and exits | the wrapper could not run `sudo` on this side | run the one-liner it printed, then retry |
+| `run-admin-cli.sh` hangs without output | a wrapper generated before 2026-09-21, which did not check the hosts entry | regenerate it: section 1 on the VM, or `configure-clis.py <site> --admin-cli-only` |
 
 Everything else, symptom by symptom, is in the failure catalog of
 `mat-in-nico-dev.md`, section 8.
