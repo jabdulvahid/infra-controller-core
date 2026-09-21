@@ -23,7 +23,9 @@ NGC; it is always built here from the checkout named in the site yaml
 
   deploy-dpf-sim.py <site>                     # build if missing, deploy/refresh the simulator
   deploy-dpf-sim.py <site> --phase-dwell 10s   # slower phase walk (default from the site yaml, 3s)
+  deploy-dpf-sim.py <site> --os-install-dwell 5m  # hold each DPU in OS Installing that long (default: phase dwell)
   deploy-dpf-sim.py <site> --rebuild           # rebuild the image even if the registry has the tag
+  deploy-dpf-sim.py <site> --repo ~/w/nico-x --rebuild   # build the simulator from another checkout (feature branch)
   deploy-dpf-sim.py <site> --crds-only         # namespace + CRDs only (what deploy-dev-nico does)
   deploy-dpf-sim.py <site> --uninstall         # remove the simulator (CRDs stay)
   deploy-dpf-sim.py <site> --dry-run
@@ -34,6 +36,7 @@ Site yaml (advanced users), block nico-system.dpf:
   sim:
     image: dpf-sim-controller  name in the local registry; tag = images.tag
     phase_dwell: 3s            time per DPU phase
+    os_install_dwell: 0s       time in OS Installing; 0s = same as phase_dwell (simulator --os-install-dwell)
     resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 500m, memory: 512Mi}}
 
 Never install the real DPF operator on a site running this simulator: both
@@ -74,6 +77,7 @@ DEFAULTS = {
     'sim': {
         'image': 'dpf-sim-controller',
         'phase_dwell': '3s',
+        'os_install_dwell': '0s',
         'resources': {
             'requests': {'cpu': '100m', 'memory': '128Mi'},
             'limits':   {'cpu': '500m', 'memory': '512Mi'},
@@ -97,6 +101,7 @@ def dpf_cfg(cfg):
     sim = block.get('sim') or {}
     out['sim']['image'] = sim.get('image') or out['sim']['image']
     out['sim']['phase_dwell'] = str(sim.get('phase_dwell') or out['sim']['phase_dwell'])
+    out['sim']['os_install_dwell'] = str(sim.get('os_install_dwell') or out['sim']['os_install_dwell'])
     res = sim.get('resources') or {}
     for k in ('requests', 'limits'):
         if res.get(k):
@@ -241,17 +246,22 @@ def build_image(repo, push_reg, image, tag, dry_run=False):
 
 
 # ── manifests ────────────────────────────────────────────────────────────────
-def render_manifests(repo, namespace, image_ref, phase_dwell, resources):
+def render_manifests(repo, namespace, image_ref, phase_dwell, os_install_dwell, resources):
     """The upstream config/ rendered the way `make deploy` does (namespace,
-    image, phase dwell), plus nico-dev's resource requests."""
+    image, dwells), plus nico-dev's resource requests. The OS-install dwell is
+    passed only when set, so a simulator built before the flag existed still
+    starts (it would reject an unknown flag)."""
     sim_dir = repo / SIM_DIR
     rbac = (sim_dir / 'config' / 'rbac' / 'role.yaml').read_text().replace('dpf-operator-system', namespace)
     mgr = yaml.safe_load((sim_dir / 'config' / 'manager' / 'manager.yaml').read_text())
     mgr['metadata']['namespace'] = namespace
     c = mgr['spec']['template']['spec']['containers'][0]
     c['image'] = image_ref
-    c['args'] = [a for a in c.get('args', []) if not a.startswith(('--dpf-namespace=', '--phase-dwell='))]
+    c['args'] = [a for a in c.get('args', [])
+                 if not a.startswith(('--dpf-namespace=', '--phase-dwell=', '--os-install-dwell='))]
     c['args'] += [f'--dpf-namespace={namespace}', f'--phase-dwell={phase_dwell}']
+    if os_install_dwell and os_install_dwell not in ('0', '0s'):
+        c['args'].append(f'--os-install-dwell={os_install_dwell}')
     c['resources'] = resources
     # The image is delivered into containerd through the share (image_delivery.py);
     # with IfNotPresent kubelet never contacts the registry tunnel for it. Upstream's
@@ -280,7 +290,12 @@ def main():
     p.add_argument('site', help='site folder or site yaml')
     p.add_argument('--tag', default=None, help='image tag in the local registry (default: images.tag of the site)')
     p.add_argument('--phase-dwell', default=None, help='time per DPU phase, e.g. 3s, 30s (default: site yaml)')
+    p.add_argument('--os-install-dwell', default=None,
+                   help='time a DPU stays in OS Installing, e.g. 2m; 0s = same as the phase dwell (default: site yaml)')
     p.add_argument('--rebuild', action='store_true', help='rebuild the image even if the registry has the tag')
+    p.add_argument('--repo', default=None, metavar='DIR',
+                   help='build the simulator (and take the CRDs) from this nico checkout instead of the '
+                        'site yaml one, e.g. a feature-branch worktree')
     p.add_argument('--crds-only', action='store_true', help='namespace + CRDs only, no simulator')
     p.add_argument('--uninstall', action='store_true', help='remove the simulator Deployment and RBAC (CRDs stay)')
     p.add_argument('--force', action='store_true', help='deploy even if the site yaml has dpf disabled')
@@ -292,7 +307,7 @@ def main():
     dpf = dpf_cfg(cfg)
     dc = cfg['fabric']['dc_name']
     sitename = (cfg.get('nico-system') or {}).get('helm-values', {}).get('sitename', 'dev')
-    repo = resolve_repo(cfg)
+    repo = Path(args.repo).expanduser().resolve() if args.repo else resolve_repo(cfg)
     if repo is None:
         sys.exit('Error: nico repo not reachable from here (nico_mac_folder / nico_vm_folder)')
     kubeconfig = Path(site_folder) / cfg.get('kubeconfig', f'{dc}-{sitename}.kubeconfig.yaml')
@@ -313,6 +328,7 @@ def main():
     ns = dpf['namespace']
     image = dpf['sim']['image']
     dwell = args.phase_dwell or dpf['sim']['phase_dwell']
+    install_dwell = args.os_install_dwell or dpf['sim']['os_install_dwell']
     image_ref = f'{registry}/{image}:{tag}'
 
     print('nico-dev — DPF: CRDs + dpf-sim-controller')
@@ -322,6 +338,7 @@ def main():
     print(f'  namespace   : {ns}')
     print(f'  image       : {image_ref}  (push via {push_reg})')
     print(f'  phase dwell : {dwell}')
+    print(f'  OS install  : {install_dwell}  (0s = phase dwell)')
     print(f'  resources   : {json.dumps(dpf["sim"]["resources"])}')
 
     if not dpf['enabled'] and not (args.uninstall or args.force):
@@ -333,7 +350,7 @@ def main():
     # ── uninstall ─────────────────────────────────────────────────────────
     if args.uninstall:
         print('\nRemoving the simulator (the DPF CRDs and namespace stay)…')
-        docs = render_manifests(repo, ns, image_ref, dwell, dpf['sim']['resources'])
+        docs = render_manifests(repo, ns, image_ref, dwell, install_dwell, dpf['sim']['resources'])
         apply_manifests(docs, env, dry_run=args.dry_run, delete=True)
         print('  removed ✓  Hosts reaching dpuinit will now wait forever; disable DPF in the API '
               'config too, or redeploy the simulator.')
@@ -387,7 +404,7 @@ def main():
 
     # ── deploy ────────────────────────────────────────────────────────────
     print('\nDeploying the simulator')
-    docs = render_manifests(repo, ns, image_ref, dwell, dpf['sim']['resources'])
+    docs = render_manifests(repo, ns, image_ref, dwell, install_dwell, dpf['sim']['resources'])
     apply_manifests(docs, env, dry_run=args.dry_run)
     if args.dry_run:
         print('\n(dry run) done — nothing was changed')
@@ -409,7 +426,7 @@ def main():
 Done. On a MAT run, hosts pass through dpuinit as the simulator walks each DPU to Ready:
   kubectl -n {ns} get dpudevice,dpunode,dpu -w          # the resources NICo and the simulator exchange
   kubectl -n {ns} logs deployment/{DEPLOYMENT} -f       # phase walk, reboot round-trips
-  <site>/run-admin-cli.sh machine list                       # hosts leaving dpuinit
+  <site>/run-admin-cli.sh machine show                       # hosts leaving dpuinit
 iPXE for chosen hosts: <site>/run-admin-cli.sh dpf disable <host>  (before ingestion). Details: mat-in-nico-dev.md §13.''')
 
 
