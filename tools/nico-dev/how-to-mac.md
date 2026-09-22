@@ -356,7 +356,10 @@ The run stops and waits for you three times. This is by design:
 1. **The UTM share path.** UTM does not let a script set the shared folder
    of a VM. The runner pauses, tells you to open the VM's Sharing settings
    and point them at `~/nico-tests/vm1/shared`, and waits for you to press
-   Enter.
+   Enter. It then checks what UTM recorded: if the Path is missing or
+   different it says so and asks again, so a missed click does not surface
+   minutes later as a failed first boot. Type `skip` to boot without a share
+   (throwaway VMs only).
 2. **The VM password, once.** During `prep`, before your SSH key has been
    installed.
 3. **`sudo` on the Mac**, at the end, for the route to the service addresses.
