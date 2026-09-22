@@ -138,8 +138,13 @@ def stage_image(work, args):
     if cached.exists():
         print(f'  Cached: {cached} ✓')
     else:
-        run(['curl', '-fL', '-o', str(cached) + '.part', CLOUD_IMG_URL],
-            'cloud image download')
+        # ~900 MB once per Mac; later builds reuse the cache. The progress bar
+        # is curl's own; a dropped connection is retried before we give up.
+        print(f'  Downloading the Ubuntu {UBUNTU_RELEASE} cloud image (~900 MB, once per Mac)\n'
+              f'    from {CLOUD_IMG_URL}\n'
+              f'    to   {cached}')
+        run(['curl', '-fL', '--progress-bar', '--retry', '5', '--retry-all-errors',
+             '-o', str(cached) + '.part', CLOUD_IMG_URL], 'cloud image download')
         os.rename(str(cached) + '.part', cached)
         print(f'  Downloaded: {cached} ✓')
 
@@ -355,6 +360,50 @@ end tell'''
      windows (Cmd-H), don't close them.''')
 
 
+def utm_shared_dirs(name):
+    """The directories UTM shares into the VM, as set in Settings → Sharing →
+    Path. The VM's own config.plist carries only the share MODE; the path is in
+    UTM's preferences under Registry.<VM UUID>.SharedDirectories[].Path, keyed
+    by the UUID from <name>.utm/config.plist. Returns [] when no path is set,
+    None when the preferences cannot be read (then nothing can be verified)."""
+    bundle = (Path.home() / 'Library/Containers/com.utmapp.UTM/Data/Documents'
+              / f'{name}.utm' / 'config.plist')
+    try:
+        with open(bundle, 'rb') as f:
+            uuid = plistlib.load(f)['Information']['UUID']
+        raw = subprocess.run(['defaults', 'export', 'com.utmapp.UTM', '-'],
+                             capture_output=True).stdout
+        reg = plistlib.loads(raw).get('Registry', {}).get(uuid, {})
+        return [d.get('Path', '') for d in reg.get('SharedDirectories', []) if d.get('Path')]
+    except Exception:
+        return None
+
+
+def confirm_share_set(args):
+    """Pause for the GUI step, then verify it before booting: without the share
+    the VM boots fine and first-boot.sh fails minutes later with "UTM is not
+    offering ANY shared folder" (20260922-#3). Re-prompt until the path UTM has
+    is the one we asked for; `skip` boots anyway (throwaway VMs)."""
+    want = str(Path(args.share).expanduser().resolve())
+    while True:
+        answer = input('\n  Set the share Path now (VM is stopped), then press '
+                       'Enter to boot (or type skip)... ').strip().lower()
+        if answer == 'skip':
+            print('  Booting without a verified share; first-boot.sh will need it.')
+            return
+        dirs = utm_shared_dirs(args.name)
+        if dirs is None:
+            print('  (could not read UTM preferences to verify the share; booting)')
+            return
+        if any(str(Path(d).expanduser().resolve()) == want for d in dirs):
+            print(f'  Share Path verified: {want} ✓')
+            return
+        have = 'no shared directory' if not dirs else 'a different Path: ' + ', '.join(dirs)
+        print(f'  ! UTM has {have} for {args.name}.\n'
+              f'    Settings → Sharing → Path must be  {want}\n'
+              f'    (Mode is already VirtFS.) Set it, then press Enter again.')
+
+
 def stage_boot(static_ip, args):
     print('\n── Stage: boot (start + wait for ssh) ──')
     utmctl = '/Applications/UTM.app/Contents/MacOS/utmctl'
@@ -451,8 +500,7 @@ def main():
     if args.stage == 'vm':
         return
     if sys.stdin.isatty():
-        input('\n  Set the share Path now (VM is stopped), then press '
-              'Enter to boot... ')
+        confirm_share_set(args)
     stage_boot(static_ip, args)
 
 
