@@ -19,6 +19,9 @@ Default scope (fleet state only — day-1 operator config survives):
     MACs 02:/06: only) — these DHCP-created rows are what re-seeds the
     site-explorer and resurrects endpoints after a reset (20260825-#1)
   - Vault per-MAC BMC creds (secrets/machines/bmc/<mac>/root)
+  - DPF resources of the fleet (DPUDevice, DPUNode, DPUNodeMaintenance and the
+    simulator's DPUs) — a new fleet reuses the same names, and a DPU left at
+    Ready would let the next run skip the DPF phases (20260922-#1)
 
 --full additionally recycles day-1 credential config (true t0):
   - wipes Vault machines/bmc/site (site-wide root) and
@@ -160,9 +163,37 @@ def main():
     if not macs:
         print('  none present ✓')
 
-    # ── 6. optional: day-1 credential config ──────────────────────────────────
+    # ── 6. DPF resources of the fleet ─────────────────────────────────────────
+    # NICo names DPUDevice/DPUNode after the fleet's MACs, and the simulator's
+    # DPU after both, so the next run finds yesterday's objects; a DPU already
+    # at Ready never walks the phases again (20260922-#1). Delete them in every
+    # namespace that has any; only NICo and the simulator create these kinds.
+    print('Step 6: delete DPF resources of the fleet')
+    r = sh(['kubectl', '--kubeconfig', kubeconfig, 'get', 'crd',
+            'dpudevices.provisioning.dpu.nvidia.com'], check=False)
+    if r.returncode != 0:
+        print('  DPF CRDs not installed ✓')
+    else:
+        kinds = 'dpudevice,dpunode,dpunodemaintenance,dpu'
+        r = sh(['kubectl', '--kubeconfig', kubeconfig, 'get', kinds, '-A',
+                '-o', 'jsonpath={range .items[*]}{.metadata.namespace}{"\\n"}{end}'],
+               check=False)
+        namespaces = sorted(set((r.stdout or '').split()))
+        for ns in namespaces:
+            sh(['kubectl', '--kubeconfig', kubeconfig, '-n', ns, 'delete', kinds,
+                '--all', '--ignore-not-found'], check=True)
+            # Prove it: the simulator's DPUs go by ownerRef GC, which may lag a
+            # moment, so list what is left rather than trusting kubectl's echo.
+            r = sh(['kubectl', '--kubeconfig', kubeconfig, '-n', ns, 'get', kinds,
+                    '--no-headers', '--ignore-not-found'], check=False)
+            left = len([l for l in (r.stdout or '').splitlines() if l.strip()])
+            print(f'  {ns}: {"✓" if left == 0 else f"! {left} object(s) still present (GC lag? re-run)"}')
+        if not namespaces:
+            print('  none present ✓')
+
+    # ── 7. optional: day-1 credential config ──────────────────────────────────
     if args.full:
-        print('Step 6: recycle day-1 credential config (--full)')
+        print('Step 7: recycle day-1 credential config (--full)')
         for path in ['machines/bmc/site/root',
                      'machines/all_hosts/site_default/uefi-metadata-items/auth',
                      'machines/all_dpus/site_default/uefi-metadata-items/auth']:
