@@ -20,6 +20,7 @@ Build sequence (native for the host arch):
 """
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
@@ -227,10 +228,26 @@ def main():
 
         try:
             print(f'\nStep 2: Build build-container-{MACHINE}...')
+            # Since upstream #5896 (2026-09-14) the builder Dockerfile pins Kea:
+            # `apt install kea-dev=${KEA_VERSION}` with the value in
+            # dev/docker/kea.version (cargo-make reads the same file). Without
+            # the build arg apt asks for version '' and the build dies
+            # (20260922-#5). Older checkouts have no file and no ARG: pass nothing.
+            build_args = {}
+            kea_file = docker_dir / 'kea.version'
+            kea_version = os.environ.get('KEA_VERSION') or (
+                kea_file.read_text().strip() if kea_file.exists() else '')
+            if kea_version:
+                build_args['KEA_VERSION'] = kea_version
+                print(f'  KEA_VERSION={kea_version} (from {"$KEA_VERSION" if os.environ.get("KEA_VERSION") else kea_file})')
+            elif 'KEA_VERSION' in (docker_dir / f'Dockerfile.build-container-{MACHINE}').read_text():
+                sys.exit(f'Error: {docker_dir}/Dockerfile.build-container-{MACHINE} needs KEA_VERSION '
+                         f'but {kea_file} is missing; is the checkout complete? (or export KEA_VERSION)')
             docker_build(
                 tag=build_ctr,
                 dockerfile=docker_dir / f'Dockerfile.build-container-{MACHINE}',
                 context=repo_path,
+                build_args=build_args,
                 label=f'build-container-{MACHINE} (Rust compiler)',
             )
 
