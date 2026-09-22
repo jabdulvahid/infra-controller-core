@@ -643,7 +643,10 @@ def main():
     p = argparse.ArgumentParser(description='Watch a MAT run from NICo\'s and MAT\'s side',
                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     p.add_argument('--admin-cli', required=True, help='the site\'s run-admin-cli.sh (or a configured nico-admin-cli)')
-    p.add_argument('--mat-log', action='append', default=[], metavar='FILE', help='MAT log file (repeatable, optional)')
+    p.add_argument('--mat-log', action='append', default=[], metavar='FILE',
+                   help='MAT log file (repeatable, optional). With several, only the most recently '
+                        'modified one is shown unless --all-logs is given')
+    p.add_argument('--all-logs', action='store_true', help='show every --mat-log, not just the newest')
     p.add_argument('--interval', type=int, default=30, help='seconds between refreshes (default 30)')
     p.add_argument('--once', action='store_true', help='one plain-text refresh, then exit')
     p.add_argument('--no-tui', action='store_true', help='plain text instead of the full-screen view')
@@ -651,7 +654,15 @@ def main():
     p.add_argument('--dpf-namespace', default='dpf-operator-system')
     p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
     a = p.parse_args()
-    logs = [MatLog(f) for f in a.mat_log]
+    mat_logs = a.mat_log
+    if len(mat_logs) > 1 and not a.all_logs:
+        # The launcher passes every log it finds (base, dev, plain); the run in
+        # progress is the one written most recently. Showing the others as well
+        # put yesterday's fleet on screen above today's (20260922-#2).
+        present = [f for f in mat_logs if os.path.exists(f)]
+        if present:
+            mat_logs = [max(present, key=os.path.getmtime)]
+    logs = [MatLog(f) for f in mat_logs]
     dpf_cfg = None
     if not a.no_dpf:
         kc = a.kubeconfig

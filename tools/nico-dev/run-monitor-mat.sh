@@ -11,6 +11,8 @@
 
 SITE=/home/nico/mac/sites/dc1/dev1
 TOOLS=/home/nico/mac/infra-controller/tools/nico-dev
+# Every log that exists is passed; monitor-mat.py shows the most recently
+# written one (the run in progress) unless MONITOR_ALL_LOGS=1.
 LOGS=(
     /var/log/machine-a-tron-dc1-base.log     # run-mat-base.sh
     /var/log/machine-a-tron-dc1-dev.log      # run-mat-dev.sh
@@ -25,4 +27,5 @@ for log in "${LOGS[@]}"; do
     [[ -r "$log" ]] || SUDO=sudo
 done
 [[ -x "$SITE/run-admin-cli.sh" ]] || { echo "Error: $SITE/run-admin-cli.sh not found — run get-admin-cli.sh $SITE first" >&2; exit 1; }
+[[ -n "${MONITOR_ALL_LOGS:-}" ]] && args+=(--all-logs)
 exec $SUDO python3 "$TOOLS/monitor-mat.py" --admin-cli "$SITE/run-admin-cli.sh" "${args[@]}" "$@"
