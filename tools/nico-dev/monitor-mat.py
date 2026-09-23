@@ -41,7 +41,10 @@ except MAT, which is collapsed to a count line because it has its own page
 (e m u d l toggle any section on page 0). Pages 1-5 show
 one section alone, in full, and scroll: 1 endpoints, 2 machines, 3 DPUs
 (NICo), 4 DPF, 5 MAT. Keys: the digit, or ←/→, Tab/Shift-Tab, n/p to step;
-↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll; r refreshes now; q quits.
+↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll; ? or h opens a help page
+listing the pages, keys and columns; r refreshes now; q quits. With several
+--mat-log files the MAT page opens on the most recently written one; [ and ]
+step through the others and a shows them all (--all-logs opens on all).
 Plain-text mode (--once, --no-tui) prints every section, as before.
 
 Milestones, from docs/architecture/state_machines/managedhost.md: a managed
@@ -400,7 +403,12 @@ def render_header(server, admin_cli, interval, page='all'):
     ready = sum(1 for r in machines if col(r, 'state').lower().startswith('ready'))
     failed = sum(1 for r in machines if col(r, 'state').lower().startswith('failed'))
     hosts = sum(1 for r in machines if 'dpu' not in col(r, 'type').lower())
-    where = '' if page == 'all' else f'   page {PAGES.index(page)}/{len(PAGES) - 1}: {page}'
+    if page == 'all':
+        where = ''
+    elif page in PAGES:
+        where = f'   page {PAGES.index(page)}/{len(PAGES) - 1}: {page}'
+    else:
+        where = f'   {page}'
     L = [[('MAT run monitor', TITLE), (f'  {now}  refresh {interval}s{where}   admin-cli: {short(admin_cli, 60)}', PLAIN)],
          [('expected machines: ', PLAIN), (str(len(server.get('expected', []))), NUM),
           ('    endpoints: ', PLAIN), (str(len(server.get('endpoints', []))), NUM),
@@ -594,6 +602,51 @@ def render(server, logs, admin_cli, interval, width=120, dpf=None, show=None, pa
     return L
 
 
+HELP = [
+    ('PAGES', [
+        ('0', 'overview: every section expanded except MAT, which is collapsed to a count line'),
+        ('1', 'endpoints — the site explorer\'s BMC endpoints, pre-ingestion state, the machine each became'),
+        ('2', 'machines — every machine as NICo reports it, its lifecycle milestone and milestones to go'),
+        ('3', 'DPUs (NICo) — dpu status and dpf show: health, firmware version status, DPF enablement'),
+        ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
+        ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
+        ('? h', 'this help; any page key, ?, h or 0 returns'),
+    ]),
+    ('MOVING', [
+        ('0-5', 'go to that page'),
+        ('→ Tab n', 'next page'), ('← Shift-Tab p', 'previous page'),
+        ('↑ ↓ j k', 'scroll one line (pages 1-5)'), ('PgUp PgDn Space', 'scroll one screen'), ('Home End', 'top / bottom'),
+    ]),
+    ('OVERVIEW (page 0)', [
+        ('e m u d l', 'collapse or expand endpoints / machines / DPUs / DPF / MAT'),
+    ]),
+    ('MAT PAGE (5)', [
+        ('[ ]', 'previous / next MAT log when several were given (the newest is shown first)'),
+        ('a', 'show every MAT log at once, or back to one'),
+    ]),
+    ('ALWAYS', [
+        ('r', 'refresh now'), ('q', 'quit'),
+    ]),
+]
+
+
+def render_help(server, admin_cli, interval):
+    L = render_header(server, admin_cli, interval, 'help')
+    L.append([('HELP', SECTION), ('   the monitor polls the admin CLI, kubectl and the MAT log on the refresh interval; keys act at once', PLAIN)])
+    for title, rows in HELP:
+        L.append([])
+        L.append([(f'  {title}', HDR)])
+        for key, what in rows:
+            L.append([(f'    {key:<16}', NUM), (what, PLAIN)])
+    L.append([])
+    L.append([('  Columns', HDR)])
+    L.append([('    to-go            ', NUM), ('milestones left before Ready (a range when the optional ones may be skipped); ✓ Ready, ✗ Failed', PLAIN)])
+    L.append([('    in phase         ', NUM), ('how long the DPU resource has been in its current DPF phase', PLAIN)])
+    L.append([('    API state        ', NUM), ('the machine state MAT last read from NICo; Unknown until MAT has discovered the machine', PLAIN)])
+    L.append([('    last timer       ', NUM), ('the FSM timer MAT armed last (MachineOn = reboot, OsReady = power_on_os_ready, …) and when', PLAIN)])
+    return L
+
+
 def plain(lines):
     return '\n'.join(''.join(t for t, _ in line) for line in lines)
 
@@ -611,7 +664,9 @@ def run_plain(admin_cli, logs, interval, once, dpf_cfg=None):
         time.sleep(interval)
 
 
-def run_tui(admin_cli, logs, interval, dpf_cfg=None):
+def run_tui(admin_cli, logs, interval, dpf_cfg=None, default_log=None):
+    # logs: every MAT log given; default_log: index of the one the MAT page
+    # opens with (the most recently written), or None to open with all.
     # nothing may write to the terminal behind curses' back: Python warnings
     # and any stray stderr go to a file instead
     warnings.simplefilter('ignore')
@@ -671,11 +726,18 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
                 attrs[name] = curses.A_NORMAL
         page = 0      # index into PAGES; 0 = overview
         top = 0       # first body line on screen (scrolling); the header stays
+        helping = False
+        # Which MAT log the MAT page shows: an index into logs, or None for all.
+        sel = default_log if len(logs) > 1 else (0 if logs else None)
         while True:
             with lock:
                 server, dpf, at, busy = data['server'], data['dpf'], data['at'], data['busy']
             h, w = stdscr.getmaxyx()
-            lines = render(server, logs, admin_cli, interval, width=w, dpf=dpf, show=show, page=PAGES[page])
+            view_logs = logs if sel is None else [logs[sel]]
+            if helping:
+                lines = render_help(server, admin_cli, interval)
+            else:
+                lines = render(server, view_logs, admin_cli, interval, width=w, dpf=dpf, show=show, page=PAGES[page])
             n_head = 1 + 1 + len(server.get('errors', [])) + 1     # title, counts, errors, blank
             head, body = lines[:n_head], lines[n_head:]
             room = max(1, h - 2 - len(head))
@@ -693,14 +755,19 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
                     x += len(text)
             remaining = max(0, int(interval - (time.time() - at))) if at else 0
             status = 'refreshing…' if busy else f'next in {remaining}s'
-            pages = '  '.join(f'{i}:{name}' + ('*' if i == page else '') for i, name in enumerate(PAGES))
-            if page == 0:
+            pages = '  '.join(f'{i}:{name}' + ('*' if i == page and not helping else '') for i, name in enumerate(PAGES))
+            if helping:
+                extra = '   ? h 0 back'
+            elif page == 0:
                 extra = '   toggle: ' + '  '.join(f'{k}:{name}{"" if name in show else "(off)"}' for name, k, _ in SECTIONS)
             else:
                 shown = f'{top + 1}-{min(len(body), top + room)}/{len(body)}' if len(body) > room else 'all'
                 extra = f'   ↑↓ PgUp PgDn scroll ({shown})'
+                if PAGES[page] == 'mat' and len(logs) > 1:
+                    which = 'all logs' if sel is None else f'log {sel + 1}/{len(logs)} {os.path.basename(logs[sel].path)}'
+                    extra += f'   [ ] a: {which}'
             try:
-                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  {status}   page ←→/Tab: {pages}{extra}', w - 1, curses.A_REVERSE)
+                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  ? help  {status}   page ←→/Tab: {pages}{extra}', w - 1, curses.A_REVERSE)
             except curses.error:
                 pass
             stdscr.refresh()
@@ -713,14 +780,24 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None):
             elif ch == curses.KEY_RESIZE:
                 curses.update_lines_cols()
                 stdscr.clear()
+            elif ch in (ord('?'), ord('h'), ord('H')):
+                helping, top = not helping, 0
+                stdscr.clear()
             elif ch in (curses.KEY_RIGHT, ord('\t'), ord('n'), ord('N')):
-                page, top = (page + 1) % len(PAGES), 0
+                page, top, helping = (page + 1) % len(PAGES), 0, False
                 stdscr.clear()
             elif ch in (curses.KEY_LEFT, curses.KEY_BTAB, ord('p'), ord('P')):
-                page, top = (page - 1) % len(PAGES), 0
+                page, top, helping = (page - 1) % len(PAGES), 0, False
                 stdscr.clear()
             elif ord('0') <= ch <= ord('9') and ch - ord('0') < len(PAGES):
-                page, top = ch - ord('0'), 0
+                page, top, helping = ch - ord('0'), 0, False
+                stdscr.clear()
+            elif ch in (ord('['), ord(']')) and len(logs) > 1:
+                step = 1 if ch == ord(']') else -1
+                sel, top = ((sel if sel is not None else (-1 if step > 0 else 0)) + step) % len(logs), 0
+                stdscr.clear()
+            elif ch in (ord('a'), ord('A')) and len(logs) > 1:
+                sel, top = (None if sel is not None else default_log), 0
                 stdscr.clear()
             elif ch in (curses.KEY_DOWN, ord('j')):
                 top += 1
@@ -758,14 +835,19 @@ def main():
     p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
     a = p.parse_args()
     mat_logs = a.mat_log
-    if len(mat_logs) > 1 and not a.all_logs:
-        # The launcher passes every log it finds (base, dev, plain); the run in
-        # progress is the one written most recently. Showing the others as well
-        # put yesterday's fleet on screen above today's (20260922-#2).
+    # The launcher passes every log it finds (base, dev, plain); the run in
+    # progress is the one written most recently. Showing the others as well
+    # put yesterday's fleet on screen above today's (20260922-#2), so plain
+    # output shows only the newest unless --all-logs, and the full-screen MAT
+    # page opens on the newest but can switch ([ ] a) to the others.
+    newest = None
+    if len(mat_logs) > 1:
         present = [f for f in mat_logs if os.path.exists(f)]
         if present:
-            mat_logs = [max(present, key=os.path.getmtime)]
+            newest = mat_logs.index(max(present, key=os.path.getmtime))
     logs = [MatLog(f) for f in mat_logs]
+    plain_logs = logs if (a.all_logs or newest is None) else [logs[newest]]
+    default_log = None if a.all_logs else newest
     dpf_cfg = None
     if not a.no_dpf:
         kc = a.kubeconfig
@@ -776,11 +858,11 @@ def main():
         dpf_cfg = (kc, a.dpf_namespace)
     if a.once or a.no_tui or not sys.stdout.isatty():
         try:
-            run_plain(a.admin_cli, logs, a.interval, a.once, dpf_cfg)
+            run_plain(a.admin_cli, plain_logs, a.interval, a.once, dpf_cfg)
         except KeyboardInterrupt:
             pass
     else:
-        run_tui(a.admin_cli, logs, a.interval, dpf_cfg)
+        run_tui(a.admin_cli, logs, a.interval, dpf_cfg, default_log)
 
 
 if __name__ == '__main__':
