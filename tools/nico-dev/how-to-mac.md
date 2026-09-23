@@ -753,7 +753,7 @@ planned. Neither step touches your site folder or your worktree.
 | `get-nicocli.sh <site>` | Mac | REST CLI from the REST API image, no build; writes `run-nicocli.sh` |
 | `run-admin-cli.sh`, `run-nicocli.sh`, `run-mat.sh` | Mac / VM | generated wrappers in the site folder |
 | `reset-mat-state.py <site> --yes` | Mac | fleet back to time zero |
-| `monitor-mat.py --admin-cli W [--mat-log F]… [--no-dpf]` / `run-monitor-mat.sh` | VM | one screen for a MAT run: expected machines, endpoints, machine states with milestones to go, DPUs (NICo and DPF phases), MAT's own view; refresh 30 s |
+| `monitor-mat.py --admin-cli W [--mat-log F]… [--no-dpf]` / `run-monitor-mat.sh` | VM | a MAT run on one overview page plus one page per section (endpoints, machines, DPUs, DPF, MAT; digits or ←→ switch, ↑↓ scroll): expected machines, endpoints, machine states with milestones to go, DPUs (NICo and DPF phases), MAT's own view; refresh 30 s |
 | `ndev.py <site> [sub]` | Mac or VM | status, fabric, BGP, registry, DPU |
 | `restart-ordered.sh [--cold]` | VM | ordered recovery after a reboot |
 | `first-boot.sh` | VM | personalise a golden clone |
