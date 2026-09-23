@@ -155,12 +155,17 @@ plain), the MAT page opens on the most recently written one; `[` and `]`
 step to the others and `a` shows them all, so an older run's log can be
 compared without restarting the monitor.
 
-`run-monitor-mat.sh` has the site and log paths for `dc1/dev1` written in;
-edit its first lines for another site, or call `monitor-mat.py` directly with
-`--admin-cli <site>/run-admin-cli.sh` and one `--mat-log <file>` per log. The
-DPF section finds the kubeconfig next to the wrapper; `--no-dpf` skips it on
-a site without DPF. It works before any MAT run too, showing the server side
-alone. MAT logs are root-owned, so the launcher uses `sudo` when it has to.
+`run-monitor-mat.sh` has the site path for `dc1/dev1` written in; edit its
+first lines for another site, or call `monitor-mat.py` directly with
+`--admin-cli <site>/run-admin-cli.sh` and one `--mat-log <file>` per log. It
+finds the MAT logs itself: every `/var/log/machine-a-tron-<dc_name>*.log`,
+where `<dc_name>` is `fabric.dc_name` from the site yaml and the name the
+generated `run-mat*.sh` scripts log under (`run-mat-dev.sh` writes
+`machine-a-tron-<dc_name>-dev.log`). Pass `--mat-log <file>` to the launcher
+to pin exactly the log you want instead. The DPF section finds the kubeconfig
+next to the wrapper; `--no-dpf` skips it on a site without DPF. It works
+before any MAT run too, showing the server side alone. MAT logs are
+root-owned, so the launcher uses `sudo` when it has to.
 
 ## 6. Which provisioning path your hosts take
 
