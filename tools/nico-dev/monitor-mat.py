@@ -36,8 +36,9 @@ What it shows
      mat_host_id=… [dpu_index=…] api_state=… state=… booted_os=…; the monitor
      keeps the latest per machine.)
 
-Pages (full-screen mode). Page 0 is the overview: every section, the ones
-toggled off collapsed to a count line (e m u d l toggle them). Pages 1-5 show
+Pages (full-screen mode). Page 0 is the overview: every section expanded
+except MAT, which is collapsed to a count line because it has its own page
+(e m u d l toggle any section on page 0). Pages 1-5 show
 one section alone, in full, and scroll: 1 endpoints, 2 machines, 3 DPUs
 (NICo), 4 DPF, 5 MAT. Keys: the digit, or ←/→, Tab/Shift-Tab, n/p to step;
 ↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll; r refreshes now; q quits.
@@ -370,7 +371,9 @@ class MatLog:
 # headers dim, states by meaning) while plain text just joins the segments.
 TITLE, SECTION, HDR, OK, WIP, BAD, NUM, PLAIN = 'title', 'section', 'hdr', 'ok', 'wip', 'bad', 'num', ''
 # sections, their toggle key, and whether they show by default
-SECTIONS = [('endpoints', 'e', False), ('machines', 'm', True), ('dpus', 'u', False), ('dpf', 'd', True), ('mat', 'l', True)]
+# Page 0 shows every section expanded except MAT, which has its own page (5):
+# it is the longest table and the one that pushed the others off the screen.
+SECTIONS = [('endpoints', 'e', True), ('machines', 'm', True), ('dpus', 'u', True), ('dpf', 'd', True), ('mat', 'l', False)]
 DEFAULT_SHOW = {name for name, _, on in SECTIONS if on}
 # Pages: 0 is the overview (every section, collapsed or expanded per the
 # toggles above); 1..5 show one section in full, scrollable.

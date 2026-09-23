@@ -141,8 +141,9 @@ run-monitor-mat.sh            # full screen; q quits, r refreshes now
 run-monitor-mat.sh --once     # one plain-text snapshot, good for pasting
 ```
 
-The full-screen view has pages. Page 0 is the overview above, with `e m u d l`
-collapsing or expanding a section. Pages 1 to 5 show one section alone and
+The full-screen view has pages. Page 0 is the overview above with every
+section expanded except MAT, which is collapsed to a count line because it has
+its own page; `e m u d l` collapse or expand any section there. Pages 1 to 5 show one section alone and
 scroll when it does not fit: 1 endpoints, 2 machines, 3 DPUs as NICo sees
 them, 4 DPF, 5 MAT. Press the digit, or step with `←`/`→`, Tab, `n`/`p`;
 scroll with `↑`/`↓`, PgUp/PgDn, Home/End. The footer names the pages and
