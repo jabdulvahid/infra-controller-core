@@ -149,6 +149,11 @@ them, 4 DPF, 5 MAT. Press the digit, or step with `←`/`→`, Tab, `n`/`p`;
 scroll with `↑`/`↓`, PgUp/PgDn, Home/End. The footer names the pages and
 marks the current one. A fleet larger than the screen, or a long DPF table,
 is read on its own page instead of being cut off at the bottom of page 0.
+`?` (or `h`) opens a help page with the pages, keys and column meanings; any
+page key returns. When the launcher passes several MAT logs (base, dev,
+plain), the MAT page opens on the most recently written one; `[` and `]`
+step to the others and `a` shows them all, so an older run's log can be
+compared without restarting the monitor.
 
 `run-monitor-mat.sh` has the site and log paths for `dc1/dev1` written in;
 edit its first lines for another site, or call `monitor-mat.py` directly with
