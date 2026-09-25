@@ -26,6 +26,7 @@ Interactive moments:
 import argparse
 import datetime
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -208,7 +209,7 @@ def build_steps(args):
           + (['--cpus', str(args.vm_cpus)] if args.vm_cpus else [])
           + (['--mem-mb', str(args.vm_mem_mb)] if args.vm_mem_mb else [])
           + (['--disk-gb', str(args.vm_disk_gb)] if args.vm_disk_gb else [])
-          + (['--ip', args.ip_explicit] if args.ip_explicit else [])
+          + ['--subnet', args.subnet]
           + ['--dc', args.dc, '--site', args.site]],
          'The vm step is rerun-safe (existing volumes/domain reused).\n'
          'ssh timeout → console: virsh console ' + args.name + ' (Ctrl-] exits).'),
@@ -336,11 +337,11 @@ def main():
         description='One-command nico-dev bring-up (runner over the unit scripts)',
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     p.add_argument('--name', help='VM name (required unless --list)')
-    p.add_argument('--ip', default=None,
-                   help='VM static IP (default 192.168.64.<host-num>)')
-    p.add_argument('--ip-explicit', default=None, metavar='IP',
-                   help='pass --ip through to build-nico-dev-vm.py '
-                        '(foreign vmnet subnet); also sets --ip')
+    p.add_argument('--subnet', default='192.168.64', metavar='A.B.C',
+                   help='first three octets of the VM network the builder '
+                        'creates (nico-nat); the VM is <subnet>.<host-num> '
+                        'everywhere (default 192.168.64; change only when '
+                        'that /24 is taken on this host)')
     p.add_argument('--user', default='nico')
     p.add_argument('--password', default='Welcome123!',
                    help='VM user password (vm step passthrough)')
@@ -498,10 +499,12 @@ def main():
         args.ngc_images = {}
     if not args.tag:
         args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
-    if args.ip_explicit:
-        args.ip = args.ip_explicit
-    elif args.ip is None:
-        args.ip = f'192.168.64.{args.host_num or 126}'
+    # One fact, one key: the VM lives at <subnet>.<host_num>. The builder
+    # creates nico-nat on that subnet and every later step uses the address.
+    if not re.fullmatch(r'(\d{1,3})\.(\d{1,3})\.(\d{1,3})', args.subnet):
+        raise SystemExit(f'Error: --subnet must be the first three octets, '
+                         f'e.g. 192.168.64 (got {args.subnet!r})')
+    args.ip = f'{args.subnet}.{args.host_num or 126}'
 
     if args.list or not args.name:
         if not args.list and not args.name:

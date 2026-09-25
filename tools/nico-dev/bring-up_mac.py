@@ -26,6 +26,7 @@ Interactive moments (by design, not accident):
 import argparse
 import datetime
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -37,6 +38,11 @@ import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location('site_images', NICO_DEV / 'site_images.py')
 _site_images = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_site_images)
+# The VM builder knows this Mac's UTM subnet (vmnet plist); the runner uses
+# the same function so both sides derive the same address from host_num.
+_spec_vm = _ilu.spec_from_file_location('build_vm_mac', NICO_DEV / 'build-nico-dev-vm_mac.py')
+_build_vm = _ilu.module_from_spec(_spec_vm)
+_spec_vm.loader.exec_module(_build_vm)
 # When invoked via the platform dispatcher, show ITS name in hints.
 ENTRY = os.environ.get('NICO_DEV_ENTRY', sys.argv[0])
 
@@ -198,7 +204,9 @@ def build_steps(args):
           + (['--cpus', str(args.vm_cpus)] if args.vm_cpus else [])
           + (['--mem-mb', str(args.vm_mem_mb)] if args.vm_mem_mb else [])
           + (['--disk-gb', str(args.vm_disk_gb)] if args.vm_disk_gb else [])
-          + (['--ip', args.ip_explicit] if args.ip_explicit else [])],
+          # subnet given: pin the builder to the same address the runner uses;
+          # otherwise both derive it from the vmnet plist and agree anyway.
+          + (['--ip', args.ip] if args.subnet else [])],
          'The vm step is rerun-safe and self-healing (issues 20260828-#2..#4).\n'
          'Common: share Path not set in UTM (GUI step), ssh timeout →\n'
          'utmctl attach ' + args.name + ' prints the serial PTY path\n'
@@ -324,11 +332,12 @@ def main():
         description='One-command nico-dev bring-up (runner over the unit scripts)',
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     p.add_argument('--name', help='VM name (required unless --list)')
-    p.add_argument('--ip', default=None,
-                   help='VM static IP (default 192.168.64.<host-num>)')
-    p.add_argument('--ip-explicit', default=None, metavar='IP',
-                   help='pass --ip through to build-nico-dev-vm.py '
-                        '(foreign vmnet subnet); also sets --ip')
+    p.add_argument('--subnet', default=None, metavar='A.B.C',
+                   help='first three octets of the VM network. Default: read '
+                        'from this Mac\'s UTM vmnet configuration, the same way '
+                        'the VM builder does; set it only when that read fails '
+                        '(the plist is root-only) and your UTM subnet is not '
+                        '192.168.64')
     p.add_argument('--user', default='nico')
     p.add_argument('--password', default='Welcome123!',
                    help='VM user password (vm step passthrough)')
@@ -347,8 +356,7 @@ def main():
                    help='VM disk GB, sparse (vm step passthrough; default 120)')
     p.add_argument('--host-num', type=int, default=None,
                    help='last octet of the VM IP (vm step passthrough; '
-                        'default 126). On a non-192.168.64 subnet use '
-                        '--ip-explicit instead')
+                        'default 126; distinct per VM on this Mac)')
     p.add_argument('--share', default=DEF_SHARE,
                    help='Mac folder shared into the VM (default: derived '
                         f'from this script\'s location: {DEF_SHARE})')
@@ -482,10 +490,14 @@ def main():
         args.ngc_images = {}
     if not args.tag:
         args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
-    if args.ip_explicit:
-        args.ip = args.ip_explicit
-    elif args.ip is None:
-        args.ip = f'192.168.64.{args.host_num or 126}'
+    # One fact, one key: the VM lives at <subnet>.<host_num>. The subnet is
+    # this Mac's UTM vmnet subnet unless --subnet pins it; the builder derives
+    # the same address, so ssh, the site config and the host route agree.
+    if args.subnet and not re.fullmatch(r'(\d{1,3})\.(\d{1,3})\.(\d{1,3})', args.subnet):
+        raise SystemExit(f'Error: --subnet must be the first three octets, '
+                         f'e.g. 192.168.64 (got {args.subnet!r})')
+    subnet = args.subnet or _build_vm.vmnet_subnet()
+    args.ip = f'{subnet}.{args.host_num or 126}'
 
     if args.list or not args.name:
         if not args.list and not args.name:

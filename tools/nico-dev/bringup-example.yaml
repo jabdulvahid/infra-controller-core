@@ -23,14 +23,16 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # uid: 1000                       # UID of that user inside the VM. Must equal
                                   #   your host UID so files on the share have
                                   #   one owner on both sides. default: your UID
-# host_num: 126                   # last octet of the VM IP on the VM network
-                                  #   (192.168.64.<host_num>). Two VMs on one
-                                  #   host need different values. default 126
-# ip: 192.168.64.126              # the VM address as the host reaches it.
-                                  #   default: derived from host_num; set only
-                                  #   when the VM network is not 192.168.64.0/24
-# ip_explicit: 192.168.64.126     # like ip, and ALSO passed to the VM builder
-                                  #   for a foreign vmnet/NAT subnet. Rarely needed.
+# host_num: 126                   # last octet of the VM address, <subnet>.<host_num>.
+                                  #   Two VMs on one host need different values.
+                                  #   default 126
+# subnet: 192.168.64              # first three octets of the VM network. Linux:
+                                  #   the NAT network the builder creates; change
+                                  #   it only when 192.168.64.0/24 is taken on the
+                                  #   host (default 192.168.64). Mac: read from
+                                  #   UTM's own vmnet configuration, so leave it
+                                  #   unset unless that read fails and your UTM
+                                  #   subnet is not 192.168.64.
 # share: /Users/you/projects      # host folder the VM mounts at /home/<user>/mac.
                                   #   default: the folder that contains the repo
                                   #   worktree the tools are grafted into (the
