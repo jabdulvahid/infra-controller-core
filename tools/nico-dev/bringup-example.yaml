@@ -26,13 +26,18 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # host_num: 126                   # last octet of the VM address, <subnet>.<host_num>.
                                   #   Two VMs on one host need different values.
                                   #   default 126
-# subnet: 192.168.64              # first three octets of the VM network. Linux:
-                                  #   the NAT network the builder creates; change
-                                  #   it only when 192.168.64.0/24 is taken on the
-                                  #   host (default 192.168.64). Mac: read from
-                                  #   UTM's own vmnet configuration, so leave it
-                                  #   unset unless that read fails and your UTM
-                                  #   subnet is not 192.168.64.
+# subnet: 192.168.64              # LINUX ONLY: first three octets of the NAT
+                                  #   network the VM builder creates (nico-nat).
+                                  #   The default matches the Mac convention;
+                                  #   change it only when 192.168.64.0/24 is
+                                  #   already taken on the host. Not a Mac key:
+                                  #   UTM owns the subnet there and the address
+                                  #   is always <UTM subnet>.<host_num>.
+# ip: 192.168.64.126              # MAC ONLY, rarely: the VM address as the Mac
+                                  #   reaches it, when UTM's subnet is not
+                                  #   192.168.64 (the runner assumes that one).
+# ip_explicit: 192.168.64.126     # MAC ONLY, rarely: like ip, and also handed
+                                  #   to the VM builder as the static address.
 # share: /Users/you/projects      # host folder the VM mounts at /home/<user>/mac.
                                   #   default: the folder that contains the repo
                                   #   worktree the tools are grafted into (the

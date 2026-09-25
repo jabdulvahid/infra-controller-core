@@ -107,11 +107,9 @@ CPU requests, and a rolling redeploy needs headroom for the surge pod
 (issues.md 20260903-#2). vCPUs are a ceiling, not a reservation.
 
 Octets become Mac-routed prefixes — pick ones your Mac doesn't use
-(VPN/LAN); bring-up preflight warns if the Mac already routes them. There
-is no `ip` key — the VM address is `<subnet>.<host_num>`, the subnet read
-from your Mac's own UTM configuration (Linux: the `nico-nat` network the
-builder creates, `subnet:` to move it); `host_num` changes the last octet
-(default 126; two VMs can't share one).
+(VPN/LAN); bring-up preflight warns if the Mac already routes them. Do NOT
+set `ip` — the VM address derives from your Mac's own UTM subnet;
+`host_num` changes the last octet (default 126; two VMs can't share one).
 
 **5. Go:**
 
