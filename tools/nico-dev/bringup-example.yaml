@@ -8,11 +8,18 @@
 # "default:". Related options live under a group (vm:, redeploy:, ngc:).
 # Unknown keys are an error, so a typo cannot silently fall back to a default.
 # Every key works on Mac (UTM) and Linux (libvirt/KVM) unless marked.
+#
+# SEVERAL nico-dev SITES ON ONE HOST: each needs its own config file with a
+# distinct name, host_num, site (or dc), underlay and overlay — the four
+# things that collide on the host: the VM, its address, the site folder, and
+# the routed prefixes. The keys below say "per site" where this applies.
 
 # ── The VM ─────────────────────────────────────────────────────────────
 name: nico-vm1                    # VM name (required). UTM VM name on Mac,
                                   #   libvirt domain name on Linux. Also names
                                   #   the disk folder and the VM record.
+                                  #   Per site: a second site needs another
+                                  #   name (nico-vm2).
 user: nico                        # login user created in the VM (default nico)
 password: Welcome123!             # that user's password. Asked once during
                                   #   `prep` when the key is not yet installed;
@@ -24,8 +31,8 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
                                   #   your host UID so files on the share have
                                   #   one owner on both sides. default: your UID
 # host_num: 126                   # last octet of the VM address, <subnet>.<host_num>.
-                                  #   Two VMs on one host need different values.
-                                  #   default 126
+                                  #   Per site: two VMs on one host need different
+                                  #   values (126, then 125, 124, …). default 126
 # subnet: 192.168.64              # LINUX ONLY: first three octets of the NAT
                                   #   network the VM builder creates (nico-nat).
                                   #   The default matches the Mac convention;
@@ -101,12 +108,19 @@ site: dev1                        # site name: 1-8 chars, lowercase letters/
                                   #   API hostname nico-api.<dc>-<site>, the
                                   #   kubeconfig filename and the site folder
                                   #   sites/<dc>/<site>. default dev
+                                  #   Per site: <dc>/<site> must be unique on the
+                                  #   host, so a second site is dev2 (or another
+                                  #   dc); the same dc for both is fine.
 underlay: 11                      # first IP octets — they become host-routed
 overlay: 12                       #   prefixes (<underlay>.133.1.0/27 holds the
                                   #   service VIPs, e.g. https://11.133.1.17).
                                   #   Pick octets nothing on your host uses
                                   #   (VPN/LAN!); preflight warns if the host
                                   #   already routes them. defaults 11 and 12
+                                  #   Per site: a second site needs its own pair
+                                  #   (13 and 14, then 15 and 16, …) — the host
+                                  #   routes each site's prefixes to its VM, so
+                                  #   two sites on 11/12 would collide.
 
 # ── Where the code is (defaults match the how-to layout) ───────────────
 # repo: infra-controller          # the nico repo folder name INSIDE the share
