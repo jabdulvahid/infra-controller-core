@@ -1,14 +1,42 @@
 # bring-up.py config — copy to bringup-<your-site>.yaml, EDIT, then:
-#   bring-up.py --config bringup-<your-site>.yaml
-# Keys = bring-up.py option names (underscores). Anything here can still be
-# overridden on the command line; anything omitted uses the built-in default.
+#   bring-up.py --config bringup-<your-site>.yaml --dry-run   # preflight + plan
+#   bring-up.py --config bringup-<your-site>.yaml             # the whole chain
+#
+# Keys = bring-up.py option names with underscores (name = --name,
+# host_num = --host-num). Anything here can still be overridden on the
+# command line; anything omitted uses the built-in default shown after
+# "default:". Related options live under a group (vm:, redeploy:, ngc:).
+# Unknown keys are an error, so a typo cannot silently fall back to a default.
+# Every key works on Mac (UTM) and Linux (libvirt/KVM) unless marked.
 
-name: nico-vm1                    # UTM VM name (required)
-user: nico                        # VM login user
-password: Welcome123!             # VM login password
-ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
-# uid: 1000                       # default: your Mac UID (share ownership match)
-# host_num: 126                   # last octet of the VM IP; two VMs can't share one
+# ── The VM ─────────────────────────────────────────────────────────────
+name: nico-vm1                    # VM name (required). UTM VM name on Mac,
+                                  #   libvirt domain name on Linux. Also names
+                                  #   the disk folder and the VM record.
+user: nico                        # login user created in the VM (default nico)
+password: Welcome123!             # that user's password. Asked once during
+                                  #   `prep` when the key is not yet installed;
+                                  #   default Welcome123!
+ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
+                                  #   half is what every later ssh uses.
+                                  #   default: first ~/.ssh/id_*.pub
+# uid: 1000                       # UID of that user inside the VM. Must equal
+                                  #   your host UID so files on the share have
+                                  #   one owner on both sides. default: your UID
+# host_num: 126                   # last octet of the VM IP on the VM network
+                                  #   (192.168.64.<host_num>). Two VMs on one
+                                  #   host need different values. default 126
+# ip: 192.168.64.126              # the VM address as the host reaches it.
+                                  #   default: derived from host_num; set only
+                                  #   when the VM network is not 192.168.64.0/24
+# ip_explicit: 192.168.64.126     # like ip, and ALSO passed to the VM builder
+                                  #   for a foreign vmnet/NAT subnet. Rarely needed.
+# share: /Users/you/projects      # host folder the VM mounts at /home/<user>/mac.
+                                  #   default: the folder that contains the repo
+                                  #   worktree the tools are grafted into (the
+                                  #   how-to's shared/), so it rarely needs setting.
+# share_name: share               # virtiofs mount tag (Linux) / share name (Mac).
+                                  #   The VM builder tags it "share"; leave it.
 
 # ── VM sizing (defaults shown; override per machine) ───────────────────
 # Two tiers (both are CEILINGS — vCPUs and RAM are not reserved on the host):
@@ -18,11 +46,14 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 #                    cpus: 8+  mem_mb: 16384+ — a full site commits ~90% of a
 #                    6-CPU node's CPU requests; a rolling redeploy needs room
 #                    for the surge pod or it sticks (issues.md 20260903-#2)
+# On a 4-core/8-thread laptop keep cpus at 6 and mem_mb at most three quarters
+# of the host RAM.
 # vm:
-#   cpus: 6
-#   mem_mb: 12288
-#   disk_gb: 120                  # sparse — grows with use, ~25G after
-#                                 #   an NGC bring-up
+#   cpus: 6                       # vCPUs (default 6)
+#   mem_mb: 12288                 # RAM in MB (default 12288)
+#   disk_gb: 120                  # disk, sparse — grows with use, ~25G after
+#                                 #   an NGC bring-up, more with source builds
+#                                 #   (default 120)
 
 # ── Redeploy policy (recorded in the site yaml; redeploy-dev-nico.py reads it) ─
 # When a rolling redeploy cannot schedule its surge pod ("Insufficient cpu" —
@@ -33,7 +64,7 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 #               restore the chart's strategy
 # Fires only on that symptom, so it changes nothing on a cluster with room.
 # redeploy:
-#   on_insufficient_cpu: scale-down-first
+#   on_insufficient_cpu: scale-down-first   # wait | scale-down-first (default wait)
 
 # ── DPF (DOCA Platform Framework) — the default DPU-provisioning path ───
 # true (default): NICo runs with DPF enabled and the DPF simulator
@@ -42,22 +73,46 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # path, nothing DPF-related installed. Tuning (namespace, phase dwell,
 # resources) is advanced and lives in the site yaml under nico-system.dpf.
 # dpf: true
-# ── Firmware upgrade simulation (Linux lane) ───────────────────────────
+
+# ── Firmware upgrade simulation (Linux lane only) ───────────────────────
 # false (default): MAT hosts report firmware that already matches, so NICo
 # never upgrades anything. true: MAT hosts start below the desired BMC and
 # UEFI versions and nico-api gets a firmware definition for the mock GB200,
 # so every ingestion runs SimpleUpdate → Redfish task → power cycle →
 # version recheck. The versions live in the site yaml under
-# nico-system.firmware_sim (initial 1.0, desired 2.0 by default).
+# nico-system.firmware_sim (initial 1.0, desired 2.0 by default). Not a
+# bring-up_mac.py option: a Mac config with this key is rejected.
 # firmware_sim: false
 
 # ── Your site identity — EDIT THESE ────────────────────────────────────
-dc: dc1                           # datacenter name (yours to choose)
-site: dev1                        # site name (yours to choose)
-underlay: 11                      # first IP octets — they become Mac-routed
-overlay: 12                       #   prefixes. Pick octets nothing on your
-                                  #   Mac uses (VPN/LAN!); bring-up preflight
-                                  #   warns if the Mac already routes them.
+dc: dc1                           # datacenter name: 1-3 chars, lowercase
+                                  #   letters/digits, starts with a letter. Lands
+                                  #   in bridge names (br-<dc>-internet, 15-char
+                                  #   interface limit). default dc1
+site: dev1                        # site name: 1-8 chars, lowercase letters/
+                                  #   digits, starts with a letter. Lands in the
+                                  #   API hostname nico-api.<dc>-<site>, the
+                                  #   kubeconfig filename and the site folder
+                                  #   sites/<dc>/<site>. default dev
+underlay: 11                      # first IP octets — they become host-routed
+overlay: 12                       #   prefixes (<underlay>.133.1.0/27 holds the
+                                  #   service VIPs, e.g. https://11.133.1.17).
+                                  #   Pick octets nothing on your host uses
+                                  #   (VPN/LAN!); preflight warns if the host
+                                  #   already routes them. defaults 11 and 12
+
+# ── Where the code is (defaults match the how-to layout) ───────────────
+# repo: infra-controller          # the nico repo folder name INSIDE the share
+                                  #   (the worktree the VM builds and deploys
+                                  #   from). default: nico-dev-pub, which is the
+                                  #   fork's own name; the how-to layout uses
+                                  #   infra-controller — set it when your
+                                  #   worktree folder is named differently.
+# nico_dev_rel: infra-controller/tools/nico-dev
+                                  # the grafted tools, relative to the share.
+                                  #   default nico-dev-pub/tools/nico-dev; keep
+                                  #   it consistent with repo.
+
 # To find a deployable NGC tag for ngc.tag below:  ngc-tags.py --config <this file>
 
 # ── Choose ONE deploy mode (setting both is an error) ──────────────────
@@ -69,18 +124,39 @@ overlay: 12                       #   prefixes. Pick octets nothing on your
 # (Flow, RMS, …) are deployed after bring-up from their OWN yaml: see
 # flow-example.yaml and deploy-flow.py. Nothing about them belongs here.
 # ngc:
-#   registry: nvcr.io/<org>/<team>     # base — all images live here
-#   tag: v2.2.0-pr-441-g1234567        # default tag for every image (ngc-tags.py)
-#   tags:                              # optional per-group overrides; each defaults to tag
-#     core: v2.2.0-pr-440-g89abcde     #   the NICo core image (the nico release)
-#     rest: v2.2.0-pr-441-g1234567     #   the six REST images (nico-rest + site-agent)
+#   registry: nvcr.io/<org>/<team>     # base — all images live here (required
+#                                      #   for this mode)
+#   tag: v2.2.0-pr-441-g1234567        # default tag for every image (ngc-tags.py
+#                                      #   lists deployable ones); required
+#   tags:                              # optional per-group overrides; each
+#     core: v2.2.0-pr-440-g89abcde     #   defaults to tag. core = the NICo core
+#     rest: v2.2.0-pr-441-g1234567     #   image (the nico release); rest = the
+#                                      #   six REST images (nico-rest + site-agent)
 #   core_image: nvmetal-carbide        # NGC's name for the core image (default)
-#   images:                            # optional: NGC image names, if NGC publishes one
-#     core: nvmetal-carbide            #   under a different name. Keys under rest are the
-#     rest:                            #   LOCAL names the Helm charts expect (fixed);
-#       nico-rest-api: nico-rest-api   #   values are the NGC names. Unnamed = same name.
-#   token_env: NGC_API_KEY             # env var NAME holding your NGC key
+#   images:                            # optional: NGC image names, if NGC publishes
+#     core: nvmetal-carbide            #   one under a different name. Keys under
+#     rest:                            #   rest are the LOCAL names the Helm charts
+#       nico-rest-api: nico-rest-api   #   expect (fixed); values are the NGC names.
+#                                      #   Unnamed = same name.
+#   token_env: NGC_API_KEY             # NAME of the env var holding your NGC key
+#                                      #   (default NGC_API_KEY; the value is
+#                                      #   never printed or stored)
 #   (legacy spelling still accepted: nico_image: <registry>/<core_image>, nico_tag: <tag>)
 #
-# Source build (the default when ngc: is absent):
-# tag: main-20260830                # image label; default main-<today>
+# Source build (the default when ngc: is absent): images are built from the
+# worktree on the host and pushed to the local registry. First build 20-40
+# minutes, minutes afterwards.
+# tag: main-20260830                # image label; default main-<today>. Use a
+                                    #   new label for every rebuild: a deployed
+                                    #   tag is never rebuilt or redeployed.
+
+# ── Runner behaviour (rarely changed) ──────────────────────────────────
+# step_delay: 10                  # settle pause in seconds between steps, so
+                                  #   bridges, DHCP and pods get a beat (default
+                                  #   10; 0 disables)
+# retries: 1                      # retry a failed step command this many times,
+                                  #   15 s apart, before stopping (default 1;
+                                  #   every step is idempotent)
+#
+# Not config keys (command line only): --from <step>, --until <step>, --list,
+# --dry-run, --config.
