@@ -134,10 +134,11 @@ ngc:
 # tag: main-20260910                   # source-build lane: the image label
 ```
 
-Do not set `ip`. The VM gets `192.168.64.<host_num>` (default 126) on a
-dedicated libvirt NAT network `nico-nat`, bridge `virbr-nico`, which the
-builder creates and records; `--subnet` overrides if that range is taken.
-Several VMs on one host need distinct `name`, `host_num` and octets.
+The VM gets `192.168.64.<host_num>` (default 126) on a dedicated libvirt NAT
+network `nico-nat`, bridge `virbr-nico`, which the builder creates and
+records. If `192.168.64.0/24` is taken on your host, set `subnet:` to another
+first three octets, for example `192.168.77`; the builder and every later step
+use it. Several VMs on one host need distinct `name`, `host_num` and octets.
 
 Choosing an NGC tag. `tag` is the default for every image; the optional
 `tags` map gives one image group (`core`, `rest`, `flow`) a different tag,

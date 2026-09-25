@@ -308,10 +308,13 @@ What the fields mean:
   REST image under a new name, map it in `images` as local name to NGC name,
   and nothing else changes.
 
-Do not set an `ip` field. The VM's address comes from UTM's own subnet. If
-you need a different last octet, set `host_num`; the default is 126. The
-bring-up's preflight warns you if your Mac already routes the octets you
-picked.
+There is no `ip` field. The VM's address is `<UTM subnet>.<host_num>`: the
+builder and the runner both read the subnet from UTM's own vmnet
+configuration, so a Mac whose UTM subnet is not `192.168.64` needs nothing
+set. If you need a different last octet, set `host_num`; the default is 126.
+`subnet:` exists only for a Mac where that read fails (the plist is
+root-only) and the UTM subnet is not `192.168.64`. The bring-up's preflight
+warns you if your Mac already routes the octets you picked.
 
 **Choosing an NGC tag.** The `ngc-tags.py` script lists tags that are
 deployable, that is, recent builds that track main and are published for
