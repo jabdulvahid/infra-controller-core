@@ -42,6 +42,14 @@ ssh_key: ~/.ssh/id_ed25519.pub    # public key to authorize in the VM
 # path, nothing DPF-related installed. Tuning (namespace, phase dwell,
 # resources) is advanced and lives in the site yaml under nico-system.dpf.
 # dpf: true
+# ── Firmware upgrade simulation (Linux lane) ───────────────────────────
+# false (default): MAT hosts report firmware that already matches, so NICo
+# never upgrades anything. true: MAT hosts start below the desired BMC and
+# UEFI versions and nico-api gets a firmware definition for the mock GB200,
+# so every ingestion runs SimpleUpdate → Redfish task → power cycle →
+# version recheck. The versions live in the site yaml under
+# nico-system.firmware_sim (initial 1.0, desired 2.0 by default).
+# firmware_sim: false
 
 # ── Your site identity — EDIT THESE ────────────────────────────────────
 dc: dc1                           # datacenter name (yours to choose)

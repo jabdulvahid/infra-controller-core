@@ -68,6 +68,11 @@ def parse_args():
                    help='DPF as the DPU-provisioning path (default true): [dpf] enabled in '
                         'the API config, DPF CRDs before nico, dpf-sim-controller at the end '
                         'of bring-up. false = legacy iPXE path. From bringup.yaml `dpf:`.')
+    p.add_argument('--firmware-sim', choices=['true', 'false'], default='false',
+                   help='firmware upgrade simulation (default false): MAT hosts start below the '
+                        'desired BMC/UEFI versions and nico-api gets a firmware definition for '
+                        'them, so ingestion runs the upgrade chain. From bringup.yaml '
+                        '`firmware_sim:` (Linux lane).')
     # images: — recorded so every later script (redeploy, add-ons) knows how
     # the site's images are produced without command-line flags
     p.add_argument('--images-source-kind', choices=['ngc', 'build'], default='build',
@@ -156,6 +161,8 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('REDEPLOY_ON_INSUFFICIENT_CPU', args.redeploy_on_insufficient_cpu),
         # DPF as the provisioning path (bringup.yaml dpf:, default true)
         ('DPF_ENABLED',                  args.dpf),
+        # Firmware upgrade simulation (bringup.yaml firmware_sim:, default false)
+        ('FIRMWARE_SIM_ENABLED',         args.firmware_sim),
         # The VM, for host-side scripts (image delivery over ssh)
         ('VM_IP',      args.vm_ip),
         ('VM_USER',    args.vm_user),
