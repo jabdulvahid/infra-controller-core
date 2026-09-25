@@ -22,8 +22,19 @@ Both share every other step.
 ```bash
 sudo apt install libvirt-daemon-system libvirt-clients virtinst cloud-image-utils qemu-utils virtiofsd docker.io git python3 python3-yaml
 sudo usermod -aG libvirt,kvm,docker $USER
-# log out and back in so the groups apply
+# log out and back in (not just a new terminal) so the groups apply
 ```
+
+The source-build lane also needs `kubectl`, `helm` and `docker buildx` on the
+host, because the host builds the images and talks to the VM's cluster:
+
+```bash
+sudo apt install docker-buildx && sudo snap install kubectl --classic && sudo snap install helm --classic
+```
+
+Virtualization must be enabled in the firmware. A fresh machine often ships
+with it off; `kvm-ok` then says "KVM acceleration can NOT be used" and
+`/dev/kvm` is missing. Enable Intel VT-x or AMD SVM in the BIOS and reboot.
 
 No rustup, cargo or Go on the host. Every binary, NICo images included, is
 built inside containers; Docker is the only toolchain.
@@ -74,8 +85,8 @@ tag exists.
 ```bash
 cd tools/nico-dev
 export PATH="$PATH:$(pwd)"   # in your shell profile
-check-prereqs.sh             # NGC lane tier: libvirt, KVM, docker, network, disk
-check-prereqs.sh --build     # also the source-build tier
+check-prereqs.sh             # base tier, enough for the NGC lane: libvirt, KVM, docker, network, 40 GB disk
+check-prereqs.sh --build     # adds the source-build tier: kubectl, helm, docker buildx, 100 GB disk
 ```
 
 The check is read-only. Fix every ✗; each line says how.
