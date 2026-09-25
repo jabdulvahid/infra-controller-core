@@ -102,6 +102,7 @@ redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
+firmware_sim: false # true: hosts start with outdated firmware so ingestion runs the upgrade chain (§6)
 
 dc: dc1
 site: dev1
@@ -264,6 +265,29 @@ reset-mat-state.py <site> --yes
 NICo keeps the fleet's footprint (explored endpoints, expected-machine
 registrations, rotated BMC credentials); without the reset a rerun against
 fresh mocks locks the endpoints out.
+
+### Firmware upgrade simulation
+
+By default MAT hosts report firmware that already matches what NICo wants, so
+ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
+changes that for every host: MAT reports the `initial` BMC and UEFI versions
+and nico-api gets a firmware definition for the mock GB200 requiring the
+`desired` ones, written into the chart's firmware volume by an init
+container. Ingestion then runs the full chain per host: preingestion finds
+the versions below the minimum, uploads through `SimpleUpdate`, polls the
+Redfish task to `Completed`, power-cycles, reads the new version back, and
+only then continues to Ready. Watch it in the nico-api log:
+
+```bash
+kubectl -n nico-system logs deploy/nico-api | grep -E "preingestion minimum|firmware upload|Firmware version satisfies"
+```
+
+The versions are `nico-system.firmware_sim` in the site yaml (`initial` 1.0,
+`desired` 2.0); the mock accepts any string, so keep initial below desired.
+Changing them after bring-up means `bring-up.py --from nico` to regenerate
+the values and `configure-clis.py <site>` for the MAT config, then
+`reset-mat-state.py` and a fresh MAT run. `false` renders exactly what the
+site rendered before the option existed.
 
 ### DPF and the two provisioning modes
 

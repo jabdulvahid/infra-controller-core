@@ -40,6 +40,7 @@ Usage:
 import argparse
 import platform
 import ipaddress
+import shlex
 import sys
 from pathlib import Path
 
@@ -582,6 +583,11 @@ def gen_nico(cfg):
     dpf = ns.get('dpf') or {}
     dpf_enabled = bool(dpf.get('enabled', False))
     dpf_ns = dpf.get('namespace') or 'dpf-operator-system'
+    # Firmware upgrade simulation (nico-system.firmware_sim, default off — a
+    # site yaml without the key renders exactly as before).
+    fw_sim = ns.get('firmware_sim') or {}
+    fw_sim_enabled = bool(fw_sim.get('enabled', False))
+    fw_desired = fw_sim.get('desired') or {}
 
     values = {
         'global': {
@@ -694,7 +700,54 @@ def gen_nico(cfg):
             },
         },
     }
+    if fw_sim_enabled:
+        values['nico-api']['initContainers'] = [firmware_sim_init_container(fw_desired)]
     return values
+
+
+def firmware_sim_init_container(desired):
+    """The nico-api init container for nico-system.firmware_sim.
+
+    nico-api reads firmware definitions from <firmware_directory>/*/metadata.toml
+    (default /opt/nico/firmware, the chart's `firmware` emptyDir volume) and
+    matches a host by BMC vendor and model. MAT's GB200 mock advertises
+    WIWYNN, which NICo classifies as vendor Nvidia, model "GB200 NVL"; its BMC
+    inventory entry is FW_BMC_0 and its UEFI entry HGX_FW_CPU_0
+    (crates/bmc-mock/src/hw/wiwynn_gb200_nvl.rs). Preingestion upgrades a
+    component whose reported version is below preingest_upgrade_when_below,
+    uploading the `default` known firmware — the file must exist because the
+    upload opens it; the mock accepts any bytes. So the container writes one
+    metadata.toml and a dummy binary into the volume before nico-api starts.
+    """
+    bmc = str(desired.get('bmc', '2.0'))
+    uefi = str(desired.get('uefi', '2.0'))
+    fw_dir = '/opt/nico/firmware/gb200-sim'
+    metadata = f'''vendor = "Nvidia"
+model = "GB200 NVL"
+
+[components.bmc]
+current_version_reported_as = "^FW_BMC_0$"
+preingest_upgrade_when_below = "{bmc}"
+known_firmware = [ {{ version = "{bmc}", filename = "{fw_dir}/bmc-{bmc}.bin", default = true }} ]
+
+[components.uefi]
+current_version_reported_as = "^HGX_FW_CPU_0$"
+preingest_upgrade_when_below = "{uefi}"
+known_firmware = [ {{ version = "{uefi}", filename = "{fw_dir}/uefi-{uefi}.bin", default = true }} ]
+'''
+    script = (
+        f'set -e; d=/fw/gb200-sim; mkdir -p "$d"; '
+        f'printf %s {shlex.quote(metadata)} > "$d/metadata.toml"; '
+        f'printf "nico-dev firmware_sim dummy bmc {bmc}\\n" > "$d/bmc-{bmc}.bin"; '
+        f'printf "nico-dev firmware_sim dummy uefi {uefi}\\n" > "$d/uefi-{uefi}.bin"; '
+        f'chmod -R a+rX /fw; ls -l "$d"'
+    )
+    return {
+        'name': 'firmware-sim',
+        'image': 'busybox:1.37',
+        'command': ['sh', '-c', script],
+        'volumeMounts': [{'name': 'firmware', 'mountPath': '/fw'}],
+    }
 
 
 

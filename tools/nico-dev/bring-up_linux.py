@@ -234,6 +234,7 @@ def build_steps(args):
                  f' --nico-dev-folder {args.nico_dev_rel.removesuffix("/nico-dev")}/nico-dev'
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
                  f' --dpf {str(args.dpf).lower()}'
+                 f' --firmware-sim {str(args.firmware_sim).lower()}'
                  f' --vm-ip {args.ip} --vm-user {args.user}'
                  + (f' --vm-ssh-key {shlex.quote(str(Path(args.ssh_key).expanduser()).removesuffix(".pub"))}'
                     if args.ssh_key else '')
@@ -371,6 +372,11 @@ def main():
     p.add_argument('--dpf', action=argparse.BooleanOptionalAction, default=True,
                    help='DPF as the DPU-provisioning path (default; config: dpf: true|false). '
                         '--no-dpf = legacy iPXE path: no DPF CRDs, no simulator, [dpf] off')
+    p.add_argument('--firmware-sim', action=argparse.BooleanOptionalAction, default=False,
+                   help='start MAT hosts with outdated BMC/UEFI firmware and give nico-api the '
+                        'desired versions, so ingestion runs the firmware upgrade chain '
+                        '(config: firmware_sim: true|false; site yaml nico-system.firmware_sim). '
+                        'Linux lane only.')
     p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'scale-down-first'],
                    default='wait',
                    help='redeploy policy when a rollout cannot schedule its surge pod '

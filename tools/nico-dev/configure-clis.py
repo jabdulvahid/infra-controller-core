@@ -213,6 +213,17 @@ def gen_mat_toml(cfg, site_folder):
     admin_net = networks.get('admin', {})
     mat_gw    = mat_net.get('gateway', '')
     admin_gw  = admin_net.get('gateway', '')
+    # nico-system.firmware_sim (default off): start the hosts below the desired
+    # BMC/UEFI versions so NICo runs the firmware upgrade chain at ingestion.
+    # The matching nico-api side (the firmware definition) is rendered by
+    # generate_dev_values.py from the same key.
+    fw_sim = cfg.get('nico-system', {}).get('firmware_sim') or {}
+    fw_line = ''
+    if fw_sim.get('enabled', False):
+        init = fw_sim.get('initial') or {}
+        fw_line = ('host_firmware_versions = { bmc = "%s", uefi = "%s" }  '
+                   '# firmware_sim: below the desired versions nico-api requires\n'
+                   % (init.get('bmc', '1.0'), init.get('uefi', '1.0')))
 
     return f'''\
 # MAT (Machine-a-tron) configuration for site {sitename}
@@ -235,7 +246,7 @@ type = "api"   # API mode — no physical DHCP relay needed
 hw_type = "wiwynn_gb200_nvl"
 host_count = 2
 dpu_per_host_count = 1
-# Canonical relay names (MAT #5229). The old admin_dhcp_relay_address was a
+{fw_line}# Canonical relay names (MAT #5229). The old admin_dhcp_relay_address was a
 # MISNOMER for the underlay relay (DPU OOB boot + switch NVOS); pointing it
 # at the admin gateway wedged DPU OOB DHCP once nico #5084 started
 # validating segment types (20260826-#1). Both relays are the underlay

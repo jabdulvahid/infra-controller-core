@@ -215,6 +215,20 @@ nico-system:
         requests: { cpu: 100m, memory: 128Mi }
         limits:   { cpu: 500m, memory: 512Mi }
 
+  # Firmware upgrade simulation — enabled comes from bringup.yaml
+  # `firmware_sim:` (default false). true = MAT reports `initial` as the
+  # hosts' BMC and UEFI versions (mat-config.toml host_firmware_versions) and
+  # nico-api gets a firmware definition for the mock GB200 (vendor Nvidia,
+  # model "GB200 NVL") requiring `desired`, written into the chart's firmware
+  # volume by an init container. Ingestion then runs SimpleUpdate → Redfish
+  # task → power cycle → version recheck for every host. false = today's
+  # behaviour: no firmware definition, no upgrade. Versions are plain strings
+  # the mock accepts as-is; keep initial below desired.
+  firmware_sim:
+    enabled: FIRMWARE_SIM_ENABLED
+    initial: { bmc: "1.0", uefi: "1.0" }
+    desired: { bmc: "2.0", uefi: "2.0" }
+
   vault:
     # file = persistent storage (hostPath /var/lib/vault) + auto-unseal sidecar.
     # Survives VM reboots — REQUIRED for golden images. 'dev' (in-memory,
