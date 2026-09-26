@@ -41,6 +41,13 @@ except ImportError:
     print('Error: pyyaml not installed. Run: sudo apt install python3-yaml')
     sys.exit(1)
 
+# Progress events for bring-up-status.py; a no-op unless the bring-up runner
+# passed $NICO_DEV_PROGRESS through `sudo env` (see progress.py).
+import importlib.util as _ilu_p
+_spec_p = _ilu_p.spec_from_file_location('progress', Path(__file__).resolve().parent / 'progress.py')
+_progress = _ilu_p.module_from_spec(_spec_p)
+_spec_p.loader.exec_module(_progress)
+
 
 DEPLOY_ORDER = [
     'local-path-provisioner',
@@ -550,6 +557,10 @@ def main():
         if release in skip_set:
             print(f'  skipping {release}')
             return True
+        # Every release block starts with this check, so it is the one place
+        # that knows a release is about to be installed: tell bring-up-status.py.
+        _progress.emit('stage', step='nico',
+                       detail=f'release {DEPLOY_ORDER.index(release) + 1}/{len(DEPLOY_ORDER)} {release}')
         return False
 
     if args.skip_to or args.only:

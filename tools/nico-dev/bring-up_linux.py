@@ -39,6 +39,10 @@ import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location('site_images', NICO_DEV / 'site_images.py')
 _site_images = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_site_images)
+# Progress events for bring-up-status.py (a second terminal); see progress.py.
+_spec_p = _ilu.spec_from_file_location('progress', NICO_DEV / 'progress.py')
+_progress = _ilu.module_from_spec(_spec_p)
+_spec_p.loader.exec_module(_progress)
 # When invoked via the platform dispatcher, show ITS name in hints.
 ENTRY = os.environ.get('NICO_DEV_ENTRY', sys.argv[0])
 BRIDGE = 'virbr-nico'          # nico-nat's host bridge (build-nico-dev-vm_linux)
@@ -280,7 +284,11 @@ def build_steps(args):
          f'If containerd shows ✗: the config_path fix in how-to §7.'),
 
         ('nico', 'VM', 'Deploy the nico stack',
-         [vm_ssh(args, f'sudo python3 {ndev_vm}/deploy-dev-nico.py'
+         # `sudo env VAR=…` carries the progress file to the VM-side script
+         # (sudo itself resets the environment); see progress.py.
+         [vm_ssh(args, f'sudo env {_progress.ENV}='
+                       f'{_progress.vm_path_for(f"/home/{args.user}/mac", args.name)}'
+                       f' python3 {ndev_vm}/deploy-dev-nico.py'
                        f' {site_vm} --tag {args.tag}')],
          'helm --wait timeouts: rerun (idempotent). Pods Running but VIP\n'
          'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
@@ -585,6 +593,26 @@ def main():
         print(f'    {go}')
         return
 
+    # Progress file for bring-up-status.py: fresh on a run from the first
+    # step, kept on a resume so finished steps stay visible. Host-side
+    # scripts inherit $NICO_DEV_PROGRESS; the VM-side one gets it via sudo env.
+    share_dir = str(Path(args.share).expanduser())
+    site_dir = f'{share_dir}/sites/{args.dc}/{args.site}'
+    kubeconfig = f'{site_dir}/{args.dc}-{args.site}.kubeconfig.yaml'
+    progress_file = _progress.path_for(args.share, args.name)
+    _progress.start_file(progress_file, fresh=(start == 0))
+    _progress.emit('plan',
+                   steps=[{'key': k, 'where': w, 'desc': d} for k, w, d, _, _ in steps],
+                   first=keys[start], last=keys[stop],
+                   name=args.name, ip=args.ip, user=args.user, dc=args.dc, site=args.site,
+                   share=share_dir, site_dir=site_dir, kubeconfig=kubeconfig,
+                   admin_url=f'https://{args.underlay}.133.1.17/admin', mode=mode,
+                   config=args.config or '')
+    print(f'  progress: bring-up-status.py '
+          f'{"--config " + args.config if args.config else "--name " + args.name}'
+          f'   (second terminal; file {progress_file})')
+    run_t0 = time.time()
+
     first = True
     for key, where, desc, cmds, recovery in steps[start:stop + 1]:
         if not first and args.step_delay > 0:
@@ -593,6 +621,8 @@ def main():
         first = False
         n = keys.index(key) + 1
         print(f'\n{bold(f"━━ Step {n}/{len(keys)}: {key}")} [{where}] — {desc} ━━')
+        _progress.emit('start', step=key, i=n, n=len(keys))
+        step_t0 = time.time()
         for cmd in cmds:
             rc = sh(cmd)
             attempt = 0
@@ -609,6 +639,8 @@ def main():
                     resume = (f'{ENTRY} --name {args.name} --from {key}'
                               + (f' --tag {args.tag}'
                                  if key in ('build', 'nico') else ''))
+                _progress.emit('fail', step=key, secs=round(time.time() - step_t0),
+                               rc=rc, resume=resume)
                 hdr = red(f'✗ Step "{key}" failed (exit {rc}).')
                 print(f'''
 {hdr}
@@ -619,12 +651,13 @@ Recovery:
 Then resume with:
   {resume}''', file=sys.stderr)
                 raise SystemExit(1)
+        _progress.emit('done', step=key, secs=round(time.time() - step_t0))
         print()
 
+    _progress.emit('finished', secs=round(time.time() - run_t0))
     print('=' * 60)
     print(green(f'  ✓ Done. GUI: https://{args.underlay}.133.1.17/admin'))
-    print(f'  KUBECONFIG=%s/sites/{args.dc}/{args.site}/{args.dc}-{args.site}.kubeconfig.yaml'
-          % str(Path(args.share).expanduser()))
+    print(f'  KUBECONFIG={kubeconfig}')
     print('=' * 60)
 
 

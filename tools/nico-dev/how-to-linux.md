@@ -166,6 +166,23 @@ prompt at the end for the host route to the service VIPs. On failure the
 runner prints that step's known failure modes and the resume command
 (`--from <step>`). Every step is safe to rerun.
 
+The runner's output is the raw output of every command it runs, which is
+long and says little about where the run stands. For that, open a second
+terminal:
+
+```bash
+bring-up-status.py --config bringup-mysite.yaml          # redraws every 2 s; Ctrl-C leaves the run alone
+bring-up-status.py --config bringup-mysite.yaml --once   # one snapshot, for pasting
+```
+
+It shows every step as done, running, failed or not yet, the time each took,
+what the current step is doing inside it (which of the three core images or
+six REST images is building, which Helm release is installing), how to ssh to
+the VM, the kubeconfig, the URL you will get at the end, and after a failure
+the resume command. The runner writes the events to
+`<share>/.bring-up/<vm-name>.jsonl`; a run started before the tools had this
+feature has no file, and a resume with `--from` keeps the earlier steps.
+
 Done looks like a URL: `https://11.133.1.17/admin` for `underlay: 11`.
 
 Reaching the admin UI from your laptop when the host is headless:
@@ -450,6 +467,7 @@ is listed in `~/.nico-dev/vms/<vm>.yaml`.
 | `check-parity.py [repo] [--quiet]` | host | does the checkout still match what the nico-dev scripts assume |
 | `image_delivery.py <site> <ref>… [--check]` | host | put images into the VM's containerd through the share (never through the registry tunnel) |
 | `bring-up.py --config X [--dry-run] [--from step]` | host | the whole bring-up |
+| `bring-up-status.py --config X [--once]` | host | high-level progress of that bring-up in a second terminal: steps done/running/failed, per-step time, what the current step is doing, ssh/kubeconfig/URL, resume command |
 | `dev-down.py --config X [--remove-infra]` | host | the whole teardown |
 | `ngc-tags.py --config X` | host | deployable NGC tags |
 | `build-dev-nico.py <site> --tag T` | host | build images, push to local registry |
