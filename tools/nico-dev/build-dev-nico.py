@@ -33,6 +33,17 @@ except ImportError:
     print('Error: pyyaml not installed. Run: pip install pyyaml')
     sys.exit(1)
 
+# Progress events for bring-up-status.py; a no-op unless the bring-up runner
+# exported $NICO_DEV_PROGRESS (see progress.py).
+import importlib.util as _ilu_p
+_spec_p = _ilu_p.spec_from_file_location('progress', Path(__file__).resolve().parent / 'progress.py')
+_progress = _ilu_p.module_from_spec(_spec_p)
+_spec_p.loader.exec_module(_progress)
+
+
+def stage(detail):
+    _progress.emit('stage', step='build', detail=detail)
+
 
 def resolve_site(arg):
     p = Path(arg).expanduser()
@@ -228,6 +239,7 @@ def main():
 
         try:
             print(f'\nStep 2: Build build-container-{MACHINE}...')
+            stage(f'image 1/3 carbide-build ({MACHINE} toolchain; first build 25-40 min)')
             # Since upstream #5896 (2026-09-14) the builder Dockerfile pins Kea:
             # `apt install kea-dev=${KEA_VERSION}` with the value in
             # dev/docker/kea.version (cargo-make reads the same file). Without
@@ -252,6 +264,7 @@ def main():
             )
 
             print('\nStep 3: Build runtime-dev...')
+            stage('image 2/3 runtime-dev (minutes)')
             docker_build(
                 tag=runtime_ctr,
                 dockerfile=repo_dev_dir / 'Dockerfile.runtime-dev',
@@ -260,6 +273,7 @@ def main():
             )
 
             print(f'\nStep 4: Build nico:{args.tag}...')
+            stage(f'image 3/3 nico:{args.tag} (compiles the workspace; the other long stretch)')
             docker_build(
                 tag=nico_img,
                 dockerfile=repo_dev_dir / 'Dockerfile.nico-dev',
@@ -321,6 +335,7 @@ def main():
         print(f'\nStep 4b: Building NICo REST images (Go, {DOCKER_ARCH}) → {push_reg}...')
         for i, image in enumerate(rest_images, 1):
             print(f'\n  [{i}/{len(rest_images)}] {image}:{args.tag}')
+            stage(f'REST image {i}/{len(rest_images)} {image} (Go, minutes each)')
             r = subprocess.run(
                 ['docker', 'buildx', 'build', '--platform', f'linux/{DOCKER_ARCH}',
                  '--push',
@@ -345,6 +360,7 @@ def main():
         _si2 = _ilu2.module_from_spec(_s3); _s3.loader.exec_module(_si2)
         vm_registry = _si2.read(cfg)['registry']
         print('\nStep 5b: Deliver images to the VM through the share...')
+        stage('delivering images to the VM through the share')
         _idl.deliver(cfg, Path(site_yaml).parent, [f'{vm_registry}/{r}' for r in refs], label=args.tag, push_reg=push_reg)
 
     rest_built = not (args.skip_rest or not rest_enabled)
@@ -371,6 +387,7 @@ def main():
             print(f'    (a bloated image fails or times out pulling over the UTM NAT link)')
 
     print('\nStep 5: Pushing to registry...')
+    stage('pushing images to the local registry')
     docker_push(build_ctr)
     docker_push(runtime_ctr)
     docker_push(nico_img)
