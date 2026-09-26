@@ -122,17 +122,20 @@ overlay: 12                       #   prefixes (<underlay>.133.1.0/27 holds the
                                   #   routes each site's prefixes to its VM, so
                                   #   two sites on 11/12 would collide.
 
-# ── Where the code is (defaults match the how-to layout) ───────────────
-# repo: infra-controller          # the nico repo folder name INSIDE the share
-                                  #   (the worktree the VM builds and deploys
-                                  #   from). default: nico-dev-pub, which is the
-                                  #   fork's own name; the how-to layout uses
-                                  #   infra-controller — set it when your
-                                  #   worktree folder is named differently.
+# ── Where the code is inside the folder specified in share: above ──────
+# Both defaults are derived from where these tools sit: grafted into
+# <share>/<repo>/tools/nico-dev, the runner knows share, repo and the tools
+# path by itself, so in the how-to layout neither key is set.
+# repo: infra-controller          # the nico repo folder name inside share: —
+                                  #   the worktree the VM builds and deploys
+                                  #   from. default: the folder these tools are
+                                  #   grafted into. Set it only when the tools
+                                  #   live outside the repo (side-by-side layout,
+                                  #   <share>/nico-dev next to the repo).
 # nico_dev_rel: infra-controller/tools/nico-dev
-                                  # the grafted tools, relative to the share.
-                                  #   default nico-dev-pub/tools/nico-dev; keep
-                                  #   it consistent with repo.
+                                  # the tools folder, relative to share:.
+                                  #   default: derived the same way; set it only
+                                  #   together with repo in that layout.
 
 # To find a deployable NGC tag for ngc.tag below:  ngc-tags.py --config <this file>
 
