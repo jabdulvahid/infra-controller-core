@@ -123,19 +123,18 @@ overlay: 12                       #   prefixes (<underlay>.133.1.0/27 holds the
                                   #   two sites on 11/12 would collide.
 
 # ── Where the code is inside the folder specified in share: above ──────
-# Both defaults are derived from where these tools sit: grafted into
-# <share>/<repo>/tools/nico-dev, the runner knows share, repo and the tools
-# path by itself, so in the how-to layout neither key is set.
+# Both defaults are derived from where these tools sit
+# (<share>/<repo>/tools/nico-dev).
 # repo: infra-controller          # the nico repo folder name inside share: —
                                   #   the worktree the VM builds and deploys
                                   #   from. default: the folder these tools are
                                   #   grafted into. Set it only when the tools
-                                  #   live outside the repo (side-by-side layout,
-                                  #   <share>/nico-dev next to the repo).
+                                  #   live outside the repo (<share>/nico-dev
+                                  #   next to the repo).
 # nico_dev_rel: infra-controller/tools/nico-dev
                                   # the tools folder, relative to share:.
                                   #   default: derived the same way; set it only
-                                  #   together with repo in that layout.
+                                  #   together with repo.
 
 # To find a deployable NGC tag for ngc.tag below:  ngc-tags.py --config <this file>
 
