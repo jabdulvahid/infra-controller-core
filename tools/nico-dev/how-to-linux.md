@@ -39,10 +39,34 @@ with it off; `kvm-ok` then says "KVM acceleration can NOT be used" and
 No rustup, cargo or Go on the host. Every binary, NICo images included, is
 built inside containers; Docker is the only toolchain.
 
-| Purpose | CPUs | RAM | Notes |
+**Host sizing.** The running site is modest, about 5 GB and a few cores.
+The first source build is not: it compiles the whole Rust workspace on the
+host while the VM runs beside it, and on a small machine the two starve each
+other. Observed on a 2017 quad-core laptop with 16 GB and a desktop session:
+the host swapped the VM's memory, the control plane restarted for hours, and
+the desktop hung (issues.md 20260926-#1 context).
+
+| Host | Lane | VM (`vm:` in bringup.yaml) | Notes |
 |---|---|---|---|
-| build-and-play: NGC lane, use the site, no redeploys | 6 | 8 GB | the running stack uses about 5 GB |
-| development: source builds, redeploy cycles, MAT | 8+ | 16 GB+ | a full site commits about 90% of a 6-CPU node's CPU requests |
+| 16 GB, 4 cores | NGC only | `cpus: 4`, `mem_mb: 8192` | runs a site; do not source-build here |
+| 32 GB, 8+ modern cores, NVMe | NGC or source | `cpus: 6`, `mem_mb: 12288` | the recommended development machine |
+| 64 GB, 12+ cores | source, several sites | `cpus: 8`, `mem_mb: 16384` per VM | redeploy cycles and MAT at full size |
+
+The VM values are ceilings, not reservations, but the host must hold the VM
+plus about 8 GB for a source build plus its own OS. Two more host rules:
+
+- **Ubuntu Server, not Desktop.** A desktop session takes 1.5 to 2 GB and CPU
+  the build needs, and its idle timer suspends the machine. If you must use a
+  desktop install, switch to text mode (`sudo systemctl set-default
+  multi-user.target`).
+- **No suspend, ever, while a site runs.** A suspended host freezes the VM;
+  on resume the guest clock jumps, etcd leases and leader locks expire and the
+  control plane restarts. Mask it and ignore the lid:
+
+  ```bash
+  sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+  sudo sed -i 's/^#\?HandleLidSwitch=.*/HandleLidSwitch=ignore/; s/^#\?HandleLidSwitchExternalPower=.*/HandleLidSwitchExternalPower=ignore/' /etc/systemd/logind.conf && sudo systemctl restart systemd-logind
+  ```
 
 The VM disk is sparse, 120 GB nominal, about 25 GB after an NGC bring-up.
 A `ufw` default-deny host works unchanged: Docker and libvirt insert their
