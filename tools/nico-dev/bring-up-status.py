@@ -154,10 +154,24 @@ def render(events, path, now=None):
         else:
             L.append(row + desc)
     L.append('')
-    L.append(cyan('ssh:      ') + f'ssh {plan["user"]}@{plan["ip"]}')
-    L.append(cyan('site:     ') + plan['site_dir'])
-    L.append(cyan('kubectl:  ') + f'KUBECONFIG={plan["kubeconfig"]} kubectl get pods -A')
-    L.append(cyan('done:     ') + plan['admin_url'])
+
+    def ready_after(step):
+        """The step that provides an access line is done (or was done by an earlier run)."""
+        return state.get(step, {}).get('status') in ('done', 'earlier')
+
+    def access(label, text, step, what):
+        if ready_after(step):
+            L.append(cyan(f'{label:<10}') + text)
+        else:
+            L.append(dim(f'{label:<10}{what} — not ready, after step {step}'))
+
+    access('ssh:', f'ssh {plan["user"]}@{plan["ip"]}', 'prep', f'the VM at {plan["ip"]}')
+    access('site:', plan['site_dir'], 'site', 'the site folder')
+    access('kubectl:', f'KUBECONFIG={plan["kubeconfig"]} kubectl get pods -A', 'cp', 'the cluster')
+    if finished:
+        L.append(cyan('admin UI: ') + green(plan['admin_url']))
+    else:
+        L.append(dim(f'{"admin UI:":<10}{plan["admin_url"]} — not ready, after step route'))
     if failed:
         L.append('')
         L.append(red(f'✗ step {failed["step"]} failed (exit {failed["rc"]})') +
