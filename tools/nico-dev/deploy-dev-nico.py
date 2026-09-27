@@ -638,12 +638,20 @@ def main():
                     kubeconfig, check=False)
         print('  vault ✓')
 
-    # Resolve vault root token (needed for nico-prereqs regardless of skip_set)
-    if vault_mode == 'file':
-        vault_token = ensure_vault_initialized(kubeconfig)
-    else:
-        vault_token = cfg.get('nico-system', {}).get('vault', {}).get('dev_root_token', 'root')
-    wait_vault_ready(kubeconfig)
+    # Resolve the vault root token and wait for Vault — needed by nico-prereqs
+    # and everything after it, and right after deploying vault itself. Skipped
+    # when this run touches none of those (e.g. `--only cert-manager` on a
+    # fresh cluster, where there is no Vault to wait for yet); a full run and
+    # every --skip-to/--only at or after vault behave exactly as before.
+    vault_token = None
+    needs_vault = any(r not in skip_set
+                      for r in ['vault'] + DEPLOY_ORDER[DEPLOY_ORDER.index('nico-prereqs'):])
+    if needs_vault:
+        if vault_mode == 'file':
+            vault_token = ensure_vault_initialized(kubeconfig)
+        else:
+            vault_token = cfg.get('nico-system', {}).get('vault', {}).get('dev_root_token', 'root')
+        wait_vault_ready(kubeconfig)
 
     # ── external-secrets ──────────────────────────────────────────────────────
     if not skip('external-secrets'):

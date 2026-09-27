@@ -12,9 +12,11 @@ The file is <share>/.bring-up/<vm-name>.jsonl. With --config, share and name
 come from the config the same way the runner derives them; --share overrides.
 
 What it shows: every step with ✓ done / ▶ running / ✗ failed / ○ not yet,
-the time each took, what the current step is doing inside (image 2/3,
-release 7/12 …), how to reach the VM and the cluster, the URL at the end,
-and the resume command after a failure.
+the time each took, the NICo releases grouped as core and rest, what the
+current step is doing inside (image 2/3, release 7/12 …), how to reach the
+VM and the cluster, the URL at the end, and the resume command after a
+failure. Colour on a terminal (NO_COLOR / FORCE_COLOR honoured); --once and
+pipes are plain.
 """
 
 import argparse
@@ -32,6 +34,21 @@ _spec_p.loader.exec_module(_progress)
 
 # Same self-locating default as the runner: <share>/<repo>/tools/nico-dev.
 DEF_SHARE = NICO_DEV.parents[2] if NICO_DEV.parent.name == 'tools' else NICO_DEV.parents[1]
+
+# ── colour (same rules as the runner: terminal only, NO_COLOR / FORCE_COLOR) ──
+COLOR = {'on': False}
+
+
+def paint(code, s):
+    return f'\033[{code}m{s}\033[0m' if COLOR['on'] and s else s
+
+
+def green(s):  return paint('32', s)
+def red(s):    return paint('1;31', s)
+def yellow(s): return paint('33', s)
+def cyan(s):   return paint('36', s)
+def dim(s):    return paint('2', s)
+def bold(s):   return paint('1', s)
 
 
 def hms(secs):
@@ -91,16 +108,27 @@ def render(events, path, now=None):
     t0 = plan['ts']
     elapsed = (finished['ts'] if finished else now) - t0
     started = time.strftime('%H:%M', time.localtime(t0))
-    head = f'bring-up {plan["name"]} — {plan["dc"]}/{plan["site"]} — {plan["mode"]} — started {started}, {hms(elapsed)}'
+    n_done = sum(1 for s in state.values() if s['status'] in ('done', 'earlier'))
+    head = (bold(f'bring-up {plan["name"]}') + f' — {plan["dc"]}/{plan["site"]} — {plan["mode"]}'
+            f' — started {started}, {hms(elapsed)} — {n_done}/{len(steps)} steps done')
     if finished:
-        head += '  ✓ FINISHED'
+        head += '  ' + green('✓ FINISHED')
     elif failed:
-        head += '  ✗ FAILED'
+        head += '  ' + red('✗ FAILED')
     L = [head, '']
-    marks = {'done': '✓', 'earlier': '✓', 'running': '▶', 'failed': '✗', 'todo': '○'}
+    marks = {'done': green('✓'), 'earlier': green('✓'), 'running': yellow('▶'),
+             'failed': red('✗'), 'todo': dim('○')}
+    kw = max(9, max(len(k) for k in keys))          # key column width
+    group = None
     for i, s in enumerate(steps, 1):
+        g = s.get('group') or ''
+        if g != group:
+            group = g
+            if g:
+                n_in = sum(1 for x in steps if x.get('group') == g)
+                what = 'the platform releases and nico' if g == 'core' else 'the REST stack'
+                L.append(dim(f'    ── {g}: {what} ({n_in} releases) ──'))
         st = state[s['key']]
-        mark = marks[st['status']]
         if st['status'] == 'running':
             dur = hms(now - st['start'])
         elif st['secs'] is not None:
@@ -109,26 +137,32 @@ def render(events, path, now=None):
             dur = 'earlier run'
         else:
             dur = ''
-        line = f'{i:>3} {s["key"]:<9} {mark}  {dur:>11}   {s["desc"]}'
+        desc = s['desc'].split(': ', 1)[1] if g and s['desc'].startswith(g + ': ') else s['desc']
+        key = f'{"  " if g else ""}{s["key"]}'.ljust(kw + 2)   # releases indented, marks aligned
+        row = f'{i:>3} {key} {marks[st["status"]]}  {dur:>11}   '
+        sub = f'{"":>3} {"":<{kw + 2}}    {"":>11}   '
         if st['status'] == 'running':
-            line += '   ◀ current'
+            L.append(row + yellow(desc + '   ◀ current'))
             if st['stage']:
-                L.append(line)
-                line = f'{"":>3} {"":<9}    {"":>11}   ↳ {st["stage"]}'
-        elif st['status'] == 'failed' and st['stage']:
-            L.append(line)
-            line = f'{"":>3} {"":<9}    {"":>11}   ↳ failed during: {st["stage"]}'
-        L.append(line)
+                L.append(sub + yellow(f'↳ {st["stage"]}'))
+        elif st['status'] == 'failed':
+            L.append(row + red(desc))
+            if st['stage']:
+                L.append(sub + red(f'↳ failed during: {st["stage"]}'))
+        elif st['status'] == 'todo':
+            L.append(row + dim(desc))
+        else:
+            L.append(row + desc)
     L.append('')
-    L.append(f'ssh:      ssh {plan["user"]}@{plan["ip"]}')
-    L.append(f'site:     {plan["site_dir"]}')
-    L.append(f'kubectl:  KUBECONFIG={plan["kubeconfig"]} kubectl get pods -A')
-    L.append(f'done:     {plan["admin_url"]}')
+    L.append(cyan('ssh:      ') + f'ssh {plan["user"]}@{plan["ip"]}')
+    L.append(cyan('site:     ') + plan['site_dir'])
+    L.append(cyan('kubectl:  ') + f'KUBECONFIG={plan["kubeconfig"]} kubectl get pods -A')
+    L.append(cyan('done:     ') + plan['admin_url'])
     if failed:
         L.append('')
-        L.append(f'✗ step {failed["step"]} failed (exit {failed["rc"]}) — the runner printed the '
-                 f'recovery notes; resume with:')
-        L.append(f'    {failed["resume"]}')
+        L.append(red(f'✗ step {failed["step"]} failed (exit {failed["rc"]})') +
+                 ' — the runner printed the recovery notes; resume with:')
+        L.append(bold(f'    {failed["resume"]}'))
     return L
 
 
@@ -140,7 +174,7 @@ def main():
     p.add_argument('--share', default=None, help=f'share folder (default: from --config, else {DEF_SHARE})')
     p.add_argument('--file', default=None, help='the progress file itself (overrides the above)')
     p.add_argument('--interval', type=float, default=2.0, help='redraw interval in seconds (default 2)')
-    p.add_argument('--once', action='store_true', help='print once and exit')
+    p.add_argument('--once', action='store_true', help='print once, plain, and exit')
     a = p.parse_args()
 
     name, share = a.name, a.share
@@ -160,13 +194,15 @@ def main():
         path = _progress.path_for(share or DEF_SHARE, name)
 
     if a.once or not sys.stdout.isatty():
+        COLOR['on'] = bool(os.environ.get('FORCE_COLOR')) and not os.environ.get('NO_COLOR')
         print('\n'.join(render(load(path), path)))
         return
+    COLOR['on'] = not os.environ.get('NO_COLOR')
     try:
         while True:
             lines = render(load(path), path)
             sys.stdout.write('\033[H\033[J' + '\n'.join(lines) + '\n\n'
-                             f'refresh {a.interval:g}s — Ctrl-C to stop (the bring-up keeps running)\n')
+                             + dim(f'refresh {a.interval:g}s — Ctrl-C to stop (the bring-up keeps running)') + '\n')
             sys.stdout.flush()
             time.sleep(a.interval)
     except KeyboardInterrupt:
