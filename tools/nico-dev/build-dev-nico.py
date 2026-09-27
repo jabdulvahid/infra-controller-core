@@ -236,6 +236,17 @@ def main():
         copies = ['Dockerfile.runtime-dev', 'Dockerfile.nico-dev']
         for name in copies:
             shutil.copy2(this_dir / name, repo_dev_dir / name)
+        # Dockerfile.nico-dev does `COPY . ./` of the whole checkout, and the
+        # grafted tools live INSIDE it (tools/nico-dev), so every regraft
+        # changed the COPY layer and recompiled the workspace (20260927-#2).
+        # BuildKit honours a Dockerfile-specific ignore file next to the
+        # Dockerfile, which REPLACES the root .dockerignore, so start from the
+        # repo's own rules and add ours.
+        root_ignore = repo_path / '.dockerignore'
+        rules = root_ignore.read_text().rstrip() + '\n' if root_ignore.exists() else ''
+        (repo_dev_dir / 'Dockerfile.nico-dev.dockerignore').write_text(
+            rules + '\n# nico-dev (build-dev-nico.py): not part of the image, must not bust its cache\n'
+            'tools/nico-dev/\nnico-dev-docker/\n')
 
         try:
             print(f'\nStep 2: Build build-container-{MACHINE}...')
