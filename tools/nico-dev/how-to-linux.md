@@ -185,10 +185,16 @@ bring-up.py --config bringup-mysite.yaml
 ```
 
 Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
-nico → dpf → route. No GUI step; `virt-install` sets the share path. One `sudo`
-prompt at the end for the host route to the service VIPs. On failure the
-runner prints that step's known failure modes and the resume command
-(`--from <step>`). Every step is safe to rerun.
+one step per NICo Helm release, seven `core` ones (local-path-provisioner,
+cert-manager, vault, external-secrets, postgres-operator, nico-prereqs, nico)
+then five `rest` ones (rest-postgres, keycloak, temporal, nico-rest,
+nico-rest-site-agent) → dpf → route; 21 steps, `--list` shows them. No GUI
+step; `virt-install` sets the share path. One `sudo` prompt at the end for
+the host route to the service VIPs. On failure the runner prints that step's
+known failure modes and the resume command, `--from <step>`, which for the
+releases is the release name (`--from keycloak`). Every step is safe to
+rerun; a release step is a fast idempotent Helm upgrade when it is already
+installed.
 
 The runner's output is the raw output of every command it runs, which is
 long and says little about where the run stands. For that, open a second
@@ -337,8 +343,9 @@ kubectl -n nico-system logs deploy/nico-api | grep -E "preingestion minimum|firm
 
 The versions are `nico-system.firmware_sim` in the site yaml (`initial` 1.0,
 `desired` 2.0); the mock accepts any string, so keep initial below desired.
-Changing them after bring-up means `bring-up.py --from nico` to regenerate
-the values and `configure-clis.py <site>` for the MAT config, then
+Changing them after bring-up means `bring-up.py --from nico --until nico` to
+regenerate the values and upgrade the nico release, and `configure-clis.py
+<site>` for the MAT config, then
 `reset-mat-state.py` and a fresh MAT run. `false` renders exactly what the
 site rendered before the option existed.
 
@@ -484,7 +491,7 @@ nico-dev-fabric` rebuilds the fabric from the site yaml. Newcomers start with
   kubectl exec -n postgres "$PG" -- psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='keycloak';" -c "DROP DATABASE keycloak;"
   ```
 
-  then `bring-up.py --config X --from nico` (or `deploy-dev-nico.py <site>
+  then `bring-up.py --config X --from keycloak` (or `deploy-dev-nico.py <site>
   --skip-to keycloak`). A clean Keycloak start takes about 90 s.
 - **Console** without ssh: `virsh -c qemu:///system console nico-vm1`.
 - **VM has no address**: on the console, `ip addr show`, then

@@ -194,6 +194,50 @@ def stale_known_hosts(ip):
         ['ssh-keygen', '-F', h], capture_output=True).returncode == 0)
 
 
+# The NICo stack's Helm releases, from deploy-dev-nico.py so the runner and
+# the deploy script cannot disagree on the order. Two groups: core (the
+# platform pieces and the nico release) and rest (the REST stack).
+_spec_d = _ilu.spec_from_file_location('deploy_dev_nico', NICO_DEV / 'deploy-dev-nico.py')
+_deploy = _ilu.module_from_spec(_spec_d)
+_spec_d.loader.exec_module(_deploy)
+RELEASES = list(_deploy.DEPLOY_ORDER)
+CORE_RELEASES = RELEASES[:RELEASES.index('nico') + 1]
+REST_RELEASES = RELEASES[RELEASES.index('nico') + 1:]
+
+
+def release_group(key):
+    return 'core' if key in CORE_RELEASES else 'rest' if key in REST_RELEASES else ''
+
+
+def release_steps(args, site_vm, ndev_vm):
+    """One runner step per Helm release: deploy-dev-nico.py --only <release>.
+    `sudo env VAR=…` carries the progress file to the VM-side script (sudo
+    resets the environment); see progress.py."""
+    progress_env = (f'sudo env {_progress.ENV}='
+                    f'{_progress.vm_path_for(f"/home/{args.user}/mac", args.name)}')
+    recovery = {
+        'core': 'helm --wait timeouts: rerun (idempotent). Vault sealed: the unsealer\n'
+                'resolves it in seconds. how-to §8, §11.',
+        'nico': 'helm --wait timeouts: rerun (idempotent). Pods Running but VIP\n'
+                'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
+                '(20260826-#7). how-to §8.',
+        'keycloak': 'CrashLoopBackOff with "column … already exists" in its log = an\n'
+                    'interrupted first start left a half-applied schema; drop the keycloak\n'
+                    'database and rerun (how-to §11). Otherwise: helm/kubectl timeouts, rerun.',
+        'rest': 'helm --wait timeouts: rerun (idempotent). Needs the REST images in\n'
+                'the registry (build step) and rest.enabled in the site yaml (default).',
+    }
+    steps = []
+    for rel in RELEASES:
+        group = release_group(rel)
+        steps.append((
+            rel, 'VM', f'{group}: {rel}',
+            [vm_ssh(args, f'{progress_env} python3 {ndev_vm}/deploy-dev-nico.py'
+                          f' {site_vm} --tag {args.tag} --only {rel}')],
+            recovery.get(rel, recovery[group])))
+    return steps
+
+
 def build_steps(args):
     """Returns [(key, where, description, [commands], recovery)]."""
     share = str(Path(args.share).expanduser())
@@ -283,16 +327,11 @@ def build_steps(args):
          f'ensure-registry.py.\n'
          f'If containerd shows ✗: the config_path fix in how-to §7.'),
 
-        ('nico', 'VM', 'Deploy the nico stack',
-         # `sudo env VAR=…` carries the progress file to the VM-side script
-         # (sudo itself resets the environment); see progress.py.
-         [vm_ssh(args, f'sudo env {_progress.ENV}='
-                       f'{_progress.vm_path_for(f"/home/{args.user}/mac", args.name)}'
-                       f' python3 {ndev_vm}/deploy-dev-nico.py'
-                       f' {site_vm} --tag {args.tag}')],
-         'helm --wait timeouts: rerun (idempotent). Pods Running but VIP\n'
-         'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
-         '(20260826-#7). how-to §8.'),
+        # The NICo stack: one step per Helm release, in deploy-dev-nico.py's
+        # DEPLOY_ORDER, so a failure resumes at exactly that release
+        # (`--from keycloak`). Each step is `deploy-dev-nico.py --only <release>`;
+        # the script's preflight checks the earlier releases are healthy first.
+        *release_steps(args, site_vm, ndev_vm),
 
         ('dpf', 'Host', 'Deploy the DPF simulator (dpf-sim-controller)',
          [[sys.executable, NICO_DEV / 'deploy-dpf-sim.py', site_mac]],
@@ -334,7 +373,7 @@ def apply_ngc_mode(steps, args, site_mac):
         '(docker manifest inspect <image>:<tag>); a 10GB image needs ~25GB '
         'free across colima+registry+VM. how-to: "Deploying pre-built\n'
         'NGC images".')
-    steps = [s for s in steps if s[0] not in ('build', 'nico')]
+    steps = [s for s in steps if s[0] not in ('build', *RELEASES)]
     at = next(i for i, s in enumerate(steps) if s[0] == 'registry') + 1
     steps.insert(at, ngc_step)
     return steps
@@ -602,7 +641,8 @@ def main():
     progress_file = _progress.path_for(args.share, args.name)
     _progress.start_file(progress_file, fresh=(start == 0))
     _progress.emit('plan',
-                   steps=[{'key': k, 'where': w, 'desc': d} for k, w, d, _, _ in steps],
+                   steps=[{'key': k, 'where': w, 'desc': d, 'group': release_group(k)}
+                          for k, w, d, _, _ in steps],
                    first=keys[start], last=keys[stop],
                    name=args.name, ip=args.ip, user=args.user, dc=args.dc, site=args.site,
                    share=share_dir, site_dir=site_dir, kubeconfig=kubeconfig,
@@ -638,7 +678,7 @@ def main():
                 else:
                     resume = (f'{ENTRY} --name {args.name} --from {key}'
                               + (f' --tag {args.tag}'
-                                 if key in ('build', 'nico') else ''))
+                                 if key == 'build' or key in RELEASES else ''))
                 _progress.emit('fail', step=key, secs=round(time.time() - step_t0),
                                rc=rc, resume=resume)
                 hdr = red(f'✗ Step "{key}" failed (exit {rc}).')
