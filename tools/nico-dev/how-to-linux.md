@@ -469,6 +469,23 @@ nico-dev-fabric` rebuilds the fabric from the site yaml. Newcomers start with
   `config_path` is missing (fix printed).
 - **Vault sealed** after a restart: the unsealer resolves it within seconds;
   otherwise `deploy-dev-nico.py <site> --skip-to nico`.
+- **Keycloak in CrashLoopBackOff, the `nico` step failed at "deploying
+  Keycloak"**, and `kubectl -n nico-rest logs deploy/keycloak` ends in
+  `Failed to update database … column "…" of relation "…" already exists`:
+  Keycloak's first start was interrupted (host swap, suspend, VM reset) part
+  way through its schema migration, so one change was applied but not
+  recorded, and every start re-applies it. It is the dev identity provider
+  with nothing in it yet, so drop the database and let the setup script
+  recreate it. On the VM:
+
+  ```bash
+  kubectl -n nico-rest scale deploy/keycloak --replicas=0 && kubectl -n nico-rest wait --for=delete pod -l app=keycloak --timeout=60s
+  PG=$(kubectl get pods -n postgres -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+  kubectl exec -n postgres "$PG" -- psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='keycloak';" -c "DROP DATABASE keycloak;"
+  ```
+
+  then `bring-up.py --config X --from nico` (or `deploy-dev-nico.py <site>
+  --skip-to keycloak`). A clean Keycloak start takes about 90 s.
 - **Console** without ssh: `virsh -c qemu:///system console nico-vm1`.
 - **VM has no address**: on the console, `ip addr show`, then
   `cat /etc/netplan/*.yaml` and `sudo netplan apply`.
