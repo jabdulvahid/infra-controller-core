@@ -80,9 +80,14 @@ def render(events, path, now=None):
         return [f'no progress file yet: {path}',
                 'bring-up.py writes it when it starts its first step; '
                 'a run started before this feature has none.']
-    plan = next((e for e in events if e['kind'] == 'plan'), None)
-    if plan is None:
+    plans = [e for e in events if e['kind'] == 'plan']
+    if not plans:
         return [f'{path}: no plan event yet']
+    # A resume appends a new plan; after a tools update its step table may
+    # differ from the first one (e.g. one step per release instead of `nico`).
+    # The latest plan describes the run as it is now; the first gives its
+    # start time; events for steps the latest plan no longer has are ignored.
+    plan = plans[-1]
     steps = plan['steps']
     keys = [s['key'] for s in steps]
     state = {k: {'status': 'todo', 'secs': None, 'stage': '', 'start': None} for k in keys}
@@ -97,6 +102,8 @@ def render(events, path, now=None):
             # A resume (--from) appends a new plan to the same file: the
             # earlier attempt's verdict no longer describes the run.
             failed = finished = None
+        elif k is not None and k not in state:
+            continue                   # a step from an older plan's table
         elif e['kind'] == 'start':
             if failed and failed.get('step') == k:
                 failed = None          # the failed step is being retried
@@ -111,7 +118,7 @@ def render(events, path, now=None):
             failed = e
         elif e['kind'] == 'finished':
             finished = e
-    t0 = plan['ts']
+    t0 = plans[0]['ts']
     elapsed = (finished['ts'] if finished else now) - t0
     started = time.strftime('%H:%M', time.localtime(t0))
     n_done = sum(1 for s in state.values() if s['status'] in ('done', 'earlier'))
