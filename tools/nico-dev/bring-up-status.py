@@ -118,6 +118,12 @@ def render(events, path, now=None):
             failed = e
         elif e['kind'] == 'finished':
             finished = e
+    # A resume starts at plan['first']: everything before it is the operator's
+    # business (done, or fixed by hand), so an earlier attempt's failure there
+    # is not this run's state.
+    for k in keys[:keys.index(plan.get('first', keys[0]))]:
+        if state[k]['status'] not in ('done',):
+            state[k].update(status='earlier', secs=None, stage='')
     t0 = plans[0]['ts']
     elapsed = (finished['ts'] if finished else now) - t0
     started = time.strftime('%H:%M', time.localtime(t0))
