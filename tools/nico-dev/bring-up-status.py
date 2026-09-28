@@ -93,7 +93,13 @@ def render(events, path, now=None):
     failed = None
     for e in events:
         k = e.get('step')
-        if e['kind'] == 'start':
+        if e['kind'] == 'plan':
+            # A resume (--from) appends a new plan to the same file: the
+            # earlier attempt's verdict no longer describes the run.
+            failed = finished = None
+        elif e['kind'] == 'start':
+            if failed and failed.get('step') == k:
+                failed = None          # the failed step is being retried
             state[k].update(status='running', start=e['ts'], stage='', secs=None)
         elif e['kind'] == 'stage':
             if k in state:
