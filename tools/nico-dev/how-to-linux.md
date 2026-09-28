@@ -48,9 +48,16 @@ the desktop hung (issues.md 20260926-#1 context).
 
 | Host | Lane | VM (`vm:` in bringup.yaml) | Notes |
 |---|---|---|---|
-| 16 GB, 4 cores | NGC only | `cpus: 4`, `mem_mb: 8192` | runs a site; do not source-build here |
-| 32 GB, 8+ modern cores, NVMe | NGC or source | `cpus: 6`, `mem_mb: 12288` | the recommended development machine |
+| 16 GB, 4 cores | NGC only, REST off | `cpus: 4`, `mem_mb: 8192` | runs Core, DPF and MAT; set `nico-system.rest.enabled: false` in the site yaml before the first deploy (the REST stack adds about 3 GB inside the VM); do not source-build here |
+| 32 GB, 8+ modern cores, NVMe | NGC or source, full stack | `cpus: 6`, `mem_mb: 12288` | the recommended development machine |
 | 64 GB, 12+ cores | source, several sites | `cpus: 8`, `mem_mb: 16384` per VM | redeploy cycles and MAT at full size |
+
+What the 16 GB line is based on (2026-09-26/27, a 2017 quad-core laptop):
+the first source build swapped the VM's memory and hung the desktop; the
+full stack with REST then needed more than the 8 GB the VM could be given
+while leaving the host 6 GB, and the VM's kernel OOM-killed pods during the
+REST releases. Keycloak's first start also outgrew its liveness probe on
+that host (§11). Core plus DPF plus MAT fits; the REST stack does not.
 
 The VM values are ceilings, not reservations, but the host must hold the VM
 plus about 8 GB for a source build plus its own OS. Two more host rules:
@@ -404,6 +411,11 @@ Rules that save an afternoon:
 - **Tight node.** On a 6-CPU VM a rollout can stick on `Insufficient cpu`;
   `redeploy: { on_insufficient_cpu: scale-down-first }` in the bringup yaml
   rolls the stuck deployment old-pod-first for that rollout only.
+- **Regrafting the tools does not rebuild.** The `nico` image copies the
+  whole checkout, and the grafted tools live inside it; since 2026-09-27
+  `build-dev-nico.py` keeps `tools/nico-dev/` out of the build context, so
+  only source changes recompile. A rebuild that compiles although nothing in
+  `crates/` changed means the tools are older than that fix.
 
 Full deploy or one release: `deploy-dev-nico.py <site> --tag <t>`,
 `--skip-to <release>`, `--only <release>`. Stuck helm releases are healed
@@ -476,23 +488,39 @@ nico-dev-fabric` rebuilds the fabric from the site yaml. Newcomers start with
   `config_path` is missing (fix printed).
 - **Vault sealed** after a restart: the unsealer resolves it within seconds;
   otherwise `deploy-dev-nico.py <site> --skip-to nico`.
-- **Keycloak in CrashLoopBackOff, the `nico` step failed at "deploying
-  Keycloak"**, and `kubectl -n nico-rest logs deploy/keycloak` ends in
-  `Failed to update database … column "…" of relation "…" already exists`:
-  Keycloak's first start was interrupted (host swap, suspend, VM reset) part
-  way through its schema migration, so one change was applied but not
-  recorded, and every start re-applies it. It is the dev identity provider
-  with nothing in it yet, so drop the database and let the setup script
-  recreate it. On the VM:
+- **The `keycloak` step fails, the pod restarts, `kubectl -n nico-rest describe
+  pod -l app=keycloak` shows `Container keycloak failed liveness probe, will be
+  restarted`.** The upstream Deployment's liveness probe (60 s delay, 30 s
+  period, three failures) kills the container about 150 s after start if
+  port 8080 is not open yet, and Keycloak's first start on a slow or starved
+  host takes longer than that: Quarkus augmentation alone is 75 s on a
+  healthy VM. Each kill restarts from zero, and the setup script's 180 s
+  rollout wait fails. A kill that lands during the schema migration also
+  produces the next symptom. Recover on the VM by resetting the database,
+  widening the probes and letting one clean start happen:
 
   ```bash
-  kubectl -n nico-rest scale deploy/keycloak --replicas=0 && kubectl -n nico-rest wait --for=delete pod -l app=keycloak --timeout=60s
+  kubectl -n nico-rest scale deploy/keycloak --replicas=0 && kubectl -n nico-rest wait --for=delete pod -l app=keycloak --timeout=120s
   PG=$(kubectl get pods -n postgres -l app=postgres -o jsonpath='{.items[0].metadata.name}')
-  kubectl exec -n postgres "$PG" -- psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='keycloak';" -c "DROP DATABASE keycloak;"
+  kubectl exec -n postgres "$PG" -- psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='keycloak';" -c "DROP DATABASE keycloak;" -c "CREATE DATABASE keycloak;" -c "GRANT ALL PRIVILEGES ON DATABASE keycloak TO keycloak;"
+  kubectl exec -n postgres "$PG" -- psql -U postgres -d keycloak -c "GRANT ALL ON SCHEMA public TO keycloak;"
+  kubectl -n nico-rest patch deploy keycloak --type=json -p '[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds","value":300},{"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/initialDelaySeconds","value":120}]'
+  kubectl -n nico-rest scale deploy/keycloak --replicas=1 && kubectl -n nico-rest rollout status deploy/keycloak --timeout=600s
   ```
 
-  then `bring-up.py --config X --from keycloak` (or `deploy-dev-nico.py <site>
-  --skip-to keycloak`). A clean Keycloak start takes about 90 s.
+  then resume **past** Keycloak with `bring-up.py --config X --from temporal`:
+  the `keycloak` step is only the upstream script, and re-running it would
+  re-apply the 60 s probe and roll the pod again. Tracked as issues.md
+  20260927-#4 (nico-dev to patch the probes itself; upstream asked for a
+  `startupProbe`).
+- **Keycloak in CrashLoopBackOff** and `kubectl -n nico-rest logs
+  deploy/keycloak` ends in `Failed to update database … column "…" of
+  relation "…" already exists`: a first start was interrupted (the probe
+  kill above, host swap, suspend, VM reset) part way through its schema
+  migration, so one change was applied but not recorded, and every start
+  re-applies it. It is the dev identity provider with nothing in it yet: the
+  same drop-and-recreate as above, then the same resume. A clean Keycloak
+  start takes about 90 s on a healthy VM.
 - **Console** without ssh: `virsh -c qemu:///system console nico-vm1`.
 - **VM has no address**: on the console, `ip addr show`, then
   `cat /etc/netplan/*.yaml` and `sudo netplan apply`.
