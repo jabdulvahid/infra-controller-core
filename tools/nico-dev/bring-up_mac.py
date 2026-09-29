@@ -12,7 +12,11 @@ recovery story.
   ./bring-up.py --name x --until fabric               # stop early
   ./bring-up.py --list                                # show the steps
 
-Steps: vm → prep → site → fabric → cp → build → registry → nico → route.
+Steps: vm → prep → site → fabric → cp → build → registry → one step per
+NICo Helm release (local-path-provisioner … nico, then the REST stack
+rest-postgres … nico-rest-site-agent) → dpf → route. With `ngc:` the build
+and release steps collapse into one `ngc` step. `bring-up-status.py` shows
+the progress in a second terminal.
 On failure: prints that step's known failure modes + the exact resume
 command, and exits. Reruns are safe — every unit script is idempotent or
 self-healing (see issues.md 20260828-#2..#4 for the vm step).
@@ -37,6 +41,10 @@ import importlib.util as _ilu
 _spec = _ilu.spec_from_file_location('site_images', NICO_DEV / 'site_images.py')
 _site_images = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_site_images)
+# Progress events for bring-up-status.py (a second terminal); see progress.py.
+_spec_p = _ilu.spec_from_file_location('progress', NICO_DEV / 'progress.py')
+_progress = _ilu.module_from_spec(_spec_p)
+_spec_p.loader.exec_module(_progress)
 # When invoked via the platform dispatcher, show ITS name in hints.
 ENTRY = os.environ.get('NICO_DEV_ENTRY', sys.argv[0])
 
@@ -179,6 +187,50 @@ def stale_known_hosts(ip):
         ['ssh-keygen', '-F', h], capture_output=True).returncode == 0)
 
 
+# The NICo stack's Helm releases, from deploy-dev-nico.py so the runner and
+# the deploy script cannot disagree on the order. Two groups: core (the
+# platform pieces and the nico release) and rest (the REST stack).
+_spec_d = _ilu.spec_from_file_location('deploy_dev_nico', NICO_DEV / 'deploy-dev-nico.py')
+_deploy = _ilu.module_from_spec(_spec_d)
+_spec_d.loader.exec_module(_deploy)
+RELEASES = list(_deploy.DEPLOY_ORDER)
+CORE_RELEASES = RELEASES[:RELEASES.index('nico') + 1]
+REST_RELEASES = RELEASES[RELEASES.index('nico') + 1:]
+
+
+def release_group(key):
+    return 'core' if key in CORE_RELEASES else 'rest' if key in REST_RELEASES else ''
+
+
+def release_steps(args, site_vm, ndev_vm):
+    """One runner step per Helm release: deploy-dev-nico.py --only <release>.
+    `sudo env VAR=…` carries the progress file to the VM-side script (sudo
+    resets the environment); see progress.py."""
+    progress_env = (f'sudo env {_progress.ENV}='
+                    f'{_progress.vm_path_for(f"/home/{args.user}/mac", args.name)}')
+    recovery = {
+        'core': 'helm --wait timeouts: rerun (idempotent). Vault sealed: the unsealer\n'
+                'resolves it in seconds. how-to §12, §14.',
+        'nico': 'helm --wait timeouts: rerun (idempotent). Pods Running but VIP\n'
+                'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
+                '(20260826-#7). how-to §12.',
+        'keycloak': 'CrashLoopBackOff with "column … already exists" in its log = an\n'
+                    'interrupted first start left a half-applied schema; drop the keycloak\n'
+                    'database and rerun (how-to §14). Otherwise: helm/kubectl timeouts, rerun.',
+        'rest': 'helm --wait timeouts: rerun (idempotent). Needs the REST images in\n'
+                'the registry (build step) and rest.enabled in the site yaml (default).',
+    }
+    steps = []
+    for rel in RELEASES:
+        group = release_group(rel)
+        steps.append((
+            rel, 'VM', f'{group}: {rel}',
+            [vm_ssh(args, f'{progress_env} python3 {ndev_vm}/deploy-dev-nico.py'
+                          f' {site_vm} --tag {args.tag} --only {rel}')],
+            recovery.get(rel, recovery[group])))
+    return steps
+
+
 def build_steps(args):
     """Returns [(key, where, description, [commands], recovery)]."""
     share = str(Path(args.share).expanduser())
@@ -268,12 +320,11 @@ def build_steps(args):
          'colima running? ensure-registry.py.\n'
          'If containerd shows ✗: the config_path fix in how-to §7.'),
 
-        ('nico', 'VM', 'Deploy the nico stack',
-         [vm_ssh(args, f'sudo python3 {ndev_vm}/deploy-dev-nico.py'
-                       f' {site_vm} --tag {args.tag}')],
-         'helm --wait timeouts: rerun (idempotent). Pods Running but VIP\n'
-         'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
-         '(20260826-#7). how-to §8.'),
+        # The NICo stack: one step per Helm release, in deploy-dev-nico.py's
+        # DEPLOY_ORDER, so a failure resumes at exactly that release
+        # (`--from keycloak`). Each step is `deploy-dev-nico.py --only <release>`;
+        # the script's preflight checks the earlier releases are healthy first.
+        *release_steps(args, site_vm, ndev_vm),
 
         ('dpf', 'Mac', 'Deploy the DPF simulator (dpf-sim-controller)',
          [[sys.executable, NICO_DEV / 'deploy-dpf-sim.py', site_mac]],
@@ -316,7 +367,7 @@ def apply_ngc_mode(steps, args, site_mac):
         '(docker manifest inspect <image>:<tag>); a 10GB image needs ~25GB '
         'free across colima+registry+VM. how-to: "Deploying pre-built\n'
         'NGC images".')
-    steps = [s for s in steps if s[0] not in ('build', 'nico')]
+    steps = [s for s in steps if s[0] not in ('build', *RELEASES)]
     at = next(i for i, s in enumerate(steps) if s[0] == 'registry') + 1
     steps.insert(at, ngc_step)
     return steps
@@ -577,6 +628,27 @@ def main():
         print(f'    {go}')
         return
 
+    # Progress file for bring-up-status.py: fresh on a run from the first
+    # step, kept on a resume so finished steps stay visible. Mac-side
+    # scripts inherit $NICO_DEV_PROGRESS; the VM-side one gets it via sudo env.
+    share_dir = str(Path(args.share).expanduser())
+    site_dir = f'{share_dir}/sites/{args.dc}/{args.site}'
+    kubeconfig = f'{site_dir}/{args.dc}-{args.site}.kubeconfig.yaml'
+    progress_file = _progress.path_for(args.share, args.name)
+    _progress.start_file(progress_file, fresh=(start == 0))
+    _progress.emit('plan',
+                   steps=[{'key': k, 'where': w, 'desc': d, 'group': release_group(k)}
+                          for k, w, d, _, _ in steps],
+                   first=keys[start], last=keys[stop],
+                   name=args.name, ip=args.ip, user=args.user, dc=args.dc, site=args.site,
+                   share=share_dir, site_dir=site_dir, kubeconfig=kubeconfig,
+                   admin_url=f'https://{args.underlay}.133.1.17/admin', mode=mode,
+                   config=args.config or '')
+    print(f'  progress: bring-up-status.py '
+          f'{"--config " + args.config if args.config else "--name " + args.name}'
+          f'   (second terminal; file {progress_file})')
+    run_t0 = time.time()
+
     first = True
     for key, where, desc, cmds, recovery in steps[start:stop + 1]:
         if not first and args.step_delay > 0:
@@ -585,6 +657,8 @@ def main():
         first = False
         n = keys.index(key) + 1
         print(f'\n{bold(f"━━ Step {n}/{len(keys)}: {key}")} [{where}] — {desc} ━━')
+        _progress.emit('start', step=key, i=n, n=len(keys))
+        step_t0 = time.time()
         for cmd in cmds:
             rc = sh(cmd)
             attempt = 0
@@ -600,7 +674,9 @@ def main():
                 else:
                     resume = (f'{ENTRY} --name {args.name} --from {key}'
                               + (f' --tag {args.tag}'
-                                 if key in ('build', 'nico') else ''))
+                                 if key == 'build' or key in RELEASES else ''))
+                _progress.emit('fail', step=key, secs=round(time.time() - step_t0),
+                               rc=rc, resume=resume)
                 hdr = red(f'✗ Step "{key}" failed (exit {rc}).')
                 print(f'''
 {hdr}
@@ -611,12 +687,13 @@ Recovery:
 Then resume with:
   {resume}''', file=sys.stderr)
                 raise SystemExit(1)
+        _progress.emit('done', step=key, secs=round(time.time() - step_t0))
         print()
 
+    _progress.emit('finished', secs=round(time.time() - run_t0))
     print('=' * 60)
     print(green(f'  ✓ Done. GUI: https://{args.underlay}.133.1.17/admin'))
-    print(f'  KUBECONFIG=%s/sites/{args.dc}/{args.site}/{args.dc}-{args.site}.kubeconfig.yaml'
-          % str(Path(args.share).expanduser()))
+    print(f'  KUBECONFIG={kubeconfig}')
     print('=' * 60)
 
 

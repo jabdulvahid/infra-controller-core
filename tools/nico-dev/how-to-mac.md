@@ -364,10 +364,35 @@ The run stops and waits for you three times. This is by design:
    installed.
 3. **`sudo` on the Mac**, at the end, for the route to the service addresses.
 
-If a step fails, the runner prints the known failure modes of that step and
-the exact command to resume, `--from <step>`. Every step is safe to run
-again. A successful run ends with a URL, for example
-`https://11.133.1.17/admin` for `underlay: 11`.
+Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
+one step per NICo Helm release, seven `core` ones (local-path-provisioner,
+cert-manager, vault, external-secrets, postgres-operator, nico-prereqs, nico)
+then five `rest` ones (rest-postgres, keycloak, temporal, nico-rest,
+nico-rest-site-agent) → dpf → route; 21 steps, `--list` shows them. With
+`ngc:` the build and the release steps collapse into one `ngc` step, 9 in
+all. If a step fails, the runner prints the known failure modes of that step
+and the exact command to resume, `--from <step>`, which for the releases is
+the release name (`--from keycloak`). Every step is safe to run again; a
+release step is a fast idempotent Helm upgrade when it is already installed.
+A successful run ends with a URL, for example `https://11.133.1.17/admin`
+for `underlay: 11`.
+
+The runner's output is the raw output of every command it runs, which is
+long and says little about where the run stands. For that, open a second
+terminal:
+
+```bash
+bring-up-status.py --config bringup-mysite.yaml          # redraws every 2 s; Ctrl-C leaves the run alone
+bring-up-status.py --config bringup-mysite.yaml --once   # one snapshot, for pasting
+```
+
+It shows every step as done, running, failed or not yet, the time each took,
+what the current step is doing inside it (which of the three core images or
+six REST images is building, which Helm release is installing), how to ssh to
+the VM, the kubeconfig, the URL you will get at the end, and after a failure
+the resume command. The runner writes the events to
+`<share>/.bring-up/<vm-name>.jsonl`; a run started before the tools had this
+feature has no file, and a resume with `--from` keeps the earlier steps.
 
 ## 7. Both workflows: Mac-side setup and where things are
 
@@ -488,6 +513,29 @@ machines it expected, and the BMC credentials it rotated. Without the reset,
 a new run against fresh mocks is locked out. Custom MAT builds and the
 failure catalog are in `mat-in-nico-dev.md`.
 
+### Firmware upgrade simulation
+
+By default MAT hosts report firmware that already matches what NICo wants, so
+ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
+changes that for every host: MAT reports the `initial` BMC and UEFI versions
+and nico-api gets a firmware definition for the mock GB200 requiring the
+`desired` ones, written into the chart's firmware volume by an init
+container. Ingestion then runs the full chain per host: preingestion finds
+the versions below the minimum, uploads through `SimpleUpdate`, polls the
+Redfish task to `Completed`, power-cycles, reads the new version back, and
+only then continues to Ready. Watch it in the nico-api log:
+
+```bash
+kubectl -n nico-system logs deploy/nico-api | grep -E "preingestion minimum|firmware upload|Firmware version satisfies"
+```
+
+The versions are `nico-system.firmware_sim` in the site yaml (`initial` 1.0,
+`desired` 2.0); the mock accepts any string, so keep initial below desired.
+Changing them after bring-up means `bring-up.py --from nico --until nico` to
+regenerate the values and upgrade the nico release, and `configure-clis.py
+<site>` for the MAT config, then `reset-mat-state.py` and a fresh MAT run.
+`false` renders exactly what the site rendered before the option existed.
+
 ### DPF and the two provisioning modes
 
 NICo provisions the DPU in each managed host through DPF, the DOCA Platform
@@ -598,6 +646,11 @@ kubectl -n nico-system get pods -w
 
 Three rules:
 
+- **Regrafting the tools does not rebuild.** The `nico` image copies the
+  whole checkout, and the grafted tools live inside it; since 2026-09-27
+  `build-dev-nico.py` keeps `tools/nico-dev/` out of the build context, so
+  only source changes recompile. A rebuild that compiles although nothing in
+  `crates/` changed means the tools are older than that fix.
 - **Use a new tag every time.** Both scripts refuse to rebuild or redeploy a
   tag that is already deployed. If they did not, the cluster would silently
   keep running the old image under the same name.
@@ -678,6 +731,42 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
 - **The route is missing.** If `netstat -rn | grep 11.133` prints nothing,
   re-add the route from section 7. It disappears every time the last VM
   stops.
+- **The `keycloak` step fails, the pod restarts, `kubectl -n nico-rest describe
+  pod -l app=keycloak` shows `Container keycloak failed liveness probe, will be
+  restarted`.** The upstream Deployment's liveness probe (60 s delay, 30 s
+  period, three failures) kills the container about 150 s after start if
+  port 8080 is not open yet, and Keycloak's first start on a starved VM (a
+  Mac under load, a VM below the sizing in section 5) takes longer than
+  that: Quarkus augmentation alone is 75 s on a healthy VM. Each kill
+  restarts from zero, and the setup script's 180 s rollout wait fails. A
+  kill that lands during the schema migration also produces the next
+  symptom. Recover by resetting the database, widening the probes and
+  letting one clean start happen (kubectl on the Mac or the VM):
+
+  ```bash
+  kubectl -n nico-rest scale deploy/keycloak --replicas=0 && kubectl -n nico-rest wait --for=delete pod -l app=keycloak --timeout=120s
+  PG=$(kubectl get pods -n postgres -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+  kubectl exec -n postgres "$PG" -- psql -U postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='keycloak';" -c "DROP DATABASE keycloak;" -c "CREATE DATABASE keycloak;" -c "GRANT ALL PRIVILEGES ON DATABASE keycloak TO keycloak;"
+  kubectl exec -n postgres "$PG" -- psql -U postgres -d keycloak -c "GRANT ALL ON SCHEMA public TO keycloak;"
+  kubectl -n nico-rest patch deploy keycloak --type=json -p '[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds","value":300},{"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe/initialDelaySeconds","value":120}]'
+  kubectl -n nico-rest scale deploy/keycloak --replicas=1 && kubectl -n nico-rest rollout status deploy/keycloak --timeout=600s
+  ```
+
+  then resume **past** Keycloak: `bring-up.py --config X --from temporal` on
+  the source lane, or `deploy-dev-nico.py <site> --tag <images.tag from the
+  site yaml> --skip-to temporal` on the NGC lane, where the releases run
+  inside the one `ngc` step. The `keycloak` step is only the upstream
+  script, and re-running it would re-apply the 60 s probe and roll the pod
+  again. Tracked as issues.md 20260927-#4 (nico-dev to patch the probes
+  itself; upstream asked for a `startupProbe`).
+- **Keycloak in CrashLoopBackOff** and `kubectl -n nico-rest logs
+  deploy/keycloak` ends in `Failed to update database … column "…" of
+  relation "…" already exists`: a first start was interrupted (the probe
+  kill above, a Mac sleep, a VM reset) part way through its schema
+  migration, so one change was applied but not recorded, and every start
+  re-applies it. It is the dev identity provider with nothing in it yet: the
+  same drop-and-recreate as above, then the same resume. A clean Keycloak
+  start takes about 90 s on a healthy VM.
 - **An image pull is stuck**, with the pod Pending and a single "Pulling"
   event. Two causes, both fixed at the source since 2026-09-16 but still
   possible for an image that was not delivered through the share. Either
@@ -741,6 +830,7 @@ planned. Neither step touches your site folder or your worktree.
 | `image_delivery.py <site> <ref>… [--check]` | Mac | put images into the VM's containerd through the share (never through the registry tunnel) |
 | `onboard-golden.sh --zip Z --dest D` | Mac | golden image ZIP to running site, hands off |
 | `bring-up.py --config X [--dry-run] [--from step]` | Mac | the whole bring-up |
+| `bring-up-status.py --config X [--once]` | Mac | high-level progress of that bring-up in a second terminal: steps done/running/failed, per-step time, what the current step is doing, ssh/kubeconfig/URL, resume command |
 | `ngc-tags.py --config X` | Mac | deployable NGC tags |
 | `build-dev-nico.py <site> --tag T` | Mac | build images, push to the colima registry |
 | `deploy-dev-nico.py <site> --tag T` | Mac | full helm deploy, resumable |
