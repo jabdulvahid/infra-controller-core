@@ -77,6 +77,30 @@ it; advanced settings that have no `bringup.yaml` key live there, and after
 editing one you regenerate the values with `bring-up.py --from nico --until
 nico`, as Step 10 shows for the firmware versions.
 
+**How NICo gets deployed.** nico-dev has no deployment of its own. It
+installs the same Helm charts that production uses, taken from the checkout
+in your share: `helm-prereqs/`, the `nico-prereqs` chart with the shared
+PostgreSQL cluster, the Vault configuration and the secrets wiring; `helm/`,
+the `nico` umbrella chart with nico-api, DHCP, DNS, PXE, the BMC proxy, the
+SSH console and hardware health; and `helm/rest/`, the REST API and its site
+agent. Around them it installs the same third-party pieces upstream's
+`helm-prereqs/setup.sh` installs, in the same order: local-path-provisioner,
+cert-manager, Vault, External Secrets, the Zalando PostgreSQL operator, and
+for the REST stack its own PostgreSQL, Keycloak and Temporal. What nico-dev
+adds is the values. `generate_dev_values.py` reads the site yaml and writes
+one values file per chart into `<site>/dev-values/` (`cert-manager.yaml`,
+`vault.yaml`, `eso.yaml`, `zalando-postgres-op.yaml`, `nico-prereqs.yaml`,
+`nico.yaml`, which embeds nico-api's site-config TOML, and
+`nico-rest-dev.yaml`), and `deploy-dev-nico.py` runs `helm install` or
+`helm upgrade` for the twelve releases in dependency order, healing a
+release that a previous run left half-installed. Each release is one step
+of the bring-up, so a failure resumes at exactly that release. The result is
+a real NICo installation: `helm list -A` shows the releases, and everything
+you know about debugging NICo with `kubectl` applies unchanged. Because
+nico-dev re-implements the values and the order rather than calling
+`setup.sh`, `check-parity.py` verifies on every run that the charts in your
+checkout still look the way nico-dev assumes.
+
 **The addresses.** The VM itself sits on UTM's shared network, which is
 `192.168.64.0/24` on most Macs, at the address `<UTM subnet>.<host_num>`;
 `host_num` is a `bringup.yaml` key with the default 126, so this page writes
