@@ -218,13 +218,6 @@ colima and docker together build the container images and run the small
 local image registry that the VM pulls from; nothing else on the Mac is
 needed to build.
 
-Note: for the NGC lane, put your key in an environment variable, in your
-shell profile:
-
-```bash
-export NGC_API_KEY='...'
-```
-
 ## Step 2 - Folder, worktree, tools
 
 Your main clone of the NICo repository stays where it is. For each VM you
@@ -355,12 +348,20 @@ Leave `ip` unset unless UTM's shared network is not `192.168.64.0/24`, which
 is rare; the VM's address is `<UTM subnet>.<host_num>`. If you need a
 different last octet, set `host_num`; the default is 126.
 
-Note: for the NGC lane, leave `tag` out and add this block instead. `tag` is
-the default for every base image; the optional `tags` map gives one image
-group a different tag: `core` is the NICo core image, `rest` the six REST
-images, each group one Helm release. `core_image` and `images` are the names
-NGC publishes under; the names the Helm charts expect locally are fixed, and
-only the core differs on NGC (`nvmetal-carbide` against `nico`).
+Note: for the NGC lane, first put your NGC API key in an environment
+variable, in your shell profile. The yaml names the variable, never the key
+itself, and the key is never printed or stored:
+
+```bash
+export NGC_API_KEY='...'
+```
+
+Then leave `tag` out and add this block instead. `tag` is the default for
+every base image; the optional `tags` map gives one image group a different
+tag: `core` is the NICo core image, `rest` the six REST images, each group
+one Helm release. `core_image` and `images` are the names NGC publishes
+under; the names the Helm charts expect locally are fixed, and only the core
+differs on NGC (`nvmetal-carbide` against `nico`).
 
 ```yaml
 ngc:
