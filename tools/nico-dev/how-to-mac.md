@@ -9,13 +9,29 @@ fabric built from FRR routers, and MAT, the simulator that plays a rack of
 servers for NICo to manage. At the end of Step 7 you have a working NICo site
 that you can develop against, break, and rebuild.
 
-The steps below are one linear path: build the VM yourself and deploy NICo
-from images built out of your own checkout. Where deploying pre-built images
-from NGC differs, a `Note:` says so; the difference is one block in one yaml
-file and one step of the run. If a colleague gave you a golden-image ZIP,
-skip to Appendix A, then come back to Step 6. Intel Macs are not supported.
-The older `how-to.md` is the full historical reference for anything not
-explained here.
+NICo runs as a set of container images inside the VM's Kubernetes cluster.
+There are two ways to get those images:
+
+- **Build them yourself.** The bring-up compiles the NICo source in your
+  checkout into images and pushes them to a small registry on your Mac, which
+  the VM pulls from. Everything is local; you need no account anywhere. The
+  first build takes 20 to 40 minutes, later ones minutes. Use this when you
+  change NICo code, or when you have no NGC access.
+- **Use pre-built images from NGC.** NVIDIA's CI publishes every merged
+  build to the NGC container registry, `nvcr.io`. The bring-up pulls the tag
+  you name, retags it into the same local registry, and deploys it. Nothing
+  is compiled, so a site is up in about 30 minutes, but you need an NGC API
+  key with read access to the team that publishes them, and you can only run
+  what CI has built.
+
+The steps below follow the first way: build the VM yourself and deploy NICo
+from images built out of your own checkout. Where the NGC way differs, a
+`Note:` says so; the difference is one block in one yaml file and one step
+of the run. A third way, a golden-image ZIP from a colleague that already
+contains a running site, is Appendix A; after it, come back to Step 6.
+
+Intel Macs are not supported. The older `how-to.md` is the full historical
+reference for anything not explained here.
 
 A few words used throughout:
 
