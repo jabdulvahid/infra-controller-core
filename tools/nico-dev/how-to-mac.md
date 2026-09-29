@@ -62,6 +62,28 @@ A few words used throughout:
   NVIDIA's NGC registry.
 - **A VIP** is a virtual IP address inside the VM that a NICo service
   answers on. Your Mac reaches them through one route, added in Step 6.
+- **MAT**, machine-a-tron, is the simulator that plays the hardware NICo
+  manages. It runs on the VM and presents a rack of mock servers: for each
+  one a Redfish BMC with power control, firmware and virtual media, a DPU,
+  and the DHCP and boot traffic a real host would produce. NICo discovers,
+  ingests and provisions them exactly as it would real machines, and MAT
+  also drives the switches and power shelves of the simulated rack. Its
+  fleet is defined in `mat-config.toml` (Step 9).
+- **The fabric** is the simulated datacenter network inside the VM: FRR
+  routers acting as spine and leaf switches, joined by Linux bridges, with
+  the EVPN and BGP configuration a real site has. NICo's network controllers
+  talk to it as they would to real switches, and MAT's mock BMCs live on it.
+- **The admin CLI**, `nico-admin-cli`, is NICo's operator command line. It
+  talks to the NICo API over gRPC with a client certificate and does the
+  day-1 site setup, machine and credential management, and inspection. On a
+  nico-dev site you run it through the generated wrapper `run-admin-cli.sh`
+  (Step 8).
+- **nicocli** is the command line of the REST API, the tenant-facing side of
+  NICo: organisations, VPCs, instances. It authenticates through Keycloak
+  and runs through the wrapper `run-nicocli.sh` (Step 11).
+- **DPF**, the DOCA Platform Framework, is how NICo provisions the DPU in
+  each host. A nico-dev site runs a DPF simulator instead of the real
+  operator (Appendix B).
 
 **Two configuration files.** You write one, `bringup.yaml`, in Step 3. It
 holds the few decisions that are yours: the VM's name and size, your
