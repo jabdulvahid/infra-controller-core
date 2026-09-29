@@ -76,7 +76,7 @@ A few words used throughout:
   and the DHCP and boot traffic a real host would produce. NICo discovers,
   ingests and provisions them exactly as it would real machines, and MAT
   also drives the switches and power shelves of the simulated rack. Its
-  fleet is defined in `mat-config.toml` (Step 9).
+  fleet is defined in `mat-config.toml` (Step 10).
 - **The fabric** is the simulated datacenter network inside the VM: FRR
   routers acting as spine and leaf switches, joined by Linux bridges, with
   the EVPN and BGP configuration a real site has. NICo's network controllers
@@ -88,7 +88,7 @@ A few words used throughout:
   (Step 8).
 - **nicocli** is the command line of the REST API, the tenant-facing side of
   NICo: organisations, VPCs, instances. It authenticates through Keycloak
-  and runs through the wrapper `run-nicocli.sh` (Step 11).
+  and runs through the wrapper `run-nicocli.sh` (Step 9).
 - **DPF**, the DOCA Platform Framework, is how NICo provisions the DPU in
   each host. A nico-dev site runs a DPF simulator instead of the real
   operator (Appendix C).
@@ -105,7 +105,7 @@ fleet, the DPF and firmware settings. Every later script, on the Mac and on
 the VM, reads the site yaml, never `bringup.yaml`. You normally do not edit
 it; advanced settings that have no `bringup.yaml` key live there, and after
 editing one you regenerate the values with `bring-up.py --from nico --until
-nico`, as Step 10 shows for the firmware versions.
+nico`, as Step 11 shows for the firmware versions.
 
 **How NICo gets deployed.** nico-dev has no deployment of its own. It
 installs the same Helm charts that production uses, taken from the checkout
@@ -214,7 +214,7 @@ image.
 5. Rust, cargo and Go are **not** required on the Mac. Every build nico-dev
    performs, the NICo images and the MAT binary, runs inside a container on
    colima. The one exception is compiling the two command-line clients
-   `nico-admin-cli` and `nicocli` natively on the Mac; Step 8 and Step 11
+   `nico-admin-cli` and `nicocli` natively on the Mac; Step 8 and Step 9
    show how to get both without a compiler.
 
 ## Step 1 - Install the Mac tools
@@ -356,7 +356,7 @@ redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
-firmware_sim: true  # only for firmware-upgrade work (Step 10); default false
+firmware_sim: true  # only for firmware-upgrade work (Step 11); default false
 
 dc: dc1
 site: feature1
@@ -379,7 +379,7 @@ What the fields mean:
   Appendix C explains both.
 - `firmware_sim`: `true` makes MAT hosts start with outdated firmware so
   ingestion runs the upgrade chain. Leave it out unless you work on that
-  (Step 10).
+  (Step 11).
 - `dc`, `site`: the names of your datacenter and site. They appear in
   folder names and in the cluster. `dc` is 1-3 characters, `site` 1-8.
 - `underlay`, `overlay`: two numbers that become the first octet of every
@@ -535,9 +535,56 @@ get-admin-cli.sh ~/mac/sites/dc1/feature1      # extracts the binary from the AP
 Always use the wrapper `run-admin-cli.sh`. The bare binary dials the API by
 its in-cluster name and fails outside the cluster. The full step-by-step for
 the CLIs and MAT, with what to expect at each stage, is
-`clis-mat-in-nico-dev.md`; Steps 8, 9 and 11 are the summary.
+`clis-mat-in-nico-dev.md`; Steps 8, 9 and 10 are the summary.
 
-## Step 9 - Build and run MAT
+## Step 9 - nicocli, without compiling anything
+
+The REST API has its own CLI, `nicocli`, and the REST API image ships it,
+built from the same commit as the API. Four steps get it working.
+
+On the Mac, extract the CLI. This copies the binary out of the REST API image
+already in docker's store and writes a wrapper; it takes a few seconds:
+
+```bash
+get-nicocli.sh <share>/sites/dc1/feature1
+```
+
+You should see three steps end with a check mark, then a "Done" block with
+the two commands to run next. The results are `<site>/nicocli/nicocli`, a
+Linux build, and `<site>/run-nicocli.sh`, the wrapper, both on the share.
+
+On the VM, bootstrap the organisation, once per fresh site:
+
+```bash
+ssh nico@192.168.64.126
+~/mac/sites/dc1/feature1/run-nicocli.sh --bootstrap
+```
+
+The first call pauses a few seconds while a token is minted inside the
+cluster. Then two commands run, `infrastructure-provider current` and
+`tenant current`, each printing a JSON object: they create the
+organisation's provider and tenant. Until this has run once, every other
+command answers "Org does not have a Tenant associated".
+
+On the VM, use it:
+
+```bash
+~/mac/sites/dc1/feature1/run-nicocli.sh vpc list
+~/mac/sites/dc1/feature1/run-nicocli.sh --help
+```
+
+Always go through the wrapper. It supplies the API address, the organisation
+`ncx` and the token; the bare binary knows none of them. The token is cached
+for 25 minutes and renewed on its own. If a command ever fails with an
+authentication error, put `--refresh-token` in front of it once.
+
+When to repeat what: extract again after you deploy a new nico tag, so the
+CLI matches the API. Bootstrap never again for this site. Nothing to do
+between MAT runs; the REST side is untouched by the fleet reset. On the Mac
+the same wrapper works too, if you built a Mac `nicocli` with
+`build-nico-clis.py`; otherwise it tells you to use the VM.
+
+## Step 10 - Build and run MAT
 
 MAT is built in a container on the Mac and delivered to the VM through the
 share. On the Mac:
@@ -555,7 +602,7 @@ fleet definition `<site>/mat/mat-config.toml`, generates the wrapper
 
 Note: without `--mat-only`, `build-nico-clis.py` also compiles
 `nico-admin-cli` and `nicocli` on the Mac, which needs cargo and Go installed
-there. Use Step 8 and Step 11 instead unless you need to test your own
+there. Use Step 8 and Step 9 instead unless you need to test your own
 changes to a CLI.
 
 MAT runs on the VM only. It puts the addresses of its mock BMCs on the fabric
@@ -611,7 +658,7 @@ The run script derives its log name from its own name, so
 baseline and your build never overwrite each other. The details and the
 failure catalog are in `mat-in-nico-dev.md`.
 
-## Step 10 - Firmware upgrade simulation
+## Step 11 - Firmware upgrade simulation
 
 By default MAT hosts report firmware that already matches what NICo wants, so
 ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
@@ -640,53 +687,6 @@ Changing them after bring-up means `bring-up.py --config X --from nico
 `configure-clis.py <site>` for the MAT config, then `reset-mat-state.py` and
 a fresh MAT run. `false` renders exactly what the site rendered before the
 option existed.
-
-## Step 11 - nicocli, without compiling anything
-
-The REST API has its own CLI, `nicocli`, and the REST API image ships it,
-built from the same commit as the API. Four steps get it working.
-
-On the Mac, extract the CLI. This copies the binary out of the REST API image
-already in docker's store and writes a wrapper; it takes a few seconds:
-
-```bash
-get-nicocli.sh <share>/sites/dc1/feature1
-```
-
-You should see three steps end with a check mark, then a "Done" block with
-the two commands to run next. The results are `<site>/nicocli/nicocli`, a
-Linux build, and `<site>/run-nicocli.sh`, the wrapper, both on the share.
-
-On the VM, bootstrap the organisation, once per fresh site:
-
-```bash
-ssh nico@192.168.64.126
-~/mac/sites/dc1/feature1/run-nicocli.sh --bootstrap
-```
-
-The first call pauses a few seconds while a token is minted inside the
-cluster. Then two commands run, `infrastructure-provider current` and
-`tenant current`, each printing a JSON object: they create the
-organisation's provider and tenant. Until this has run once, every other
-command answers "Org does not have a Tenant associated".
-
-On the VM, use it:
-
-```bash
-~/mac/sites/dc1/feature1/run-nicocli.sh vpc list
-~/mac/sites/dc1/feature1/run-nicocli.sh --help
-```
-
-Always go through the wrapper. It supplies the API address, the organisation
-`ncx` and the token; the bare binary knows none of them. The token is cached
-for 25 minutes and renewed on its own. If a command ever fails with an
-authentication error, put `--refresh-token` in front of it once.
-
-When to repeat what: extract again after you deploy a new nico tag, so the
-CLI matches the API. Bootstrap never again for this site. Nothing to do
-between MAT runs; the REST side is untouched by the fleet reset. On the Mac
-the same wrapper works too, if you built a Mac `nicocli` with
-`build-nico-clis.py`; otherwise it tells you to use the VM.
 
 ## Step 12 - The dev loop
 
