@@ -72,7 +72,11 @@ def parse_args():
                    help='firmware upgrade simulation (default false): MAT hosts start below the '
                         'desired BMC/UEFI versions and nico-api gets a firmware definition for '
                         'them, so ingestion runs the upgrade chain. From bringup.yaml '
-                        '`firmware_sim:` (Linux lane).')
+                        '`firmware_sim:`.')
+    p.add_argument('--nico-api-site-config-extra', default='', metavar='TOML',
+                   help='raw TOML appended verbatim to nico-api\'s site config after the '
+                        'generated sections (site yaml nico-system.site_config_extra). '
+                        'From bringup.yaml `nico_api_site_config_extra:`; empty = nothing.')
     # images: — recorded so every later script (redeploy, add-ons) knows how
     # the site's images are produced without command-line flags
     p.add_argument('--images-source-kind', choices=['ngc', 'build'], default='build',
@@ -150,6 +154,12 @@ def rewrite(content, pfx, dc_name, site_name, args):
     _names_block = '\n'.join('    ' + l for l in _yaml.safe_dump({'names': _names}, sort_keys=False,
                                                                   default_flow_style=False).rstrip().splitlines())
     content = content.replace('IMAGES_SOURCE_NAMES_BLOCK', _names_block)
+    # nico-system.site_config_extra: a YAML block scalar (indented under the
+    # 2-space nico-system key) so the site yaml stays readable; "" when unset.
+    _extra = (args.nico_api_site_config_extra or '').strip('\n')
+    _extra_block = ('site_config_extra: |\n' + '\n'.join('    ' + l for l in _extra.splitlines())
+                    if _extra else 'site_config_extra: ""')
+    content = content.replace('SITE_CONFIG_EXTRA_BLOCK', _extra_block)
 
     replacements = [
         # Shared folder paths

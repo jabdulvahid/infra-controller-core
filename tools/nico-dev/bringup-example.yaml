@@ -91,15 +91,25 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # resources) is advanced and lives in the site yaml under nico-system.dpf.
 # dpf: true
 
-# ── Firmware upgrade simulation (Linux lane only) ───────────────────────
+# ── Firmware upgrade simulation ─────────────────────────────────────────
 # false (default): MAT hosts report firmware that already matches, so NICo
 # never upgrades anything. true: MAT hosts start below the desired BMC and
 # UEFI versions and nico-api gets a firmware definition for the mock GB200,
 # so every ingestion runs SimpleUpdate → Redfish task → power cycle →
 # version recheck. The versions live in the site yaml under
-# nico-system.firmware_sim (initial 1.0, desired 2.0 by default). Not a
-# bring-up_mac.py option: a Mac config with this key is rejected.
+# nico-system.firmware_sim (initial 1.0, desired 2.0 by default). Both lanes.
 # firmware_sim: false
+
+# ── Extra nico-api site config ──────────────────────────────────────────
+# Raw TOML appended verbatim to nico-api's site config
+# (carbide-api-site-config.toml) after the sections nico-dev generates, for
+# sections it has no key for. Lands in the site yaml as
+# nico-system.site_config_extra; unset = nothing appended. Both lanes.
+# nico_api_site_config_extra: |
+#   [nvlink_config]
+#   enabled = true
+#   nmx_c_tls_ca_cert_path = "/var/run/secrets/nico-roots/ca.crt"
+#   nmx_c_tls_authority = "mat-mock.nvidia.com"
 
 # ── Your site identity — EDIT THESE ────────────────────────────────────
 dc: dc1                           # datacenter name: 1-3 chars, lowercase
