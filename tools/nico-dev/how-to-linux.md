@@ -11,7 +11,9 @@ Two ways to get NICo images into the site:
 - **NGC lane** (default, no compilation): pre-built images pulled from NGC.
   Empty host to admin UI in about 13 minutes on the corp network.
 - **Source-build lane**: your worktree's branch, built into images on the
-  host and deployed. First build 20 to 40 minutes, minutes afterwards.
+  host and deployed. First build 20 to 40 minutes on the recommended machine
+  (2 to 3 hours on a 4-core host of 2012 vintage, see the table below),
+  minutes afterwards.
 
 Both share every other step.
 
@@ -50,6 +52,7 @@ the desktop hung (issues.md 20260926-#1 context).
 |---|---|---|---|
 | 16 GB, 4 cores | NGC only, REST off | `cpus: 4`, `mem_mb: 8192` | runs Core, DPF and MAT; set `nico-system.rest.enabled: false` in the site yaml before the first deploy (the REST stack adds about 3 GB inside the VM); do not source-build here |
 | 32 GB, 8+ modern cores, NVMe | NGC or source, full stack | `cpus: 6`, `mem_mb: 12288` | the recommended development machine |
+| 32-48 GB, 4 cores of 2012 vintage (i7-3xxx) | NGC or source, full stack | `cpus: 6`, `mem_mb: 20480` | works, slowly: the first source build is 2 to 3 hours instead of 20 to 40 minutes (a 2012 core is about a third of an Apple Silicon or current x86 core, and hyperthreads add little), Keycloak's first start is the step most likely to trip the liveness probe (§11). Memory is not the limit here, so REST can stay on |
 | 64 GB, 12+ cores | source, several sites | `cpus: 8`, `mem_mb: 16384` per VM | redeploy cycles and MAT at full size |
 
 What the 16 GB line is based on (2026-09-26/27, a 2017 quad-core laptop):
