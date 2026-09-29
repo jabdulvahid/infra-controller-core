@@ -25,10 +25,10 @@ There are two ways to get those images:
   what CI has built.
 
 The steps below follow the first way: build the VM yourself and deploy NICo
-from images built out of your own checkout. Where the NGC way differs, a
-`Note:` says so; the difference is one block in one yaml file and one step
-of the run. A third way, a golden-image ZIP from a colleague that already
-contains a running site, is Appendix A; after it, come back to Step 6.
+from images built out of your own checkout. The NGC way differs in one
+block of one yaml file and one step of the run; Appendix B has it. A
+third way, a golden-image ZIP from a colleague that already contains a
+running site, is Appendix A. After either appendix, come back to Step 6.
 
 Intel Macs are not supported.
 
@@ -83,7 +83,7 @@ A few words used throughout:
   and runs through the wrapper `run-nicocli.sh` (Step 11).
 - **DPF**, the DOCA Platform Framework, is how NICo provisions the DPU in
   each host. A nico-dev site runs a DPF simulator instead of the real
-  operator (Appendix B).
+  operator (Appendix C).
 
 **Two configuration files.** You write one, `bringup.yaml`, in Step 3. It
 holds the few decisions that are yours: the VM's name and size, your
@@ -148,7 +148,7 @@ its own `host_num`.
 **Golden images.** Once you have a working site, you can turn the VM into a
 golden image: a `.utm` bundle, zipped, that a colleague imports and has
 running in about five minutes with no build at all. `bake-golden-image.sh`
-prepares the VM for that (Appendix H): it saves the site yaml and the
+prepares the VM for that (Appendix I): it saves the site yaml and the
 nico-dev tools inside the image, resets the `nico` user to the default
 password with no SSH keys, cleans caches and logs, and checks that every pod
 is Running and every image is cached in the VM's containerd. You shut the VM
@@ -179,15 +179,12 @@ image.
 3. You can reach `github.com/dsx-ai-factory/infra-controller`, and you have
    an SSH keypair in `~/.ssh`, or you generate one in Step 1. The public key
    is installed into the VM so the scripts log in without a password.
-4. Only for the NGC lane: an NGC API key with read access to the registry of
-   the organisation and team that publishes the NICo images. The source-build
-   lane needs no NGC key.
-5. This page assumes one nico-dev VM on the Mac. Several can coexist, but
+4. This page assumes one nico-dev VM on the Mac. Several can coexist, but
    each needs its own address on UTM's network (`host_num`), its own VM
    name, its own folder, and its own `underlay` and `overlay` octets; two
    VMs that share any of these collide. If you have an old one you no longer
    need, tear it down first (Step 13).
-6. Rust, cargo and Go are **not** required on the Mac. Every build nico-dev
+5. Rust, cargo and Go are **not** required on the Mac. Every build nico-dev
    performs, the NICo images and the MAT binary, runs inside a container on
    colima. The one exception is compiling the two command-line clients
    `nico-admin-cli` and `nicocli` natively on the Mac; Step 8 and Step 11
@@ -281,8 +278,7 @@ repository, not your Mac. The nico-dev scripts re-implement parts of the
 upstream setup and therefore assume certain chart paths, resource names and
 defaults in the checkout. A ✗ there means a nico-dev script needs updating,
 not your repository; report it. The line about upstream main is
-informational for a source build; make the checkout current if you plan to
-deploy pre-built images.
+informational for a source build; Appendix B says when it matters.
 
 ## Step 3 - Write bringup.yaml
 
@@ -331,7 +327,7 @@ What the fields mean:
   full node. `scale-down-first` lets it proceed (Step 12).
 - `dpf`: `true`, the default, gives you NICo's DPF provisioning path
   together with the DPF simulator. `false` gives the older iPXE path.
-  Appendix B explains both.
+  Appendix C explains both.
 - `firmware_sim`: `true` makes MAT hosts start with outdated firmware so
   ingestion runs the upgrade chain. Leave it out unless you work on that
   (Step 10).
@@ -347,45 +343,6 @@ What the fields mean:
 Leave `ip` unset unless UTM's shared network is not `192.168.64.0/24`, which
 is rare; the VM's address is `<UTM subnet>.<host_num>`. If you need a
 different last octet, set `host_num`; the default is 126.
-
-Note: for the NGC lane, first put your NGC API key in an environment
-variable, in your shell profile. The yaml names the variable, never the key
-itself, and the key is never printed or stored:
-
-```bash
-export NGC_API_KEY='...'
-```
-
-Then leave `tag` out and add this block instead. `tag` is the default for
-every base image; the optional `tags` map gives one image group a different
-tag: `core` is the NICo core image, `rest` the six REST images, each group
-one Helm release. `core_image` and `images` are the names NGC publishes
-under; the names the Helm charts expect locally are fixed, and only the core
-differs on NGC (`nvmetal-carbide` against `nico`).
-
-```yaml
-ngc:
-  registry: nvcr.io/<org>/<team>       # ask your team
-  tag: <tag>                           # default tag for every image; ngc-tags.py, below
-  # tags:                              # optional: a different tag for one image group
-  #   rest: <tag>
-  core_image: nvmetal-carbide          # NGC's name for the core image
-  # images:                            # optional: NGC names, if NGC publishes an image
-  #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
-  token_env: NGC_API_KEY               # NAME of the env var holding your key
-```
-
-To find a deployable tag, one that tracks main and is published for arm64:
-
-```bash
-ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main
-ngc-tags.py --config bringup-mysite.yaml --before v2.3.0
-ngc-tags.py --config bringup-mysite.yaml --group rest    # tags of the REST images
-```
-
-Prefer a recent development tag. A fresh site's database schema follows
-main, and the migration job refuses to run an older version against a newer
-schema, so an old tag on a new site can fail.
 
 ## Step 4 - Dry run
 
@@ -451,16 +408,10 @@ the exact command to resume, `--from <step>`, which for the releases is the
 release name (`--from keycloak`). Every step is safe to run again; a release
 step is a fast idempotent Helm upgrade when it is already installed, and a
 resume keeps the earlier steps in the status viewer. The `keycloak` step is
-the one most likely to fail on a loaded Mac; Appendix E has the recovery.
+the one most likely to fail on a loaded Mac; Appendix F has the recovery.
 
 You should see the run end with a URL, `https://11.133.1.17/admin` for
 `underlay: 11`.
-
-Note: with an `ngc:` block, the `build` step and the twelve release steps
-collapse into one `ngc` step that pulls, retags and deploys the pre-built
-images; 9 steps in all. A resume past a failed release on that lane is
-`deploy-dev-nico.py <site> --tag <images.tag from the site yaml> --skip-to
-<release>`, because the releases run inside the one `ngc` step.
 
 ## Step 6 - kubectl, the route, and where things are
 
@@ -478,8 +429,7 @@ route -n get 11.133.1.17                                # gateway: 192.168.64.12
 Note: **the route does not last.** macOS removes it whenever the last UTM VM
 stops, because UTM's network bridge `bridge100` disappears and macOS flushes
 every route through it. The route also goes on sleep and wake, and when a
-VPN connects or disconnects. Re-add it with the same command. The scripts
-`restart-ordered.sh` and `onboard-golden.sh` print the command for you.
+VPN connects or disconnects. Re-add it with the same command; `restart-ordered.sh` prints it for you.
 
 Where things are, seen from both sides:
 
@@ -806,7 +756,74 @@ never touches a golden ZIP. The two do not mix.
    generated new SSH host keys, so the old entry must go. Then set up the
    route and `KUBECONFIG` as in Step 6.
 
-## Appendix B - DPF and the two provisioning modes
+## Appendix B - Deploy pre-built images from NGC
+
+Use this instead of the source build when you do not change NICo code and
+want a site quickly: nothing is compiled, and a site is up in about 30
+minutes. You need an NGC API key with read access to the registry of the
+organisation and team that publishes the NICo images; ask your team for
+both. Everything else on this page stays the same; the differences are one
+block in `bringup.yaml` and one step of the run.
+
+Put your NGC API key in an environment variable, in your shell profile. The
+yaml names the variable, never the key itself, and the key is never printed
+or stored:
+
+```bash
+export NGC_API_KEY='...'
+```
+
+In `bringup.yaml` (Step 3), leave `tag` out and add this block instead.
+`tag` is the default for every base image; the optional `tags` map gives one
+image group a different tag: `core` is the NICo core image, `rest` the six
+REST images, each group one Helm release. `core_image` and `images` are the
+names NGC publishes under; the names the Helm charts expect locally are
+fixed, and only the core differs on NGC (`nvmetal-carbide` against `nico`).
+
+```yaml
+ngc:
+  registry: nvcr.io/<org>/<team>       # ask your team
+  tag: <tag>                           # default tag for every image; ngc-tags.py, below
+  # tags:                              # optional: a different tag for one image group
+  #   rest: <tag>
+  core_image: nvmetal-carbide          # NGC's name for the core image
+  # images:                            # optional: NGC names, if NGC publishes an image
+  #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
+  token_env: NGC_API_KEY               # NAME of the env var holding your key
+```
+
+To find a deployable tag, one that tracks main and is published for arm64:
+
+```bash
+ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main
+ngc-tags.py --config bringup-mysite.yaml --before v2.3.0
+ngc-tags.py --config bringup-mysite.yaml --group rest    # tags of the REST images
+```
+
+Prefer a recent development tag. A fresh site's database schema follows
+main, and the migration job refuses to run an older version against a newer
+schema, so an old tag on a new site can fail.
+
+Note: the checkout in your share still matters on this lane. The Helm
+charts, the DPF simulator and its RBAC come from that checkout, while the
+images come from CI's build of a newer upstream. A checkout behind upstream
+pairs older charts with newer images, so a chart may lack a value, RBAC rule
+or CRD the newer nico-api expects. `check-prereqs.sh` (Step 2) prints the
+command that brings the checkout current; run it before the bring-up.
+
+With an `ngc:` block, the `build` step and the twelve release steps
+collapse into one `ngc` step that pulls, retags and deploys the pre-built
+images; 9 steps in all. A resume past a failed release on that lane is
+`deploy-dev-nico.py <site> --tag <images.tag from the site yaml> --skip-to
+<release>`, because the releases run inside the one `ngc` step.
+
+The `ngc` step logs in to `nvcr.io` with the key, pulls each image for the
+host architecture, retags it into the local registry under the name the
+Helm charts expect, pushes it, and then deploys the releases exactly as the
+source lane does. `bring-up-status.py` shows the release stages inside that
+one step.
+
+## Appendix C - DPF and the two provisioning modes
 
 NICo provisions the DPU in each managed host through DPF, the DOCA Platform
 Framework. In production, NICo creates DPF resources in Kubernetes and the
@@ -853,7 +870,7 @@ worktree, and `--uninstall` to remove it. Advanced settings live in the site
 yaml under `nico-system.dpf`. What the simulator reproduces, what it does
 not, and its failure catalog are in section 13 of `mat-in-nico-dev.md`.
 
-## Appendix C - Add-ons after bring-up
+## Appendix D - Add-ons after bring-up
 
 Optional components are installed after the site is up, one script per
 component, run from the Mac, at your discretion. Each add-on has its own
@@ -877,9 +894,9 @@ of what is installed, and removal is the chart's own uninstall.
 
 The design, the config format shared by every add-on, and the list of other
 candidates are in `ADDONS.md` and `deploying-extras.md`. DPF is not an
-add-on; it is part of the base site (Appendix B).
+add-on; it is part of the base site (Appendix C).
 
-## Appendix D - Learning the fabric
+## Appendix E - Learning the fabric
 
 The simulated fabric is a good place to learn EVPN networking. On the VM,
 `ndev.py ~/mac/sites/dc1/dev1 fabric shell` lists the switches, and
@@ -888,7 +905,7 @@ The simulated fabric is a good place to learn EVPN networking. On the VM,
 you like; `sudo systemctl restart nico-dev-fabric` rebuilds the whole fabric
 from the site yaml. Newcomers should start with `networking-primer.md`.
 
-## Appendix E - Troubleshooting
+## Appendix F - Troubleshooting
 
 - **The VIP refuses connections on a fresh site while all pods are
   Running.** Check `kubectl -n nico-system get endpoints nico-api`. If it is
@@ -965,9 +982,9 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
   then look at `cat /etc/netplan/99-nico-static.yaml` and run
   `sudo netplan apply`.
 
-## Appendix F - Maintainers
+## Appendix G - Maintainers
 
-- **Bake and export a golden image.** Appendix H, step by step.
+- **Bake and export a golden image.** Appendix I, step by step.
 - **Smoke test** before pushing any change to the cloud-init seed, the VM
   creation record, or `prepare-vm`: `smoke-test.sh` takes about six minutes
   on a throwaway VM.
@@ -975,7 +992,7 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
   `git tag validated-YYYYMMDD && git push origin validated-YYYYMMDD`. The
   stable graft channel serves the newest such tag.
 
-## Appendix G - Script reference
+## Appendix H - Script reference
 
 | Script | Runs on | Does |
 |---|---|---|
@@ -1004,7 +1021,7 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
 | `bake-golden-image.sh <site yaml>` | VM | prepare a VM for export |
 | `smoke-test.sh` | Mac | maintainers: boot-path check on a throwaway VM |
 
-## Appendix H - Make a golden image
+## Appendix I - Make a golden image
 
 Turn a working site into a `.utm` bundle that a colleague imports with
 Appendix A. The whole cycle is bake on the VM, export on the Mac, keep the
