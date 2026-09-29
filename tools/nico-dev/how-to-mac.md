@@ -32,6 +32,24 @@ contains a running site, is Appendix A; after it, come back to Step 6.
 
 Intel Macs are not supported.
 
+**How nico-dev is put together.** Two machines take part: your Mac and one
+Ubuntu VM that UTM runs on it. The Mac does the heavy lifting that does not
+need to be inside the cluster: it builds the NICo images and the MAT binary
+in containers on colima, runs the small image registry the VM pulls from,
+and runs the nico-dev scripts that drive the whole bring-up over ssh. The VM
+holds everything that has to run together as a site: the Kubernetes cluster,
+the NICo services, the simulated network fabric, and MAT with its mock BMCs,
+which need the fabric's bridges and therefore cannot run on the Mac. The two
+are joined by a shared folder on the Mac that the VM mounts, and that folder
+is where every artifact crosses over: your source worktree with the nico-dev
+tools inside it, the site's configuration and certificates, the kubeconfig,
+the MAT binary and its config, and image tarballs on their way into the VM.
+A script started on the Mac can therefore hand a file to the VM by writing
+it to the share, and a script on the VM finds the same file under `~/mac`.
+Your Mac reaches the services inside the VM through one route to the VM's
+address, so `kubectl` and the admin UI work from the Mac as if the cluster
+were local.
+
 A few words used throughout:
 
 - **The share** is a folder on your Mac that the VM mounts. Files you put
