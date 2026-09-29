@@ -173,12 +173,28 @@ image.
 
 ## Assumptions
 
-1. An Apple Silicon Mac. Pick the row that matches what you plan to do:
+1. An Apple Silicon Mac. Two things on it share the Mac's cores and memory:
+   colima, the Docker engine that builds the images, and the UTM VM that
+   runs the site. Both are sized by you, colima in Step 1 and the VM in
+   Step 3, so start from what the Mac has:
 
-   | Purpose | Mac RAM | VM | Notes |
+   ```bash
+   sysctl -n machdep.cpu.brand_string hw.ncpu; echo "$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 )) GB RAM"
+   ```
+
+   Then split it. Give colima 8 CPUs and 16 GB: the Rust build gains little
+   beyond 8 CPUs, and below 16 GB it gets killed for lack of memory. Give
+   the VM 8 CPUs and the rest of the memory minus about 12 GB for macOS,
+   at least 16 GB for development. The CPU totals may exceed the core count;
+   colima is busy while the VM is idle during the build, and the other way
+   round afterwards. This page's example is a 14-core, 48 GB M4 Pro: colima
+   8 CPUs and 16 GB, VM 8 CPUs and 20 GB, 12 GB left for macOS. The tiers:
+
+   | Purpose | Mac RAM | colima | VM |
    |---|---|---|---|
-   | build-and-play: golden image or NGC lane, no redeploys | 16 GB | 6 CPUs, 8 GB | the running stack uses about 5 GB |
-   | development: source builds, redeploy cycles, MAT | 32 GB+ | 8+ CPUs, 16 GB+ | the UTM VM and colima time-share the cores |
+   | build-and-play: golden image or NGC lane, no redeploys | 16 GB | 4 CPUs, 4 GB (nothing to build) | 6 CPUs, 8 GB; the running stack uses about 5 GB |
+   | development: source builds, redeploy cycles, MAT | 32 GB | 8 CPUs, 16 GB | 8 CPUs, 12 GB |
+   | development, comfortable | 48 GB+ | 8 CPUs, 16 GB | 8 CPUs, 20 GB |
 
    Disk: about 250 GB free for the development tier. The UTM disk is 120 GB
    by default, the colima disk is 100 GB, and images and caches take the
@@ -211,8 +227,9 @@ brew install --cask utm
 brew install git python3 helm kubectl colima docker
 pip3 install pyyaml
 
-# Start the Docker engine with enough resources. colima's default of 4 CPUs and
-# 8 GB is too small: the Rust build of the NICo images gets killed for lack of memory.
+# Start the Docker engine with the resources chosen in the Assumptions. colima's
+# default of 4 CPUs and 8 GB is too small: the Rust build of the NICo images gets
+# killed for lack of memory. To change a running colima: colima stop, then this again.
 colima start --cpu 8 --memory 16 --disk 100
 
 # Only if you have no SSH keypair yet. The public key is installed into the VM.
@@ -328,8 +345,8 @@ password: Welcome123!
 ssh_key: ~/.ssh/id_ed25519.pub
 
 vm:
-  cpus: 8
-  mem_mb: 16384
+  cpus: 8             # sized in the Assumptions: 8 CPUs and 20 GB on a 48 GB Mac
+  mem_mb: 20480
   disk_gb: 120
 
 redeploy:
