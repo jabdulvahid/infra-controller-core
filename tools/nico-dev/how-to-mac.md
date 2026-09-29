@@ -46,6 +46,13 @@ tools inside it, the site's configuration and certificates, the kubeconfig,
 the MAT binary and its config, and image tarballs on their way into the VM.
 A script started on the Mac can therefore hand a file to the VM by writing
 it to the share, and a script on the VM finds the same file under `~/mac`.
+For that to work in both directions, files need one owner on both sides, so
+the VM's login user, `nico`, is created with the same numeric user id as
+your Mac account; the VM builder reads your UID and passes it into the VM's
+cloud-init, and `bringup.yaml` has a `uid` key only for the rare case where
+you want another value. A file the VM writes into the share therefore shows
+up on the Mac as yours, and a file you write on the Mac is `nico`'s in the
+VM, with no permission fixing on either side.
 Your Mac reaches the services inside the VM through one route to the VM's
 address, so `kubectl` and the admin UI work from the Mac as if the cluster
 were local.
