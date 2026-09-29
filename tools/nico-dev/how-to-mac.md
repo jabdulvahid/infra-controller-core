@@ -335,8 +335,8 @@ Everything the bring-up needs to know goes into one file. Copy the example
 and edit it; the example documents every key. On the Mac:
 
 ```bash
-cp bringup-example.yaml bringup-mysite.yaml
-vi bringup-mysite.yaml
+cp bringup-example.yaml bringup-feature1.yaml
+vi bringup-feature1.yaml
 ```
 
 For the source-build lane it looks like this:
@@ -398,7 +398,7 @@ different last octet, set `host_num`; the default is 126.
 On the Mac:
 
 ```bash
-bring-up.py --config bringup-mysite.yaml --dry-run
+bring-up.py --config bringup-feature1.yaml --dry-run
 ```
 
 You should see every prerequisite marked ✓, ✗ or ⚠, the numbered plan with
@@ -410,7 +410,7 @@ run. `NOT READY` lists the lines to fix; fix them and run the dry run again.
 On the Mac:
 
 ```bash
-bring-up.py --config bringup-mysite.yaml
+bring-up.py --config bringup-feature1.yaml
 ```
 
 The run goes through 21 steps: `vm` → `prep` → `site` → `fabric` → `cp` →
@@ -442,8 +442,8 @@ The runner's output is the raw output of every command it runs, which is
 long and says little about where the run stands. Open a second terminal:
 
 ```bash
-bring-up-status.py --config bringup-mysite.yaml          # redraws every 2 s; Ctrl-C leaves the run alone
-bring-up-status.py --config bringup-mysite.yaml --once   # one snapshot, for pasting
+bring-up-status.py --config bringup-feature1.yaml          # redraws every 2 s; Ctrl-C leaves the run alone
+bring-up-status.py --config bringup-feature1.yaml --once   # one snapshot, for pasting
 ```
 
 It shows every step as done, running, failed or not yet, the time each took,
@@ -844,9 +844,9 @@ ngc:
 To find a deployable tag, one that tracks main and is published for arm64:
 
 ```bash
-ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main
-ngc-tags.py --config bringup-mysite.yaml --before v2.3.0
-ngc-tags.py --config bringup-mysite.yaml --group rest    # tags of the REST images
+ngc-tags.py --config bringup-feature1.yaml                 # newest PR builds tracking main
+ngc-tags.py --config bringup-feature1.yaml --before v2.3.0
+ngc-tags.py --config bringup-feature1.yaml --group rest    # tags of the REST images
 ```
 
 Prefer a recent development tag. A fresh site's database schema follows
