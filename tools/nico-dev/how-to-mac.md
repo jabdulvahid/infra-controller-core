@@ -56,7 +56,7 @@ A few words used throughout:
   there are visible inside the VM, and files the VM writes there are visible
   on the Mac. Everything nico-dev creates lives in the share.
 - **A site** is one deployed NICo installation, named by a datacenter name
-  and a site name, for example `dc1/dev1`.
+  and a site name, for example `dc1/feature1`.
 - **A lane** is where the NICo container images come from: built from your
   own source checkout (this page's main path), or pulled pre-built from
   NVIDIA's NGC registry.
@@ -217,25 +217,46 @@ needed to build.
 
 ## Step 2 - Folder, worktree, tools
 
-Your main clone of the NICo repository stays where it is. For each VM you
-create one folder; inside it, `shared/` is the share the VM mounts, and inside
-the share you place a git worktree on the branch you want to run. A worktree
-is a second checkout of the same repository: it shares history with your main
-clone but has its own files. On the Mac:
+The rest of this page assumes you are familiar with the NICo development
+environment: the repository, how it is built and tested, and its
+contribution workflow. If you are not, set that up first by following
+[`CONTRIBUTING.md`](https://github.com/dsx-ai-factory/infra-controller/blob/main/CONTRIBUTING.md)
+in the infra-controller repository; that gives you the primary clone this
+step starts from.
+
+This page uses git worktrees for feature development: each feature gets its
+own worktree, created from your primary clone, and the primary clone stays
+where it lives. A worktree is a second checkout of the same repository. It
+shares history with the clone but has its own files, so several branches can
+be checked out side by side, each in its own VM.
+
+Let us assume the branch you want to work on is `feature1`. The objective is
+to make your changes on that branch and deploy them into a nico-dev site
+named `feature1`, running in a VM named `vm-feature1`. Each VM gets one
+folder; its `shared/` is the folder the VM mounts, and inside it lives the
+worktree on the branch you want to run. On the Mac:
 
 ```bash
-mkdir -p ~/nico-tests/vm1/shared
-cd ~/projects/infra-controller     # no clone yet? git clone https://github.com/dsx-ai-factory/infra-controller.git
-git remote -v                      # which remote is NVIDIA's repository? below it is called UPSTREAM
-git fetch UPSTREAM main            # so the worktree starts from TODAY's NVIDIA main, not the last fetch
-git worktree add -b vm1-work ~/nico-tests/vm1/shared/infra-controller UPSTREAM/main
+# One folder per VM. shared/ is what the VM mounts.
+mkdir -p ~/nico-tests/vm-feature1/shared
+
+# Your primary clone. Find out which remote points at NVIDIA's repository;
+# below it is called UPSTREAM. In a plain clone that is origin; in a personal
+# fork it is usually upstream, because origin is your fork.
+cd ~/projects/infra-controller
+git remote -v
+
+# Fetch first, so the new branch starts from TODAY's NVIDIA main rather than
+# from your last fetch.
+git fetch UPSTREAM main
+
+# Create the branch and its worktree inside the share in one command.
+git worktree add -b feature1 ~/nico-tests/vm-feature1/shared/infra-controller UPSTREAM/main
 ```
 
-Replace `UPSTREAM` with the name of the remote that points at
-`github.com/dsx-ai-factory/infra-controller`. In a plain clone that is
-`origin`. If you work from a personal fork, `origin` is your fork and its
-`main` is only as new as your last sync; use the remote that points at
-NVIDIA's repository, usually `upstream`.
+Note: if `feature1` already exists, for example because you pushed it from
+another machine, leave out `-b` and the start point:
+`git worktree add ~/nico-tests/vm-feature1/shared/infra-controller feature1`.
 
 Note: the fetch matters. The images you deploy are built from current main,
 and the Helm charts, the DPF simulator's RBAC and the simulator's own source
@@ -252,7 +273,7 @@ show up in `git status`, in your commits, or in your pull requests. Run the
 same command again whenever you want to update them:
 
 ```bash
-cd ~/nico-tests/vm1/shared/infra-controller
+cd ~/nico-tests/vm-feature1/shared/infra-controller
 curl -fsSL https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh | bash -s -- --edge
 ```
 
@@ -293,7 +314,7 @@ vi bringup-mysite.yaml
 For the source-build lane it looks like this:
 
 ```yaml
-name: nico-vm1
+name: vm-feature1
 user: nico
 password: Welcome123!
 ssh_key: ~/.ssh/id_ed25519.pub
@@ -310,7 +331,7 @@ dpf: true           # default: DPF provisioning + the DPF simulator; false = leg
 firmware_sim: true  # only for firmware-upgrade work (Step 10); default false
 
 dc: dc1
-site: dev1
+site: feature1
 underlay: 11        # first octets of the fabric prefixes: pick two your Mac and VPN do not use
 overlay: 12
 
@@ -376,7 +397,7 @@ The run stops and waits for you twice. This is by design:
 
 1. **The UTM share path.** UTM does not let a script set the shared folder
    of a VM. The runner pauses, tells you to open the VM's Sharing settings
-   and point them at `~/nico-tests/vm1/shared`, and waits for you to press
+   and point them at `~/nico-tests/vm-feature1/shared`, and waits for you to press
    Enter. It then checks what UTM recorded: if the Path is missing or
    different it says so and asks again, so a missed click does not surface
    minutes later as a failed first boot. Type `skip` to boot without a share
@@ -419,7 +440,7 @@ On the Mac, point kubectl at the cluster and add the route to the service
 addresses:
 
 ```bash
-export KUBECONFIG=~/nico-tests/vm1/shared/sites/dc1/dev1/dc1-dev1.kubeconfig.yaml   # in your shell profile
+export KUBECONFIG=~/nico-tests/vm-feature1/shared/sites/dc1/feature1/dc1-feature1.kubeconfig.yaml   # in your shell profile
 kubectl get nodes
 
 sudo route -n add -net 11.133.1.0/27 192.168.64.126     # route to the service VIPs
@@ -435,11 +456,11 @@ Where things are, seen from both sides:
 
 | | Mac | Inside the VM |
 |---|---|---|
-| share root | `~/nico-tests/vm1/shared` | `~/mac` |
+| share root | `~/nico-tests/vm-feature1/shared` | `~/mac` |
 | repo worktree | `<share>/infra-controller` | `~/mac/infra-controller` |
-| site folder | `<share>/sites/dc1/dev1` | `~/mac/sites/dc1/dev1` |
+| site folder | `<share>/sites/dc1/feature1` | `~/mac/sites/dc1/feature1` |
 | image tarballs in transit | `<site>/images/*.tar` (deleted after import) | same path under `~/mac` |
-| kubeconfig | `<site>/dc1-dev1.kubeconfig.yaml` | same path under `~/mac` |
+| kubeconfig | `<site>/dc1-feature1.kubeconfig.yaml` | same path under `~/mac` |
 | local registry | `localhost:5000` (colima) | `192.168.64.1:5000` |
 
 Inside the VM the repository is a git worktree whose metadata lives on the
@@ -450,7 +471,7 @@ the full fabric health, because the fabric only exists inside the VM:
 
 ```bash
 ndev.py <site>                                                       # Mac: cluster status; fabric/BGP/DPU n/a (VM-side)
-ssh nico@192.168.64.126 'ndev.py ~/mac/sites/dc1/dev1 fabric verify' # VM: full fabric health
+ssh nico@192.168.64.126 'ndev.py ~/mac/sites/dc1/feature1 fabric verify' # VM: full fabric health
 ```
 
 The subcommands are `fabric verify|info|shell [switch]`, `bgp info
@@ -479,8 +500,8 @@ script. On the VM:
 
 ```bash
 ssh nico@192.168.64.126
-get-admin-cli.sh ~/mac/sites/dc1/dev1      # extracts the binary from the API container, issues certs, writes the wrapper
-~/mac/sites/dc1/dev1/run-admin-cli.sh version
+get-admin-cli.sh ~/mac/sites/dc1/feature1      # extracts the binary from the API container, issues certs, writes the wrapper
+~/mac/sites/dc1/feature1/run-admin-cli.sh version
 ```
 
 Always use the wrapper `run-admin-cli.sh`. The bare binary dials the API by
@@ -514,7 +535,7 @@ bridge `br-dc1-internet`, which exists only inside the VM, and NICo's
 site-explorer connects to those addresses. On the VM:
 
 ```bash
-ssh nico@192.168.64.126 '~/mac/sites/dc1/dev1/run-mat.sh'
+ssh nico@192.168.64.126 '~/mac/sites/dc1/feature1/run-mat.sh'
 ```
 
 `run-mat.sh` copies the binary, the certificates and the configuration to
@@ -525,7 +546,7 @@ with `run-admin-cli.sh machine show` (no argument lists them all). For a live
 overview of the whole run, in a second VM terminal:
 
 ```bash
-~/mac/infra-controller/tools/nico-dev/run-monitor-mat.sh ~/mac/sites/dc1/dev1
+~/mac/infra-controller/tools/nico-dev/run-monitor-mat.sh ~/mac/sites/dc1/feature1
 ```
 
 It shows expected machines, endpoints, machine states with the milestones
@@ -601,7 +622,7 @@ On the Mac, extract the CLI. This copies the binary out of the REST API image
 already in docker's store and writes a wrapper; it takes a few seconds:
 
 ```bash
-get-nicocli.sh <share>/sites/dc1/dev1
+get-nicocli.sh <share>/sites/dc1/feature1
 ```
 
 You should see three steps end with a check mark, then a "Done" block with
@@ -612,7 +633,7 @@ On the VM, bootstrap the organisation, once per fresh site:
 
 ```bash
 ssh nico@192.168.64.126
-~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap
+~/mac/sites/dc1/feature1/run-nicocli.sh --bootstrap
 ```
 
 The first call pauses a few seconds while a token is minted inside the
@@ -624,8 +645,8 @@ command answers "Org does not have a Tenant associated".
 On the VM, use it:
 
 ```bash
-~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
-~/mac/sites/dc1/dev1/run-nicocli.sh --help
+~/mac/sites/dc1/feature1/run-nicocli.sh vpc list
+~/mac/sites/dc1/feature1/run-nicocli.sh --help
 ```
 
 Always go through the wrapper. It supplies the API address, the organisation
@@ -698,7 +719,7 @@ logind recovers. Keep the Mac awake during long runs, and expect the ordered
 restart afterwards.
 
 To tear down: stop and delete the VM in UTM, then remove
-`~/nico-tests/vm1/*.utm`. A one-command `dev-down.py` exists for Linux
+`~/nico-tests/vm-feature1/*.utm`. A one-command `dev-down.py` exists for Linux
 hosts; the Mac version is planned. Neither step touches your site folder or
 your worktree.
 
@@ -1034,7 +1055,7 @@ the fleet reset with `reset-mat-state.py <site> --yes`.
 Bake, on the VM:
 
 ```bash
-sudo bash ~/mac/infra-controller/tools/nico-dev/bake-golden-image.sh ~/mac/sites/dc1/dev1/dev1.yaml
+sudo bash ~/mac/infra-controller/tools/nico-dev/bake-golden-image.sh ~/mac/sites/dc1/feature1/feature1.yaml
 ```
 
 It saves a canonical copy of the site yaml to `/etc/nico-dev/dev.yaml` and
@@ -1064,7 +1085,7 @@ it and `first-boot.sh` personalises it. Give every test or import its own
 copy, which is instant and free on APFS because it is copy-on-write:
 
 ```bash
-cp -cR nico-dev-golden-YYYYMMDD.utm ~/nico-tests/vm1/vm1.utm
+cp -cR nico-dev-golden-YYYYMMDD.utm ~/nico-tests/golden-test/golden-test.utm
 ```
 
 Import-test rules, learned the hard way: only one nico-dev VM booted at a
@@ -1080,7 +1101,7 @@ on the VM restore the site env and the fabric, and on the Mac restore
 passwordless ssh and the route:
 
 ```bash
-echo 'NICO_DEV_SITE=/home/nico/mac/sites/dc1/dev1/dev1.yaml' | sudo tee /etc/nico-dev/env && sudo systemctl restart nico-dev-fabric
+echo 'NICO_DEV_SITE=/home/nico/mac/sites/dc1/feature1/feature1.yaml' | sudo tee /etc/nico-dev/env && sudo systemctl restart nico-dev-fabric
 ```
 
 ```bash
