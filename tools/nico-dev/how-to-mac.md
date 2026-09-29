@@ -160,10 +160,11 @@ image.
 4. Only for the NGC lane: an NGC API key with read access to the registry of
    the organisation and team that publishes the NICo images. The source-build
    lane needs no NGC key.
-5. No other nico-dev VM on this Mac. Every nico-dev VM uses the address
-   `192.168.64.126` and the folder `~/nico-tests/vm1` unless you change them,
-   so a second one needs its own folder, VM name and `host_num`. If you have
-   an old one, tear it down first (Step 13).
+5. This page assumes one nico-dev VM on the Mac. Several can coexist, but
+   each needs its own address on UTM's network (`host_num`), its own VM
+   name, its own folder, and its own `underlay` and `overlay` octets; two
+   VMs that share any of these collide. If you have an old one you no longer
+   need, tear it down first (Step 13).
 6. Rust, cargo and Go are **not** required on the Mac. Every build nico-dev
    performs, the NICo images and the MAT binary, runs inside a container on
    colima. The one exception is compiling the two command-line clients
