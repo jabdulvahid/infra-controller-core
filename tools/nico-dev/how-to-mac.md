@@ -30,8 +30,7 @@ from images built out of your own checkout. Where the NGC way differs, a
 of the run. A third way, a golden-image ZIP from a colleague that already
 contains a running site, is Appendix A; after it, come back to Step 6.
 
-Intel Macs are not supported. The older `how-to.md` is the full historical
-reference for anything not explained here.
+Intel Macs are not supported.
 
 A few words used throughout:
 
