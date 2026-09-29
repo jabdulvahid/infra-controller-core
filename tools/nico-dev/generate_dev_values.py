@@ -553,6 +553,17 @@ def gen_site_config_toml(cfg):
         L.append('[dpf]')
         L.append('enabled = true')
 
+    # Raw TOML from the site yaml (nico-system.site_config_extra, from
+    # bringup.yaml nico_api_site_config_extra), appended verbatim: sections
+    # nico-dev has no key for, e.g. [nvlink_config]. Absent or empty = the
+    # output above, byte for byte.
+    extra = (cfg['nico-system'].get('site_config_extra') or '').strip('\n')
+    if extra:
+        if L and L[-1] != '':
+            L.append('')
+        L.append('# nico-system.site_config_extra (appended verbatim)')
+        L.extend(extra.splitlines())
+
     return '\n'.join(L)
 
 

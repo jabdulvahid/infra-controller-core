@@ -229,6 +229,12 @@ nico-system:
     initial: { bmc: "1.0", uefi: "1.0" }
     desired: { bmc: "2.0", uefi: "2.0" }
 
+  # Raw TOML appended verbatim to nico-api's site config
+  # (carbide-api-site-config.toml), after the generated sections — for
+  # sections nico-dev has no key for, e.g. [nvlink_config]. From bringup.yaml
+  # `nico_api_site_config_extra:`; empty = nothing appended.
+  SITE_CONFIG_EXTRA_BLOCK
+
   vault:
     # file = persistent storage (hostPath /var/lib/vault) + auto-unseal sidecar.
     # Survives VM reboots — REQUIRED for golden images. 'dev' (in-memory,

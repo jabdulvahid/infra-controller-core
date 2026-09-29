@@ -284,7 +284,9 @@ def build_steps(args):
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
                  f' --dpf {str(args.dpf).lower()}'
                  f' --firmware-sim {str(args.firmware_sim).lower()}'
-                 f' --vm-ip {args.ip} --vm-user {args.user}'
+                 + (f' --nico-api-site-config-extra {shlex.quote(args.nico_api_site_config_extra)}'
+                    if args.nico_api_site_config_extra else '')
+                 + f' --vm-ip {args.ip} --vm-user {args.user}'
                  + (f' --vm-ssh-key {shlex.quote(str(Path(args.ssh_key).expanduser()).removesuffix(".pub"))}'
                     if args.ssh_key else '')
                  + (f' --images-source-tags {_site_images.tags_arg(args.ngc_tags)}'
@@ -423,8 +425,11 @@ def main():
     p.add_argument('--firmware-sim', action=argparse.BooleanOptionalAction, default=False,
                    help='start MAT hosts with outdated BMC/UEFI firmware and give nico-api the '
                         'desired versions, so ingestion runs the firmware upgrade chain '
-                        '(config: firmware_sim: true|false; site yaml nico-system.firmware_sim). '
-                        'Linux lane only.')
+                        '(config: firmware_sim: true|false; site yaml nico-system.firmware_sim)')
+    p.add_argument('--nico-api-site-config-extra', default='', metavar='TOML',
+                   help='raw TOML appended verbatim to nico-api\'s site config, for sections '
+                        'nico-dev has no key for (config: nico_api_site_config_extra: | ...; '
+                        'site yaml nico-system.site_config_extra)')
     p.add_argument('--redeploy-on-insufficient-cpu', choices=['wait', 'scale-down-first'],
                    default='wait',
                    help='redeploy policy when a rollout cannot schedule its surge pod '
