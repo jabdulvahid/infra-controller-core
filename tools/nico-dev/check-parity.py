@@ -150,17 +150,24 @@ def checkout_freshness(c, repo):
     tip = tip[0]
     known = subprocess.run(['git', '-C', str(repo), 'cat-file', '-e', f'{tip}^{{commit}}'],
                            capture_output=True).returncode == 0
+    # One copy-pasteable line brings the checkout current in place; no need to
+    # recreate the worktree. --ff-only refuses if the branch has its own
+    # commits — then `git rebase FETCH_HEAD` instead.
+    update = (f'git -C {repo} fetch {UPSTREAM_URL} main && '
+              f'git -C {repo} merge --ff-only FETCH_HEAD')
+    why = ('harmless for a source build (images, charts and RBAC all come from this '
+           'checkout); on the NGC lane a newer pre-built image would meet older charts')
     if not known:
-        c.warn(f'upstream main {tip[:9]} is not in this checkout\'s history — the checkout was cut '
-               f'from a fork or an old fetch',
-               f'git fetch {UPSTREAM_URL} main, then rebase or recreate the worktree from that; '
-               f'a site checkout behind upstream pairs old charts/RBAC with newer images')
+        c.warn(f'checkout is behind upstream main {tip[:9]} (that commit is not in its history; '
+               f'the fork or fetch it was cut from is older)',
+               f'{why}. To make it current:\n      {update}\n      (a branch with its own '
+               f'commits: replace the merge with `git -C {repo} rebase FETCH_HEAD`)')
         return
     behind = subprocess.run(['git', '-C', str(repo), 'rev-list', '--count', f'{head}..{tip}'],
                             capture_output=True, text=True).stdout.strip()
     if behind and behind != '0':
-        c.warn(f'checkout is {behind} commits behind upstream main {tip[:9]}',
-               f'fine for a pinned site; for a NEW site fetch {UPSTREAM_URL} main first')
+        c.warn(f'checkout is {behind} commit(s) behind upstream main {tip[:9]}',
+               f'{why}. To make it current:\n      {update}')
     else:
         c.ok(f'checkout contains upstream main {tip[:9]}')
 
