@@ -77,9 +77,13 @@ it; advanced settings that have no `bringup.yaml` key live there, and after
 editing one you regenerate the values with `bring-up.py --from nico --until
 nico`, as Step 10 shows for the firmware versions.
 
-**The addresses.** The VM itself sits on UTM's shared network at
-`192.168.64.126`, and the Mac is `192.168.64.1` on that network, which is
-where the VM finds the image registry. Everything inside the simulated site
+**The addresses.** The VM itself sits on UTM's shared network, which is
+`192.168.64.0/24` on most Macs, at the address `<UTM subnet>.<host_num>`;
+`host_num` is a `bringup.yaml` key with the default 126, so this page writes
+`192.168.64.126` throughout, and a second VM gets another `host_num`. The
+Mac is `.1` on that network, which is where the VM finds the image registry.
+If your UTM uses a different subnet, set `ip` in `bringup.yaml` to the VM's
+address as the Mac reaches it. Everything inside the simulated site
 is derived from the two octets you choose in `bringup.yaml`, `underlay` and
 `overlay`, 11 and 12 in this page's examples. With `underlay: U` the fabric
 uses `U.128.0.0/16` for the switch underlay, `U.129.0.0/16` for switch
@@ -275,8 +279,9 @@ What the fields mean:
 - `tag`: a label for the images you build. Both image groups share it. Use a
   new one for every rebuild; a deployed tag is never rebuilt or redeployed.
 
-Do not set an `ip` field. The VM's address comes from UTM's own subnet. If
-you need a different last octet, set `host_num`; the default is 126.
+Leave `ip` unset unless UTM's shared network is not `192.168.64.0/24`, which
+is rare; the VM's address is `<UTM subnet>.<host_num>`. If you need a
+different last octet, set `host_num`; the default is 126.
 
 Note: for the NGC lane, leave `tag` out and add this block instead. `tag` is
 the default for every base image; the optional `tags` map gives one image
