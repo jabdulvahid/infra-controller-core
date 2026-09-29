@@ -212,13 +212,13 @@ def release_steps(args, site_vm, ndev_vm):
                     f'{_progress.vm_path_for(f"/home/{args.user}/mac", args.name)}')
     recovery = {
         'core': 'helm --wait timeouts: rerun (idempotent). Vault sealed: the unsealer\n'
-                'resolves it in seconds. how-to-mac Step 13, Appendix E.',
+                'resolves it in seconds. how-to-mac Step 13, Appendix F.',
         'nico': 'helm --wait timeouts: rerun (idempotent). Pods Running but VIP\n'
                 'refused: kubectl rollout restart deployment/nico-api -n nico-system\n'
                 '(20260826-#7). how-to-mac Step 13.',
         'keycloak': 'CrashLoopBackOff with "column … already exists" in its log = an\n'
                     'interrupted first start left a half-applied schema; drop the keycloak\n'
-                    'database and rerun (how-to-mac Appendix E). Otherwise: helm/kubectl timeouts, rerun.',
+                    'database and rerun (how-to-mac Appendix F). Otherwise: helm/kubectl timeouts, rerun.',
         'rest': 'helm --wait timeouts: rerun (idempotent). Needs the REST images in\n'
                 'the registry (build step) and rest.enabled in the site yaml (default).',
     }
