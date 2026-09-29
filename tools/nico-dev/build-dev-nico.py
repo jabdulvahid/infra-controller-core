@@ -90,6 +90,26 @@ def ensure_registry(port):
     print(f'  Registry created and started on port {port} ✓')
 
 
+def cargo_jobs():
+    """cargo --jobs for the nico image: sized from the DOCKER DAEMON's
+    resources (the colima VM on a Mac, the host on Linux), not the machine's:
+    min(CPUs, GB/3), never below 2. GB/3 keeps ~3 GB per rustc job, the
+    peak the largest crates reach, so a build cannot OOM-kill itself. A
+    16 GB Mac (colima 4 CPUs / 8 GB) lands on 2, the old fixed value; a
+    48 GB / 8-thread Linux host on 8. Unreachable daemon → 2."""
+    try:
+        out = subprocess.run(['docker', 'info', '--format', '{{.NCPU}} {{.MemTotal}}'],
+                             capture_output=True, text=True, timeout=20).stdout.split()
+        ncpu, mem = int(out[0]), int(out[1])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return 2
+    if ncpu <= 0 or mem <= 0:
+        return 2
+    jobs = max(2, min(ncpu, mem // (3 * 1024 ** 3)))
+    print(f'  cargo --jobs {jobs} (docker daemon: {ncpu} CPUs, {mem // 1024 ** 3} GB)')
+    return jobs
+
+
 def docker_build(tag, dockerfile, context, build_args=None, label=''):
     print(f'  Building {label or tag}...')
     cmd = ['docker', 'build', '--progress=plain', '-t', tag, '-f', str(dockerfile)]
@@ -300,6 +320,8 @@ def main():
                                or f'dev-{args.tag}',
                     # kea hook install path: /usr/lib/<triplet>/kea/hooks
                     'GNU_TRIPLET':               f'{MACHINE}-linux-gnu',
+                    # cargo --jobs from the daemon's CPUs/memory (see cargo_jobs)
+                    'CARGO_BUILD_JOBS':          str(cargo_jobs()),
                 },
                 label=f'nico:{args.tag} ({DOCKER_ARCH} dev)',
             )
