@@ -319,7 +319,9 @@ def build_steps(args):
          [[sys.executable, NICO_DEV / 'build-dev-nico.py',
            site_mac, '--tag', args.tag]],
          'Needs the docker daemon and DISK: the builder cache grows fast —\n'
-         '`docker builder prune -af`. First build 20-40 min, later 2-5 min.'),
+         '`docker builder prune -af`. First build 20-40 min on a modern 8-core\n'
+         'host, 2-3 h on a 4-core host of 2012 vintage; later 2-5 min. A long\n'
+         'build is not a hang while `top` shows rustc busy (how-to §1 table).'),
 
         ('registry', 'Host+VM', 'Start the host registry, verify it from the VM',
          [[sys.executable, NICO_DEV / 'ensure-registry.py'],
