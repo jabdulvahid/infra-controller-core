@@ -37,7 +37,7 @@ SITE_YAML="$(ls "$SITE"/*.yaml 2>/dev/null | grep -v '\.kubeconfig\.yaml$' | hea
 [[ -n "$SITE_YAML" ]] || { echo "Error: no site yaml in $SITE" >&2; exit 1; }
 
 # ── read what we need from the site yaml ─────────────────────────────────────
-read -r REST_TAG REG_PORT VM_IP REPO_FOLDER VM_SITE < <(python3 - "$SITE_YAML" "$SITE" <<'PYEOF'
+read -r REST_TAG REG_PORT VM_IP REPO_FOLDER VM_SITE MAC_SITE < <(python3 - "$SITE_YAML" "$SITE" <<'PYEOF'
 import sys, os, yaml
 c = yaml.safe_load(open(sys.argv[1])) or {}
 img = c.get('images') or {}
@@ -46,15 +46,28 @@ tag = tags.get('rest') or img.get('tag') or (c.get('registry') or {}).get('nico_
 port = (c.get('registry') or {}).get('port', 5000)
 vm_ip = (c.get('vm') or {}).get('ip') or '192.168.64.126'
 repo = c.get('nico_repo_folder') or 'infra-controller-core'
-# the same site folder as the VM sees it: <nico_mac_folder>/x -> <nico_vm_folder>/x
+# the same site folder as the VM sees it: <nico_mac_folder>/x -> <nico_vm_folder>/x,
+# and the other way round when this runs on the VM (to name the Mac command).
 site = os.path.realpath(sys.argv[2])
 mac_root = os.path.realpath(os.path.expanduser(c.get('nico_mac_folder', ''))).rstrip('/')
 vm_root = (c.get('nico_vm_folder') or '').rstrip('/')
 vm_site = vm_root + site[len(mac_root):] if mac_root and vm_root and site.startswith(mac_root + '/') else '<site-on-the-VM>'
-print(tag, port, vm_ip, repo, vm_site)
+mac_site = mac_root + site[len(vm_root):] if mac_root and vm_root and site.startswith(vm_root + '/') else ''
+print(tag, port, vm_ip, repo, vm_site, mac_site or '-')
 PYEOF
 )
 [[ -n "$REST_TAG" ]] || { echo "Error: the site yaml records no images tag yet — deploy nico first" >&2; exit 1; }
+
+# On the VM the site folder sits under nico_vm_folder. The image lives in the
+# HOST's docker store / registry (localhost:<port> there; the VM's docker has no
+# insecure-registry entry for the host), so this has to run on the host.
+if [[ "$MAC_SITE" != "-" ]]; then
+    echo "Error: this looks like the VM ($SITE is under the VM's share mount)." >&2
+    echo "  get-nicocli.sh reads the REST API image from the HOST's docker store; run it there:" >&2
+    echo "    get-nicocli.sh $MAC_SITE" >&2
+    echo "  It writes run-nicocli.sh into the site folder, which you then use here on the VM." >&2
+    exit 1
+fi
 
 IMAGE="localhost:${REG_PORT}/nico-rest-api:${REST_TAG}"
 echo "nico-dev — nicocli from the REST API image"
