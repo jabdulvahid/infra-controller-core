@@ -63,6 +63,38 @@ A few words used throughout:
 - **A VIP** is a virtual IP address inside the VM that a NICo service
   answers on. Your Mac reaches them through one route, added in Step 6.
 
+**Two configuration files.** You write one, `bringup.yaml`, in Step 3. It
+holds the few decisions that are yours: the VM's name and size, your
+datacenter and site names, two network octets, where the images come from,
+and a handful of switches such as DPF or the firmware simulation. Copy it
+from `bringup-example.yaml`, which documents every key. From it the `site`
+step generates the second file, the **site yaml**, at
+`<share>/sites/<dc>/<site>/<site>.yaml`. That is the complete description of
+the site: every network prefix, the service VIPs, the Helm values, the MAT
+fleet, the DPF and firmware settings. Every later script, on the Mac and on
+the VM, reads the site yaml, never `bringup.yaml`. You normally do not edit
+it; advanced settings that have no `bringup.yaml` key live there, and after
+editing one you regenerate the values with `bring-up.py --from nico --until
+nico`, as Step 10 shows for the firmware versions.
+
+**The addresses.** The VM itself sits on UTM's shared network at
+`192.168.64.126`, and the Mac is `192.168.64.1` on that network, which is
+where the VM finds the image registry. Everything inside the simulated site
+is derived from the two octets you choose in `bringup.yaml`, `underlay` and
+`overlay`, 11 and 12 in this page's examples. With `underlay: U` the fabric
+uses `U.128.0.0/16` for the switch underlay, `U.129.0.0/16` for switch
+loopbacks, `U.130.0.0/16` and `U.131.0.0/16` for the DPU fabric and DPU
+loopbacks, `U.132.0.0/30` and `U.132.1.0/31` for the internet uplink and the
+control-plane link, `U.140.2.0/24` for the network MAT's mock BMCs answer
+on, and `U.133.1.0/27` for the service VIPs: the DHCP VIP is `U.133.1.0`,
+PXE `.2`, the SSH console `.4`, NTP `.5` to `.7`, the API and admin UI `.17`,
+DNS `.19` and `.20`, the same layout the production tooling uses. With
+`overlay: O` the tenant overlay is `O.150.0.0/16` and the admin network
+`O.135.0.0/16`. Pick two octets that
+nothing on your Mac or VPN uses; the dry run warns if the Mac already routes
+them. A second site on the same Mac needs its own pair, its own VM name and
+its own `host_num`.
+
 ## Assumptions
 
 1. An Apple Silicon Mac. Pick the row that matches what you plan to do:
