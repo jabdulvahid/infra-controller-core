@@ -351,7 +351,7 @@ deploys the network fabric, installs Kubernetes, gets the images ready,
 deploys NICo, deploys the DPF simulator, and finally routes the service
 addresses on your Mac.
 
-The run stops and waits for you three times. This is by design:
+The run stops and waits for you twice. This is by design:
 
 1. **The UTM share path.** UTM does not let a script set the shared folder
    of a VM. The runner pauses, tells you to open the VM's Sharing settings
@@ -360,9 +360,13 @@ The run stops and waits for you three times. This is by design:
    different it says so and asks again, so a missed click does not surface
    minutes later as a failed first boot. Type `skip` to boot without a share
    (throwaway VMs only).
-2. **The VM password, once.** During `prep`, before your SSH key has been
-   installed.
-3. **`sudo` on the Mac**, at the end, for the route to the service addresses.
+2. **`sudo` on the Mac**, at the end, for the route to the service addresses.
+
+Nothing else asks. The VM builder's cloud-init seed authorizes your SSH key
+and gives the user passwordless sudo, so `prep` logs in with the key; the
+`password:` in the config is only a fallback for a VM built another way. The
+host-key question is answered automatically for a new address, and the
+`iptables-persistent` save dialogs inside the VM are pre-answered.
 
 Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
 one step per NICo Helm release, seven `core` ones (local-path-provisioner,

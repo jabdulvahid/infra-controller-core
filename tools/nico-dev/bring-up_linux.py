@@ -18,8 +18,11 @@ command, and exits. Reruns are safe — every unit script is idempotent or
 self-healing (see issues.md 20260828-#2..#4 for the vm step).
 
 Interactive moments:
-  prep  — maybe the VM password once (usually not: key pre-authorized)
   route — host sudo password (ip route)
+(prep needs no password: the VM builder's seed authorizes your key and
+prepare-vm.sh uses it; the password is only a fallback for a VM built
+another way. The host-key question and the iptables-persistent dialogs
+are pre-answered.)
 (No GUI step on Linux — the share path is set by virt-install.)
 """
 

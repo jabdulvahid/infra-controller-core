@@ -197,7 +197,12 @@ cert-manager, vault, external-secrets, postgres-operator, nico-prereqs, nico)
 then five `rest` ones (rest-postgres, keycloak, temporal, nico-rest,
 nico-rest-site-agent) → dpf → route; 21 steps, `--list` shows them. No GUI
 step; `virt-install` sets the share path. One `sudo` prompt at the end for
-the host route to the service VIPs. On failure the runner prints that step's
+the host route to the service VIPs, and nothing else asks: the VM builder's
+cloud-init seed authorizes your SSH key and gives the user passwordless
+sudo, so `prep` logs in with the key (the `password:` in the config is only
+a fallback for a VM built another way), the host-key question is answered
+automatically for a new address, and the `iptables-persistent` save dialogs
+inside the VM are pre-answered. On failure the runner prints that step's
 known failure modes and the resume command, `--from <step>`, which for the
 releases is the release name (`--from keycloak`). Every step is safe to
 rerun; a release step is a fast idempotent Helm upgrade when it is already

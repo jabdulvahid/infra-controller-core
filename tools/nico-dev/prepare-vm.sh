@@ -56,43 +56,11 @@ if [[ "${1:-}" == "init" ]]; then
     echo "  share name : ${SHARE_NAME}"
     echo "  script     : ${SCRIPT_DIR}/prepare-vm.sh"
     echo ""
-    echo "Step 1: Mounting shared folder on VM and running prepare-vm.sh..."
-    echo "  (you will be prompted for the VM user password)"
-    echo ""
-
-    # The HOST decides the share filesystem — explicitly, no guest probing
-    # (the guest is Ubuntu on both platforms and cannot tell hypervisors
-    # apart): UTM shares are 9p (VirtFS); libvirt shares are virtiofs.
-    case "$(uname -s)" in
-        Darwin) SHARE_FS="9p" ;;
-        Linux)  SHARE_FS="virtiofs" ;;
-        *) echo "Error: unsupported host platform $(uname -s)" >&2; exit 1 ;;
-    esac
-    case "${SHARE_FS}" in
-        9p)       MOUNT_CMD="sudo mount -t 9p -o trans=virtio,version=9p2000.L,rw '${SHARE_NAME}' /mnt/mac" ;;
-        virtiofs) MOUNT_CMD="sudo mount -t virtiofs '${SHARE_NAME}' /mnt/mac" ;;
-    esac
-    echo "  share fs   : ${SHARE_FS}"
-
-    # Mount the share on the VM, then run this script from within it.
-    # The script's location inside the share is DISCOVERED, not hardcoded —
-    # nico-dev may live at <repo>/tools/nico-dev, nico-dev, or anywhere else.
-    # -t allocates a TTY so sudo password prompts work interactively.
-    ssh -t "${VM_USER}@${VM_IP}" \
-        "sudo mkdir -p /mnt/mac && \
-         (mountpoint -q /mnt/mac || ${MOUNT_CMD}) && \
-         REMOTE_SCRIPT=\$(find /mnt/mac -maxdepth 4 -type f -name prepare-vm.sh 2>/dev/null | head -1) && \
-         if [ -z \"\$REMOTE_SCRIPT\" ]; then echo 'ERROR: prepare-vm.sh not found in the share — is the nico-dev folder inside the shared directory?' >&2; exit 1; fi && \
-         echo \"  running: \$REMOTE_SCRIPT\" && \
-         bash \"\$REMOTE_SCRIPT\" '${SHARE_NAME}' --fs '${SHARE_FS}'"
-
-    echo ""
-    echo "Step 2: Setting up passwordless SSH from Mac to VM..."
-
-    # Pick ONE key explicitly. Bare ssh-copy-id uses the agent's keys
-    # (ssh-add -L): during its login attempt ssh offers them all, the server
-    # rejects each, and sshd closes the connection ("Too many authentication
-    # failures") BEFORE password auth gets a turn — no prompt, silent failure.
+    # Pick ONE key explicitly, before anything talks to the VM. Bare ssh /
+    # ssh-copy-id use the agent's keys (ssh-add -L): during the login attempt
+    # ssh offers them all, the server rejects each, and sshd closes the
+    # connection ("Too many authentication failures") BEFORE password auth
+    # gets a turn — no prompt, silent failure.
     if [[ -n "${SSH_KEY_ARG}" ]]; then
         SSH_KEY_ARG="${SSH_KEY_ARG/#\~/$HOME}"
         if [[ ! -f "${SSH_KEY_ARG}" ]]; then
@@ -137,10 +105,60 @@ if [[ "${1:-}" == "init" ]]; then
         PUB="${CANDIDATES[$((sel-1))]}"
     fi
     PRIV="${PUB%.pub}"
-    echo "  Installing key: ${PUB}"
-    echo "  (you may be prompted for the VM password once)"
 
-    ssh-copy-id -i "${PUB}" "${VM_USER}@${VM_IP}" || true
+    echo "Step 1: Mounting shared folder on VM and running prepare-vm.sh..."
+    # The VM builder's cloud-init seed already authorizes this key, so a VM it
+    # built needs no password here; one built another way falls back to the
+    # password. accept-new answers the host-key question for a NEW address
+    # (the runner's preflight has already removed a stale entry for it).
+    SSH_ID=(-o StrictHostKeyChecking=accept-new)
+    KEY_OK=0
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
+           -o IdentitiesOnly=yes -i "${PRIV}" "${VM_USER}@${VM_IP}" true 2>/dev/null; then
+        SSH_ID+=(-o IdentitiesOnly=yes -i "${PRIV}")
+        KEY_OK=1
+        echo "  key auth already works (${PUB}) — no password needed"
+    else
+        echo "  (you will be prompted for the VM user password)"
+    fi
+    echo ""
+
+    # The HOST decides the share filesystem — explicitly, no guest probing
+    # (the guest is Ubuntu on both platforms and cannot tell hypervisors
+    # apart): UTM shares are 9p (VirtFS); libvirt shares are virtiofs.
+    case "$(uname -s)" in
+        Darwin) SHARE_FS="9p" ;;
+        Linux)  SHARE_FS="virtiofs" ;;
+        *) echo "Error: unsupported host platform $(uname -s)" >&2; exit 1 ;;
+    esac
+    case "${SHARE_FS}" in
+        9p)       MOUNT_CMD="sudo mount -t 9p -o trans=virtio,version=9p2000.L,rw '${SHARE_NAME}' /mnt/mac" ;;
+        virtiofs) MOUNT_CMD="sudo mount -t virtiofs '${SHARE_NAME}' /mnt/mac" ;;
+    esac
+    echo "  share fs   : ${SHARE_FS}"
+
+    # Mount the share on the VM, then run this script from within it.
+    # The script's location inside the share is DISCOVERED, not hardcoded —
+    # nico-dev may live at <repo>/tools/nico-dev, nico-dev, or anywhere else.
+    # -t allocates a TTY so sudo password prompts work interactively.
+    ssh -t "${SSH_ID[@]}" "${VM_USER}@${VM_IP}" \
+        "sudo mkdir -p /mnt/mac && \
+         (mountpoint -q /mnt/mac || ${MOUNT_CMD}) && \
+         REMOTE_SCRIPT=\$(find /mnt/mac -maxdepth 4 -type f -name prepare-vm.sh 2>/dev/null | head -1) && \
+         if [ -z \"\$REMOTE_SCRIPT\" ]; then echo 'ERROR: prepare-vm.sh not found in the share — is the nico-dev folder inside the shared directory?' >&2; exit 1; fi && \
+         echo \"  running: \$REMOTE_SCRIPT\" && \
+         bash \"\$REMOTE_SCRIPT\" '${SHARE_NAME}' --fs '${SHARE_FS}'"
+
+    echo ""
+    echo "Step 2: Setting up passwordless SSH from Mac to VM..."
+
+    if [[ "${KEY_OK}" -eq 1 ]]; then
+        echo "  key already authorized on the VM (${PUB}) — nothing to install"
+    else
+        echo "  Installing key: ${PUB}"
+        echo "  (you may be prompted for the VM password once)"
+        ssh-copy-id -o StrictHostKeyChecking=accept-new -i "${PUB}" "${VM_USER}@${VM_IP}" || true
+    fi
 
     # Verify with exactly that identity — IdentitiesOnly avoids the agent flood
     if ! ssh -o BatchMode=yes -o IdentitiesOnly=yes -i "${PRIV}" \
@@ -438,8 +456,14 @@ if command -v cloud-init >/dev/null 2>&1; then
     fi
 fi
 echo "=== Installing system packages ==="
+# iptables-persistent asks, in a debconf dialog, whether to save the current
+# IPv4 and then the IPv6 rules — two prompts that block the bring-up until
+# someone presses Enter. Answer them in advance (yes: the MSS clamp below is
+# saved with `netfilter-persistent save` anyway) and keep apt non-interactive.
+echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | sudo debconf-set-selections
+echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | sudo debconf-set-selections
 sudo apt-get update -q
-sudo apt-get install -y -q \
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
   python3-yaml \
   python3-pip \
   curl \

@@ -404,18 +404,40 @@ def confirm_share_set(args):
               f'    (Mode is already VirtFS.) Set it, then press Enter again.')
 
 
+def ssh_private_key(args):
+    """The private half of the key the seed authorized: --ssh-key, else the
+    first ~/.ssh/id_*.pub — the same choice stage_seed made."""
+    if args.ssh_key:
+        pub = Path(args.ssh_key).expanduser()
+    else:
+        pub = sorted(Path.home().glob('.ssh/id_*.pub'))[0]
+    return str(pub).removesuffix('.pub')
+
+
 def stage_boot(static_ip, args):
     print('\n── Stage: boot (start + wait for ssh) ──')
     utmctl = '/Applications/UTM.app/Contents/MacOS/utmctl'
     run([utmctl, 'start', args.name], 'utmctl start')
     print(f'  Waiting for cloud-init + ssh at {static_ip} '
           f'(first boot: ~3-5 min incl. package installs)...')
+    # A real key-authenticated session, not a TCP connect: on first boot sshd
+    # listens before cloud-init has regenerated the host keys and restarted
+    # it, and a connection in that window is accepted then dropped
+    # ("Connection closed by … port 22"). The seed authorizes the key, so the
+    # probe logs in, waits for cloud-init to finish its package installs, and
+    # leaves the host key in known_hosts — the next ssh asks nothing.
+    probe = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5',
+             '-o', 'StrictHostKeyChecking=accept-new', '-o', 'IdentitiesOnly=yes',
+             '-i', ssh_private_key(args), f'{args.user}@{static_ip}',
+             'cloud-init status --wait >/dev/null 2>&1; true']
     deadline = time.time() + 900
     while time.time() < deadline:
-        if subprocess.run(['nc', '-z', '-w', '2', static_ip, '22'],
-                          capture_output=True).returncode == 0:
-            print(f'  ssh is up ✓')
-            break
+        try:
+            if subprocess.run(probe, capture_output=True, timeout=600).returncode == 0:
+                print('  ssh is up and cloud-init has finished ✓')
+                break
+        except subprocess.TimeoutExpired:
+            pass
         time.sleep(10)
     else:
         raise SystemExit(f'Error: ssh not reachable at {static_ip} after 15 min '
