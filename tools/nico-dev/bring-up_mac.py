@@ -23,8 +23,10 @@ self-healing (see issues.md 20260828-#2..#4 for the vm step).
 
 Interactive moments (by design, not accident):
   vm    — UTM share Path is not scriptable: one GUI step + Enter
-  prep  — the VM password, once (before key auth is installed)
   route — Mac sudo password
+(prep needs no password: the VM builder's seed authorizes your key, and
+prepare-vm.sh uses it; the password is only a fallback for a VM built
+another way.)
 """
 
 import argparse

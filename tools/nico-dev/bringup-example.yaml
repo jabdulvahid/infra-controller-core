@@ -21,9 +21,10 @@ name: nico-vm1                    # VM name (required). UTM VM name on Mac,
                                   #   Per site: a second site needs another
                                   #   name (nico-vm2).
 user: nico                        # login user created in the VM (default nico)
-password: Welcome123!             # that user's password. Asked once during
-                                  #   `prep` when the key is not yet installed;
-                                  #   default Welcome123!
+password: Welcome123!             # that user's password. Normally never asked:
+                                  #   the VM builder authorizes ssh_key below and
+                                  #   `prep` logs in with it. Fallback for a VM
+                                  #   built another way. default Welcome123!
 ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
                                   #   half is what every later ssh uses.
                                   #   default: first ~/.ssh/id_*.pub
