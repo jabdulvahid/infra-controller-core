@@ -46,7 +46,8 @@ tools inside it, the site's configuration and certificates, the kubeconfig,
 the MAT binary and its config, and image tarballs on their way into the VM.
 A script started on the Mac can therefore hand a file to the VM by writing
 it to the share, and a script on the VM finds the same file under `~/mac`.
-For that to work in both directions, files need one owner on both sides, so
+For that to work in both directions, files need the same owner on both
+sides, so
 the VM's login user, `nico`, is created with the same numeric user id as
 your Mac account; the VM builder reads your UID and passes it into the VM's
 cloud-init, and `bringup.yaml` has a `uid` key only for the rare case where
