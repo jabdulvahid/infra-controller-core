@@ -156,7 +156,10 @@ def checkout_freshness(c, repo):
     update = (f'git -C {repo} fetch {UPSTREAM_URL} main && '
               f'git -C {repo} merge --ff-only FETCH_HEAD')
     why = ('harmless for a source build (images, charts and RBAC all come from this '
-           'checkout); on the NGC lane a newer pre-built image would meet older charts')
+           'checkout). If you plan to deploy pre-built images (`ngc:` in bringup.yaml), '
+           'make the checkout current first: those images are built from a newer upstream '
+           'than these charts, so a chart may lack a value, RBAC rule or CRD the newer '
+           'nico-api expects, and the deploy fails or the API misbehaves at runtime')
     if not known:
         c.warn(f'checkout is behind upstream main {tip[:9]} (that commit is not in its history; '
                f'the fork or fetch it was cut from is older)',
