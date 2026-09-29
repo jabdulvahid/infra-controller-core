@@ -1,21 +1,21 @@
-# nico-dev on a Mac — how to
+# nico-dev on a Mac, step by step
+
+Updated 2026-09-29.
 
 nico-dev gives you a complete NICo development environment inside one virtual
-machine on an Apple Silicon Mac. The virtual machine runs under UTM and
-contains four things: a Kubernetes cluster, the NICo software stack, a
-simulated datacenter network fabric built from FRR routers, and MAT, the
-simulator that plays a rack of servers for NICo to manage. When the bring-up
-is finished you have a working NICo site that you can develop against, break,
-and rebuild.
+machine on an Apple Silicon Mac. The VM runs under UTM and contains a
+Kubernetes cluster, the NICo software stack, a simulated datacenter network
+fabric built from FRR routers, and MAT, the simulator that plays a rack of
+servers for NICo to manage. At the end of Step 7 you have a working NICo site
+that you can develop against, break, and rebuild.
 
-This page is the current guide for Macs. The older `how-to.md` is the full
-historical reference; look there when a step here does not explain enough.
-Intel Macs are not supported.
-
-**How to read this page.** Sections 1 and 2 apply to everybody. Section 3
-asks one question, which of two workflows you are on, and tells you which
-sections to read next. From section 7 on, the page applies to everybody
-again.
+The steps below are one linear path: build the VM yourself and deploy NICo
+from images built out of your own checkout. Where deploying pre-built images
+from NGC differs, a `Note:` says so; the difference is one block in one yaml
+file and one step of the run. If a colleague gave you a golden-image ZIP,
+skip to Appendix A, then come back to Step 6. Intel Macs are not supported.
+The older `how-to.md` is the full historical reference for anything not
+explained here.
 
 A few words used throughout:
 
@@ -24,72 +24,73 @@ A few words used throughout:
   on the Mac. Everything nico-dev creates lives in the share.
 - **A site** is one deployed NICo installation, named by a datacenter name
   and a site name, for example `dc1/dev1`.
-- **A lane** is where the NICo container images come from: pulled pre-built
-  from NVIDIA's NGC registry, or built from your own source checkout.
+- **A lane** is where the NICo container images come from: built from your
+  own source checkout (this page's main path), or pulled pre-built from
+  NVIDIA's NGC registry.
 - **A VIP** is a virtual IP address inside the VM that a NICo service
-  answers on. Your Mac reaches them through one route, described in section 7.
+  answers on. Your Mac reaches them through one route, added in Step 6.
 
----
+## Assumptions
 
-## 1. Mac prerequisites
+1. An Apple Silicon Mac. Pick the row that matches what you plan to do:
 
-Install the tools with Homebrew, start colima, and make sure you have an SSH
-key:
+   | Purpose | Mac RAM | VM | Notes |
+   |---|---|---|---|
+   | build-and-play: golden image or NGC lane, no redeploys | 16 GB | 6 CPUs, 8 GB | the running stack uses about 5 GB |
+   | development: source builds, redeploy cycles, MAT | 32 GB+ | 8+ CPUs, 16 GB+ | the UTM VM and colima time-share the cores |
+
+   Disk: about 250 GB free for the development tier. The UTM disk is 120 GB
+   by default, the colima disk is 100 GB, and images and caches take the
+   rest. Both disks are sparse and only consume what is written.
+2. Homebrew is installed.
+3. You can reach `github.com/dsx-ai-factory/infra-controller`, and you have
+   an SSH keypair in `~/.ssh`, or you generate one in Step 1. The public key
+   is installed into the VM so the scripts log in without a password.
+4. Only for the NGC lane: an NGC API key with read access to the registry of
+   the organisation and team that publishes the NICo images. The source-build
+   lane needs no NGC key.
+5. No other nico-dev VM on this Mac. Every nico-dev VM uses the address
+   `192.168.64.126` and the folder `~/nico-tests/vm1` unless you change them,
+   so a second one needs its own folder, VM name and `host_num`. If you have
+   an old one, tear it down first (Step 13).
+6. Rust, cargo and Go are **not** required on the Mac. Every build nico-dev
+   performs, the NICo images and the MAT binary, runs inside a container on
+   colima. The one exception is compiling the two command-line clients
+   `nico-admin-cli` and `nicocli` natively on the Mac; Step 8 and Step 11
+   show how to get both without a compiler.
+
+## Step 1 - Install the Mac tools
+
+On the Mac:
 
 ```bash
 brew install --cask utm            # then launch it once
 brew install git python3 helm kubectl colima docker
 pip3 install pyyaml
-colima start --cpu 8 --memory 16 --disk 100    # default 4 CPU / 8 GB OOM-kills the Rust build
-ssh-keygen -t ed25519              # if you have no keypair
+colima start --cpu 8 --memory 16 --disk 100    # the default 4 CPU / 8 GB OOM-kills the Rust build
+ssh-keygen -t ed25519              # only if you have no keypair
 ```
 
-**What each tool is for.** UTM runs the virtual machine. colima provides a
-Docker engine on the Mac, and docker is its command-line client. Together
-they build container images and run a small local image registry that the
-VM pulls from. helm and kubectl talk to the Kubernetes cluster inside the VM.
-python3 with pyyaml runs the nico-dev scripts. The SSH key is installed into
-the VM so the scripts can log in without a password.
+What each tool is for: UTM runs the virtual machine. colima provides a Docker
+engine on the Mac, and docker is its command-line client; together they build
+the container images and run a small local image registry that the VM pulls
+from. helm and kubectl talk to the Kubernetes cluster inside the VM. python3
+with pyyaml runs the nico-dev scripts.
 
-**The toolchain rule: containers yes, compilers no.** You do not need Rust,
-cargo or Go on your Mac. Every build that nico-dev performs, the NICo images
-and the MAT binary, runs inside a container on colima. There is one
-exception, which you can ignore on a first run: if you want to compile the
-two command-line clients `nico-admin-cli` and `nicocli` on the Mac itself,
-those must be native Mac binaries and therefore need cargo and Go installed
-on the Mac. Section 9 shows the alternative, which fetches a ready-made admin
-CLI from inside the cluster and needs no compiler at all.
-
-**How big a machine you need.** Choose the row that matches what you plan to
-do:
-
-| Purpose | Mac RAM | VM | Notes |
-|---|---|---|---|
-| build-and-play: golden image or NGC lane, no redeploys | 16 GB | 6 CPUs, 8 GB | the running stack uses about 5 GB |
-| development: source builds, redeploy cycles, MAT | 32 GB+ | 8+ CPUs, 16 GB+ | the UTM VM and colima time-share the cores |
-
-Disk: about 250 GB free for the development tier. The UTM disk is 100 GB,
-the colima disk is 100 GB, and images and caches take the rest. Both disks
-are sparse, so they only consume what is actually written.
-
-Run one nico-dev VM at a time on a Mac. Every nico-dev VM uses the same
-address, `192.168.64.126`, unless you change it in the configuration.
-
-**For the NGC lane only**, you need an NGC API key with read access to the
-registry of the organisation and team that publishes the NICo images. Put it
-in an environment variable:
+Note: for the NGC lane, put your key in an environment variable, in your
+shell profile:
 
 ```bash
-export NGC_API_KEY='...'     # in your shell profile
+export NGC_API_KEY='...'
 ```
 
-## 2. Folder, worktree, tools
+## Step 2 - Folder, worktree, tools
 
-Your main clone of the NICo repository stays where it already is. For each
-VM you create one folder. Inside it, `shared/` is the share the VM mounts,
-and inside the share you place a git worktree on the branch you want to run.
-A worktree is a second checkout of the same repository, so it shares history
-with your main clone but has its own files:
+Your main clone of the NICo repository stays where it is. For each VM you
+create one folder; inside it, `shared/` is the share the VM mounts, and inside
+the share you place a git worktree on the branch you want to run. A worktree
+is a second checkout of the same repository: it shares history with your main
+clone but has its own files. On the Mac:
 
 ```bash
 mkdir -p ~/nico-tests/vm1/shared
@@ -105,15 +106,16 @@ Replace `UPSTREAM` with the name of the remote that points at
 `main` is only as new as your last sync; use the remote that points at
 NVIDIA's repository, usually `upstream`.
 
-The fetch and the remote matter: the NICo images you deploy are built from
-current main, and the Helm charts, the DPF simulator's RBAC and the
-simulator's own source come from this worktree, so all of them should be
-from the same day. A worktree cut from a stale main pairs old charts and
-permissions with newer images; one such case left every host stuck in
-`DPUInitializing` because the simulator's role predated its code.
-`check-prereqs.sh` reports how far the checkout is behind upstream main.
+Note: the fetch matters. The images you deploy are built from current main,
+and the Helm charts, the DPF simulator's RBAC and the simulator's own source
+come from this worktree, so all of them should be from the same day. A
+worktree cut from a stale main pairs old charts and permissions with newer
+images; one such case left every host stuck in `DPUInitializing` because the
+simulator's role predated its code. `check-prereqs.sh` below reports how far
+the checkout is behind upstream main and prints the command that brings it
+current.
 
-Next, add the nico-dev tools to that worktree. This is called grafting. The
+Now add the nico-dev tools to that worktree. This is called grafting. The
 tools land in `tools/nico-dev` as untracked, git-ignored files, so they never
 show up in `git status`, in your commits, or in your pull requests. Run the
 same command again whenever you want to update them:
@@ -123,14 +125,11 @@ cd ~/nico-tests/vm1/shared/infra-controller
 curl -fsSL https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh | bash -s -- --edge
 ```
 
-The `--edge` flag fetches the newest version of the tools. Without it you
-get the stable channel, which is the newest `validated-*` tag. As of
-2026-09-10 the stable tag is older than several features this page relies
-on: `onboard-golden.sh`, the non-interactive `first-boot.sh`, the `ngc:`
-configuration block, `restart-ordered.sh`, and the DPF support. Use `--edge`
-until a newer tag exists.
+`--edge` fetches the newest version of the tools. Without it you get the
+stable channel, the newest `validated-*` tag, which is currently older than
+several features this page relies on. Use `--edge` until a newer tag exists.
 
-Then put the tools on your `PATH` and run the prerequisite check:
+Put the tools on your `PATH` and run the prerequisite check:
 
 ```bash
 cd tools/nico-dev
@@ -139,110 +138,29 @@ check-prereqs.sh             # run-the-sim tier
 check-prereqs.sh --build     # also the source-build tier
 ```
 
-The check only reads; it changes nothing. Fix every line marked ✗. Each
-line says how. The first time a script drives UTM, macOS shows the dialog
-"Terminal wants to control UTM". Click Allow.
+You should see every line marked ✓. The check only reads; it changes
+nothing. Fix every ✗ line; each says how. The first time a script drives
+UTM, macOS shows the dialog "Terminal wants to control UTM". Click Allow.
 
-The last section of the check, "checkout parity", is about the repository
-rather than your Mac. The nico-dev scripts re-implement parts of the
+Note: the last section of the check, "checkout parity", is about the
+repository, not your Mac. The nico-dev scripts re-implement parts of the
 upstream setup and therefore assume certain chart paths, resource names and
-defaults in the checkout. `check-parity.py` verifies all of them, so an
-upstream change that would break or silently divert a bring-up shows up
-here. A ✗ in that section means a nico-dev script needs updating, not your
-repository; report it.
+defaults in the checkout. A ✗ there means a nico-dev script needs updating,
+not your repository; report it. The line about upstream main is
+informational for a source build; make the checkout current if you plan to
+deploy pre-built images.
 
-## 3. Which workflow are you on?
-
-There are two ways to get a site. They share nothing until the site is
-running, so pick one and read only its sections.
-
-| | Workflow A: golden image | Workflow B: build your own VM |
-|---|---|---|
-| You have | a `nico-dev-golden-YYYYMMDD.utm.zip` from a colleague | nothing but this repository and, for the NGC lane, an NGC key |
-| What happens | the ZIP is a ready-made VM with a site already deployed inside; one script imports it, personalises it and opens the admin UI | a VM is created, Kubernetes and the fabric are installed, NICo is deployed from images |
-| Where the images come from | already inside the VM | **NGC lane**: pulled pre-built from NGC. **Source-build lane**: built from your worktree |
-| You write | nothing | one `bringup-<site>.yaml` |
-| Time | minutes, nothing to build | NGC lane about 30 minutes; source-build lane adds a 20 to 40 minute first build |
-| Read | section 4, then continue at section 7 | sections 5 and 6, then continue at section 7 |
-
-The two workflows do not mix. The script `onboard-golden.sh` belongs to
-Workflow A and never reads a bringup yaml. The script `bring-up.py` and the
-bringup yaml belong to Workflow B and never touch a golden ZIP. Within
-Workflow B, the two lanes differ in one block of the bringup yaml and one
-build step. Everything else is identical.
-
-From section 7 onward the page applies to both workflows. A running site
-looks the same however it got there.
-
-**Already have a nico-dev VM on this Mac?** Tear it down first, following
-section 15, or give the new one its own folder, VM name and `host_num`.
-Two VMs cannot share the folder `~/nico-tests/vm1` or the address
-`192.168.64.126`, and this page assumes a Mac without one.
-
-## 4. Workflow A: golden image, three commands
-
-This section is for Workflow A only. If you are building your own VM, skip
-to section 5.
-
-You received `nico-dev-golden-YYYYMMDD.utm.zip`. It is a complete VM with a
-running site inside. These commands turn it into a working site on your Mac:
-
-```bash
-mkdir -p ~/nico-tests/vm1/shared && cd ~/nico-tests/vm1/shared
-git clone https://github.com/NVIDIA/infra-controller.git     # the folder name must stay infra-controller
-cd infra-controller
-curl -fsSL https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh | bash -s -- --edge
-tools/nico-dev/onboard-golden.sh --zip ~/Downloads/nico-dev-golden-YYYYMMDD.utm.zip --dest ~/nico-tests/vm1
-```
-
-The script runs without your help, except for two things macOS insists on.
-The first time, macOS asks for an Accessibility and Automation permission,
-because the script drives UTM's user interface to set the shared folder.
-Near the end, it asks for your `sudo` password once, to add the route to the
-service addresses. When it finishes, the admin UI is open in your browser,
-and the script has printed the kubeconfig path and the route command you
-will need again later.
-
-The ZIP is kept. To start over, stop and delete the VM in UTM, remove
-`~/nico-tests/vm1/*.utm`, and run the same command again with the same
-`--zip`.
-
-**Manual fallback.** If the scripted shared-folder step does not stick, do
-these steps by hand:
-
-1. In UTM, click **+**, then **Import**, and choose the `.utm` bundle.
-2. Open the VM's settings, go to **Sharing**, and set the path to
-   `~/nico-tests/vm1/shared` with the share name `share`. Do this before the
-   first boot.
-3. Boot the VM. Then log in with `ssh nico@192.168.64.126`, password
-   `Welcome123!`.
-4. On the VM, run the personalisation script:
-   ```bash
-   sudo bash /usr/local/lib/nico-dev/first-boot.sh --ssh-key ~/.ssh/id_ed25519.pub \
-       --mac-folder /Users/<you>/nico-tests/vm1/shared --yes
-   ```
-   `--mac-folder` is the share root, not the repository inside it. The script
-   never changes the hostname, because the hostname is the Kubernetes node
-   name. Expect `metallb-speaker` and `nico-api` to restart once at the end.
-   That is the script doing its job, not a fault.
-5. Back on the Mac, run `ssh-keygen -R 192.168.64.126`. The imported VM
-   generated new SSH host keys, so the old entry must go. Then set up the
-   route and `KUBECONFIG` as described in section 7.
-
-Continue at section 7. Sections 5 and 6 are not for you.
-
-## 5. Workflow B: describe the site
-
-This section is for Workflow B only, both lanes. Golden-image users have
-nothing to do here and should continue at section 7.
+## Step 3 - Write bringup.yaml
 
 Everything the bring-up needs to know goes into one file. Copy the example
-and edit it:
+and edit it; the example documents every key. On the Mac:
 
 ```bash
 cp bringup-example.yaml bringup-mysite.yaml
 vi bringup-mysite.yaml
 ```
+
+For the source-build lane it looks like this:
 
 ```yaml
 name: nico-vm1
@@ -259,97 +177,100 @@ redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
+firmware_sim: true  # only for firmware-upgrade work (Step 10); default false
 
 dc: dc1
 site: dev1
 underlay: 11        # first octets of the fabric prefixes: pick two your Mac and VPN do not use
 overlay: 12
 
-# NGC lane: enable this block. Source-build lane: leave it out and set tag: instead.
-ngc:
-  registry: nvcr.io/<org>/<team>       # ask your team
-  tag: <tag>                           # default tag for every image; ngc-tags.py, below
-  # tags:                              # optional: a different tag for one image group
-  #   rest: <tag>                      #   core = the NICo core image, rest = the six REST
-  #                                    #   images; unnamed groups use tag
-  core_image: nvmetal-carbide          # NGC's name for the core image
-  # images:                            # optional: NGC names, if NGC publishes an image
-  #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
-  token_env: NGC_API_KEY               # NAME of the env var holding your key
-# tag: main-20260910                   # source-build lane: the image label
+tag: main-20260929  # the label for the images you build; a new one for every rebuild
 ```
 
 What the fields mean:
 
 - `name`, `user`, `password`, `ssh_key`: the VM's name in UTM, the login
-  account created inside it, and the public key that account will accept.
-- `vm`: the VM's size. Use the table in section 1 to choose.
+  account created inside it, and the public key that account accepts. The
+  password is normally never asked; the VM builder authorizes your key.
+- `vm`: the VM's size. Use the table in the Assumptions.
 - `redeploy`: what to do when a later redeploy cannot fit a new pod on a
-  full node. `scale-down-first` lets it proceed. Section 10 has the details.
-- `dpf`: `true` is the default and gives you NICo's DPF provisioning path
+  full node. `scale-down-first` lets it proceed (Step 12).
+- `dpf`: `true`, the default, gives you NICo's DPF provisioning path
   together with the DPF simulator. `false` gives the older iPXE path.
-  Section 9 explains both.
+  Appendix B explains both.
+- `firmware_sim`: `true` makes MAT hosts start with outdated firmware so
+  ingestion runs the upgrade chain. Leave it out unless you work on that
+  (Step 10).
 - `dc`, `site`: the names of your datacenter and site. They appear in
-  folder names and in the cluster.
+  folder names and in the cluster. `dc` is 1-3 characters, `site` 1-8.
 - `underlay`, `overlay`: two numbers that become the first octet of every
   network prefix inside the VM. Pick two numbers that nothing on your Mac or
-  VPN uses. With `underlay: 11` the admin UI ends up at `11.133.1.17`.
-- `ngc`: present for the NGC lane, absent for the source-build lane. `tag`
-  is the default for every base image. The optional `tags` map gives one
-  image group a different tag: `core` is the NICo core image, `rest` the six
-  REST images. Each group is one Helm release, so a tag applies to a whole
-  group. Groups you do not name use `tag`. For the source-build lane, set the
-  top-level `tag` instead; it is only a label for the images you build, and
-  both groups share it. Optional charts such as Flow are not configured
-  here; each has its own file, see section 11.
-- `core_image` and `images`: the names NGC publishes under. The names the
-  Helm charts expect in the local registry are fixed; only the core differs
-  on NGC, `nvmetal-carbide` against `nico` locally. If NGC ever publishes a
-  REST image under a new name, map it in `images` as local name to NGC name,
-  and nothing else changes.
+  VPN uses. With `underlay: 11` the admin UI ends up at `11.133.1.17`. The
+  dry run warns you if your Mac already routes them.
+- `tag`: a label for the images you build. Both image groups share it. Use a
+  new one for every rebuild; a deployed tag is never rebuilt or redeployed.
 
 Do not set an `ip` field. The VM's address comes from UTM's own subnet. If
-you need a different last octet, set `host_num`; the default is 126. The
-bring-up's preflight warns you if your Mac already routes the octets you
-picked.
+you need a different last octet, set `host_num`; the default is 126.
 
-**Choosing an NGC tag.** The `ngc-tags.py` script lists tags that are
-deployable, that is, recent builds that track main and are published for
-arm64. By default it lists the core image; `--group rest` or `--group flow`
-lists that group instead, for filling in `tags`:
+Note: for the NGC lane, leave `tag` out and add this block instead. `tag` is
+the default for every base image; the optional `tags` map gives one image
+group a different tag: `core` is the NICo core image, `rest` the six REST
+images, each group one Helm release. `core_image` and `images` are the names
+NGC publishes under; the names the Helm charts expect locally are fixed, and
+only the core differs on NGC (`nvmetal-carbide` against `nico`).
+
+```yaml
+ngc:
+  registry: nvcr.io/<org>/<team>       # ask your team
+  tag: <tag>                           # default tag for every image; ngc-tags.py, below
+  # tags:                              # optional: a different tag for one image group
+  #   rest: <tag>
+  core_image: nvmetal-carbide          # NGC's name for the core image
+  # images:                            # optional: NGC names, if NGC publishes an image
+  #   rest: {nico-rest-api: <ngc name>}  #   under another name (local chart name: NGC name)
+  token_env: NGC_API_KEY               # NAME of the env var holding your key
+```
+
+To find a deployable tag, one that tracks main and is published for arm64:
 
 ```bash
-ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main, arm64 availability
+ngc-tags.py --config bringup-mysite.yaml                 # newest PR builds tracking main
 ngc-tags.py --config bringup-mysite.yaml --before v2.3.0
 ngc-tags.py --config bringup-mysite.yaml --group rest    # tags of the REST images
 ```
 
 Prefer a recent development tag. A fresh site's database schema follows
 main, and the migration job refuses to run an older version against a newer
-schema, so an old tag on a new site can fail. The image must be published
-for arm64.
+schema, so an old tag on a new site can fail.
 
-## 6. Workflow B: bring the site up
+## Step 4 - Dry run
 
-This section is for Workflow B only, both lanes.
-
-Run the dry run first, then the real thing:
+On the Mac:
 
 ```bash
-bring-up.py --config bringup-mysite.yaml --dry-run   # preflight ✓/✗/⚠, numbered plan, READY or NOT READY
+bring-up.py --config bringup-mysite.yaml --dry-run
+```
+
+You should see every prerequisite marked ✓, ✗ or ⚠, the numbered plan with
+the exact commands, and the verdict `READY`. Nothing is executed during a dry
+run. `NOT READY` lists the lines to fix; fix them and run the dry run again.
+
+## Step 5 - Bring the site up
+
+On the Mac:
+
+```bash
 bring-up.py --config bringup-mysite.yaml
 ```
 
-The dry run checks every prerequisite and marks each ✓, ✗ or ⚠. It prints
-the numbered plan with the exact commands, and ends with a verdict: READY, or
-NOT READY with the lines to fix. Nothing is executed during a dry run.
-
-The real run goes through these steps in order: `vm`, `prep`, `site`,
-`fabric`, `cp`, `build` (source lane only), `registry`, `nico`, `dpf`,
-`route`. It builds the VM, prepares it, writes the site configuration,
-deploys the network fabric, installs Kubernetes, gets the images ready,
-deploys NICo, deploys the DPF simulator, and finally routes the service
-addresses on your Mac.
+The run goes through 21 steps: `vm` → `prep` → `site` → `fabric` → `cp` →
+`build` → `registry` → one step per NICo Helm release, seven `core` ones
+(local-path-provisioner, cert-manager, vault, external-secrets,
+postgres-operator, nico-prereqs, nico) then five `rest` ones (rest-postgres,
+keycloak, temporal, nico-rest, nico-rest-site-agent) → `dpf` → `route`.
+`bring-up.py --list` shows them. The `build` step compiles the NICo images
+from your worktree: 20 to 40 minutes the first time, minutes afterwards.
 
 The run stops and waits for you twice. This is by design:
 
@@ -368,22 +289,8 @@ and gives the user passwordless sudo, so `prep` logs in with the key; the
 host-key question is answered automatically for a new address, and the
 `iptables-persistent` save dialogs inside the VM are pre-answered.
 
-Steps: vm → prep → site → fabric → cp → build (source lane only) → registry →
-one step per NICo Helm release, seven `core` ones (local-path-provisioner,
-cert-manager, vault, external-secrets, postgres-operator, nico-prereqs, nico)
-then five `rest` ones (rest-postgres, keycloak, temporal, nico-rest,
-nico-rest-site-agent) → dpf → route; 21 steps, `--list` shows them. With
-`ngc:` the build and the release steps collapse into one `ngc` step, 9 in
-all. If a step fails, the runner prints the known failure modes of that step
-and the exact command to resume, `--from <step>`, which for the releases is
-the release name (`--from keycloak`). Every step is safe to run again; a
-release step is a fast idempotent Helm upgrade when it is already installed.
-A successful run ends with a URL, for example `https://11.133.1.17/admin`
-for `underlay: 11`.
-
 The runner's output is the raw output of every command it runs, which is
-long and says little about where the run stands. For that, open a second
-terminal:
+long and says little about where the run stands. Open a second terminal:
 
 ```bash
 bring-up-status.py --config bringup-mysite.yaml          # redraws every 2 s; Ctrl-C leaves the run alone
@@ -394,13 +301,28 @@ It shows every step as done, running, failed or not yet, the time each took,
 what the current step is doing inside it (which of the three core images or
 six REST images is building, which Helm release is installing), how to ssh to
 the VM, the kubeconfig, the URL you will get at the end, and after a failure
-the resume command. The runner writes the events to
-`<share>/.bring-up/<vm-name>.jsonl`; a run started before the tools had this
-feature has no file, and a resume with `--from` keeps the earlier steps.
+the resume command. The events live in `<share>/.bring-up/<vm-name>.jsonl`.
 
-## 7. Both workflows: Mac-side setup and where things are
+If a step fails, the runner prints the known failure modes of that step and
+the exact command to resume, `--from <step>`, which for the releases is the
+release name (`--from keycloak`). Every step is safe to run again; a release
+step is a fast idempotent Helm upgrade when it is already installed, and a
+resume keeps the earlier steps in the status viewer. The `keycloak` step is
+the one most likely to fail on a loaded Mac; Appendix E has the recovery.
 
-Point kubectl at the cluster and add the route to the service addresses:
+You should see the run end with a URL, `https://11.133.1.17/admin` for
+`underlay: 11`.
+
+Note: with an `ngc:` block, the `build` step and the twelve release steps
+collapse into one `ngc` step that pulls, retags and deploys the pre-built
+images; 9 steps in all. A resume past a failed release on that lane is
+`deploy-dev-nico.py <site> --tag <images.tag from the site yaml> --skip-to
+<release>`, because the releases run inside the one `ngc` step.
+
+## Step 6 - kubectl, the route, and where things are
+
+On the Mac, point kubectl at the cluster and add the route to the service
+addresses:
 
 ```bash
 export KUBECONFIG=~/nico-tests/vm1/shared/sites/dc1/dev1/dc1-dev1.kubeconfig.yaml   # in your shell profile
@@ -410,13 +332,13 @@ sudo route -n add -net 11.133.1.0/27 192.168.64.126     # route to the service V
 route -n get 11.133.1.17                                # gateway: 192.168.64.126
 ```
 
-**The route does not last.** macOS removes it whenever the last UTM VM
+Note: **the route does not last.** macOS removes it whenever the last UTM VM
 stops, because UTM's network bridge `bridge100` disappears and macOS flushes
 every route through it. The route also goes on sleep and wake, and when a
 VPN connects or disconnects. Re-add it with the same command. The scripts
 `restart-ordered.sh` and `onboard-golden.sh` print the command for you.
 
-**Where things are**, seen from both sides:
+Where things are, seen from both sides:
 
 | | Mac | Inside the VM |
 |---|---|---|
@@ -430,9 +352,8 @@ VPN connects or disconnects. Re-add it with the same command. The scripts
 Inside the VM the repository is a git worktree whose metadata lives on the
 Mac. Do your git work on the Mac, not in the VM.
 
-**Checking on the site.** `ndev.py` shows status. Run it on the Mac for
-cluster status, or on the VM for the full fabric health, because the fabric
-only exists inside the VM:
+`ndev.py` shows status. Run it on the Mac for cluster status, or on the VM for
+the full fabric health, because the fabric only exists inside the VM:
 
 ```bash
 ndev.py <site>                                                       # Mac: cluster status; fabric/BGP/DPU n/a (VM-side)
@@ -442,7 +363,9 @@ ssh nico@192.168.64.126 'ndev.py ~/mac/sites/dc1/dev1 fabric verify' # VM: full 
 The subcommands are `fabric verify|info|shell [switch]`, `bgp info
 [--detail]`, `cluster info`, `registry verify`, and `dpu info`.
 
-## 8. Verify
+## Step 7 - Verify
+
+On the Mac:
 
 ```bash
 kubectl -n nico-system get pods        # all Running or Completed
@@ -450,19 +373,16 @@ curl -k https://11.133.1.17/           # "Forge development build"
 open https://11.133.1.17/admin
 ```
 
-On a corporate VPN, the VPN client may claim the address range before your
-route does. Then tunnel through SSH instead: run
+Note: on a corporate VPN, the VPN client may claim the address range before
+your route does. Then tunnel through SSH instead: run
 `ssh -L 8443:11.133.1.17:443 nico@192.168.64.126` and open
 `https://localhost:8443/admin`.
 
-## 9. CLIs and MAT
+## Step 8 - The admin CLI, without compiling anything
 
-The full step-by-step, with what to expect at each stage, is
-`clis-mat-in-nico-dev.md`. This section is the summary.
-
-**The admin CLI, without compiling anything.** The NICo API container
-already contains the admin CLI binary. This script copies it out, issues the
-client certificates it needs, and writes a wrapper script. Run it on the VM:
+The NICo API container already contains the admin CLI binary. This script
+copies it out, issues the client certificates it needs, and writes a wrapper
+script. On the VM:
 
 ```bash
 ssh nico@192.168.64.126
@@ -471,29 +391,34 @@ get-admin-cli.sh ~/mac/sites/dc1/dev1      # extracts the binary from the API co
 ```
 
 Always use the wrapper `run-admin-cli.sh`. The bare binary dials the API by
-its in-cluster name and fails outside the cluster.
+its in-cluster name and fails outside the cluster. The full step-by-step for
+the CLIs and MAT, with what to expect at each stage, is
+`clis-mat-in-nico-dev.md`; Steps 8, 9 and 11 are the summary.
 
-**MAT.** MAT is built in a container on the Mac and delivered to the VM
-through the share. Two commands on the Mac:
+## Step 9 - Build and run MAT
+
+MAT is built in a container on the Mac and delivered to the VM through the
+share. On the Mac:
 
 ```bash
 build-nico-clis.py <site> --mat-only       # machine-a-tron only, no host toolchain needed
 configure-clis.py <site>                   # certs for admin-cli and MAT, mat-config.toml, run-mat.sh, /etc/hosts entry
 ```
 
-The first builds the MAT binary. The second issues certificates for the admin
-CLI and MAT, writes the fleet definition `mat-config.toml`, generates the
-wrapper `run-mat.sh`, and adds the API hostname to `/etc/hosts`.
+The first builds the MAT binary into `<site>/mat/machine-a-tron`; the first
+build compiles the whole crate and takes twenty minutes or more, later ones
+minutes. The second issues certificates for the admin CLI and MAT, writes the
+fleet definition `<site>/mat/mat-config.toml`, generates the wrapper
+`<site>/run-mat.sh`, and adds the API hostname to `/etc/hosts`.
 
-Without `--mat-only`, `build-nico-clis.py` also compiles `nico-admin-cli`
-and `nicocli` on the Mac, which needs cargo and Go installed there. This is
-the one place where the toolchain rule from section 1 is not yet met. Use
-`get-admin-cli.sh` instead, unless you need to test your own changes to the
-CLI.
+Note: without `--mat-only`, `build-nico-clis.py` also compiles
+`nico-admin-cli` and `nicocli` on the Mac, which needs cargo and Go installed
+there. Use Step 8 and Step 11 instead unless you need to test your own
+changes to a CLI.
 
-MAT runs on the VM only. It puts the addresses of its mock BMCs on the
-fabric bridge `br-dc1-internet`, which exists only inside the VM, and NICo's
-site-explorer connects to those addresses. Start it like this:
+MAT runs on the VM only. It puts the addresses of its mock BMCs on the fabric
+bridge `br-dc1-internet`, which exists only inside the VM, and NICo's
+site-explorer connects to those addresses. On the VM:
 
 ```bash
 ssh nico@192.168.64.126 '~/mac/sites/dc1/dev1/run-mat.sh'
@@ -502,11 +427,21 @@ ssh nico@192.168.64.126 '~/mac/sites/dc1/dev1/run-mat.sh'
 `run-mat.sh` copies the binary, the certificates and the configuration to
 local disk on the VM, installs the binary, stages everything under
 `/etc/machine-a-tron/dc1/`, and launches MAT under `sudo`. The log is
-`/var/log/machine-a-tron-dc1.log` on the VM. Watch machines appear with
-`run-admin-cli.sh machine show` (no argument lists them all).
+`/var/log/machine-a-tron-dc1.log` on the VM. You should see machines appear
+with `run-admin-cli.sh machine show` (no argument lists them all). For a live
+overview of the whole run, in a second VM terminal:
+
+```bash
+~/mac/infra-controller/tools/nico-dev/run-monitor-mat.sh ~/mac/sites/dc1/dev1
+```
+
+It shows expected machines, endpoints, machine states with the milestones
+still to go, DPUs, DPF phases and MAT's own view, one page per section
+(digits or ←→ switch pages, `?` for help), refreshing every 30 s. It finds
+the MAT log by the site's `dc` name; `--mat-log <file>` pins a specific one.
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset
-the fleet:
+the fleet, on the Mac:
 
 ```bash
 reset-mat-state.py <site> --yes
@@ -514,33 +449,221 @@ reset-mat-state.py <site> --yes
 
 NICo remembers the fleet it has seen: the endpoints it explored, the
 machines it expected, and the BMC credentials it rotated. Without the reset,
-a new run against fresh mocks is locked out. Custom MAT builds and the
+a new run against fresh mocks is locked out.
+
+Note: **running a MAT you built yourself.** When you change MAT's source,
+build from your own worktree into a separate folder so the site's baseline
+binary stays untouched. `--out-dir` is required with `--repo` for that reason:
+
+```bash
+build-nico-clis.py <site> --mat-only --repo ~/projects/my-mat-worktree --out-dir <site>/mat-dev
+cp <site>/run-mat.sh <site>/run-mat-dev.sh
+```
+
+Then change the two paths at the top of `run-mat-dev.sh`, `MAT_BIN` and
+`MAT_CONFIG`, to the `mat-dev` folder, and copy `<site>/mat/mat-config.toml`
+to `<site>/mat-dev/mat-config.toml` if you want a custom config, for example
+an `acceleration_factor` or a `[machines.<group>.timing_overrides]` block.
+The run script derives its log name from its own name, so
+`run-mat-dev.sh` logs to `/var/log/machine-a-tron-dc1-dev.log` and the
+baseline and your build never overwrite each other. The details and the
 failure catalog are in `mat-in-nico-dev.md`.
 
-### Firmware upgrade simulation
+## Step 10 - Firmware upgrade simulation
 
 By default MAT hosts report firmware that already matches what NICo wants, so
 ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
-changes that for every host: MAT reports the `initial` BMC and UEFI versions
-and nico-api gets a firmware definition for the mock GB200 requiring the
-`desired` ones, written into the chart's firmware volume by an init
+(Step 3) changes that for every host: MAT reports the `initial` BMC and UEFI
+versions and nico-api gets a firmware definition for the mock GB200 requiring
+the `desired` ones, written into the chart's firmware volume by an init
 container. Ingestion then runs the full chain per host: preingestion finds
 the versions below the minimum, uploads through `SimpleUpdate`, polls the
 Redfish task to `Completed`, power-cycles, reads the new version back, and
-only then continues to Ready. Watch it in the nico-api log:
+only then continues to Ready. Watch it in the nico-api log, on the Mac:
 
 ```bash
 kubectl -n nico-system logs deploy/nico-api | grep -E "preingestion minimum|firmware upload|Firmware version satisfies"
 ```
 
+To confirm the definition reached nico-api:
+
+```bash
+kubectl -n nico-system exec deploy/nico-api -- cat /opt/nico/firmware/gb200-sim/metadata.toml
+```
+
 The versions are `nico-system.firmware_sim` in the site yaml (`initial` 1.0,
 `desired` 2.0); the mock accepts any string, so keep initial below desired.
-Changing them after bring-up means `bring-up.py --from nico --until nico` to
-regenerate the values and upgrade the nico release, and `configure-clis.py
-<site>` for the MAT config, then `reset-mat-state.py` and a fresh MAT run.
-`false` renders exactly what the site rendered before the option existed.
+Changing them after bring-up means `bring-up.py --config X --from nico
+--until nico` to regenerate the values and upgrade the nico release, and
+`configure-clis.py <site>` for the MAT config, then `reset-mat-state.py` and
+a fresh MAT run. `false` renders exactly what the site rendered before the
+option existed.
 
-### DPF and the two provisioning modes
+## Step 11 - nicocli, without compiling anything
+
+The REST API has its own CLI, `nicocli`, and the REST API image ships it,
+built from the same commit as the API. Four steps get it working.
+
+On the Mac, extract the CLI. This copies the binary out of the REST API image
+already in docker's store and writes a wrapper; it takes a few seconds:
+
+```bash
+get-nicocli.sh <share>/sites/dc1/dev1
+```
+
+You should see three steps end with a check mark, then a "Done" block with
+the two commands to run next. The results are `<site>/nicocli/nicocli`, a
+Linux build, and `<site>/run-nicocli.sh`, the wrapper, both on the share.
+
+On the VM, bootstrap the organisation, once per fresh site:
+
+```bash
+ssh nico@192.168.64.126
+~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap
+```
+
+The first call pauses a few seconds while a token is minted inside the
+cluster. Then two commands run, `infrastructure-provider current` and
+`tenant current`, each printing a JSON object: they create the
+organisation's provider and tenant. Until this has run once, every other
+command answers "Org does not have a Tenant associated".
+
+On the VM, use it:
+
+```bash
+~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
+~/mac/sites/dc1/dev1/run-nicocli.sh --help
+```
+
+Always go through the wrapper. It supplies the API address, the organisation
+`ncx` and the token; the bare binary knows none of them. The token is cached
+for 25 minutes and renewed on its own. If a command ever fails with an
+authentication error, put `--refresh-token` in front of it once.
+
+When to repeat what: extract again after you deploy a new nico tag, so the
+CLI matches the API. Bootstrap never again for this site. Nothing to do
+between MAT runs; the REST side is untouched by the fleet reset. On the Mac
+the same wrapper works too, if you built a Mac `nicocli` with
+`build-nico-clis.py`; otherwise it tells you to use the VM.
+
+## Step 12 - The dev loop
+
+The source-build cycle: change code, build images, roll the cluster onto
+them. On the Mac:
+
+```bash
+build-dev-nico.py    <site> --tag t2      # arm64 images, pushed to the colima registry
+redeploy-dev-nico.py <site> --tag t2      # helm upgrade of the nico release only
+kubectl -n nico-system get pods -w
+```
+
+Four rules:
+
+- **Regrafting the tools does not rebuild.** The `nico` image copies the
+  whole checkout, and the grafted tools live inside it; since 2026-09-27
+  `build-dev-nico.py` keeps `tools/nico-dev/` out of the build context, so
+  only source changes recompile. A rebuild that compiles although nothing in
+  `crates/` changed means the tools are older than that fix.
+- **Use a new tag every time.** Both scripts refuse to rebuild or redeploy a
+  tag that is already deployed. If they did not, the cluster would silently
+  keep running the old image under the same name.
+- **Never go backwards.** Each deploy advances the database's migration
+  ledger, and an older binary refuses to run against a newer ledger. To
+  revert, go forward: restore the code, build a fresh tag from the current
+  checkout, and deploy that. If the `nico-api-migrate` job crash-loops with
+  "migration … was previously applied but is missing", delete the job,
+  revert the code, then build and deploy a new tag.
+- **On a full node**, a rolling redeploy may not find room for its new pod.
+  `redeploy: { on_insufficient_cpu: scale-down-first }` in the bringup yaml
+  lets it proceed by removing the old pod first.
+
+For a full deploy, or one release at a time, use `deploy-dev-nico.py <site>
+--tag <t>` with `--skip-to <release>` or `--only <release>`. Never delete
+the `nico-system` namespace to recover from a problem; it holds the Helm
+release state.
+
+## Step 13 - Reboots, recovery, tear down
+
+After the VM reboots, the fabric service recreates its bridges and switches,
+kubelet restarts the cluster, and every pod starts from its cached image.
+Kubernetes has no notion of start order, so all pods start at once and some
+lose the race for their dependencies. If the site looks Running but does not
+work, or pods sit in `Unknown`, run the ordered restart on the VM:
+
+```bash
+sudo restart-ordered.sh          # verify infrastructure, restart every consumer in dependency order
+sudo restart-ordered.sh --cold   # scale all to zero first, then up in order
+```
+
+The script checks the infrastructure first, restarts every component in
+dependency order, ends with a pass or fail verdict, and reminds you of the
+Mac route from Step 6.
+
+Note: a Mac that sleeps freezes the VM. On wake, the VM's clock jumps, its
+systemd watchdogs fire, and ssh logins can fail for a few minutes while
+logind recovers. Keep the Mac awake during long runs, and expect the ordered
+restart afterwards.
+
+To tear down: stop and delete the VM in UTM, then remove
+`~/nico-tests/vm1/*.utm`. A one-command `dev-down.py` exists for Linux
+hosts; the Mac version is planned. Neither step touches your site folder or
+your worktree.
+
+---
+
+## Appendix A - Golden image: a ready-made VM in three commands
+
+You received `nico-dev-golden-YYYYMMDD.utm.zip` from a colleague. It is a
+complete VM with a running site inside, so Steps 3 to 5 do not apply; Steps 1
+and 2 do. These commands turn the ZIP into a working site, on the Mac:
+
+```bash
+mkdir -p ~/nico-tests/vm1/shared && cd ~/nico-tests/vm1/shared
+git clone https://github.com/NVIDIA/infra-controller.git     # the folder name must stay infra-controller
+cd infra-controller
+curl -fsSL https://raw.githubusercontent.com/jabdulvahid/infra-controller-core/nico-dev/tools/nico-dev/graft-tools.sh | bash -s -- --edge
+tools/nico-dev/onboard-golden.sh --zip ~/Downloads/nico-dev-golden-YYYYMMDD.utm.zip --dest ~/nico-tests/vm1
+```
+
+The script runs without your help, except for two things macOS insists on.
+The first time, macOS asks for an Accessibility and Automation permission,
+because the script drives UTM's user interface to set the shared folder.
+Near the end, it asks for your `sudo` password once, to add the route to the
+service addresses. When it finishes, the admin UI is open in your browser,
+and the script has printed the kubeconfig path and the route command you
+will need again later. Continue at Step 6.
+
+The ZIP is kept. To start over, stop and delete the VM in UTM, remove
+`~/nico-tests/vm1/*.utm`, and run the same command again with the same
+`--zip`.
+
+Note: `onboard-golden.sh` never reads a bringup yaml, and `bring-up.py`
+never touches a golden ZIP. The two do not mix.
+
+**Manual fallback**, if the scripted shared-folder step does not stick:
+
+1. In UTM, click **+**, then **Import**, and choose the `.utm` bundle.
+2. Open the VM's settings, go to **Sharing**, and set the path to
+   `~/nico-tests/vm1/shared` with the share name `share`. Do this before the
+   first boot.
+3. Boot the VM. Then log in with `ssh nico@192.168.64.126`, password
+   `Welcome123!`.
+4. On the VM, run the personalisation script:
+
+   ```bash
+   sudo bash /usr/local/lib/nico-dev/first-boot.sh --ssh-key ~/.ssh/id_ed25519.pub \
+       --mac-folder /Users/<you>/nico-tests/vm1/shared --yes
+   ```
+
+   `--mac-folder` is the share root, not the repository inside it. The script
+   never changes the hostname, because the hostname is the Kubernetes node
+   name. Expect `metallb-speaker` and `nico-api` to restart once at the end.
+   That is the script doing its job, not a fault.
+5. Back on the Mac, run `ssh-keygen -R 192.168.64.126`. The imported VM
+   generated new SSH host keys, so the old entry must go. Then set up the
+   route and `KUBECONFIG` as in Step 6.
+
+## Appendix B - DPF and the two provisioning modes
 
 NICo provisions the DPU in each managed host through DPF, the DOCA Platform
 Framework. In production, NICo creates DPF resources in Kubernetes and the
@@ -584,96 +707,10 @@ options are `--phase-dwell 30s` for a slower walk through the phases,
 other phases keep their pace, `--rebuild` after you changed the simulator's
 code, `--repo <checkout>` to build it from another checkout such as a feature
 worktree, and `--uninstall` to remove it. Advanced settings live in the site
-yaml under `nico-system.dpf`.
-What the simulator reproduces, what it does not, and its failure catalog are
-in section 13 of `mat-in-nico-dev.md`.
+yaml under `nico-system.dpf`. What the simulator reproduces, what it does
+not, and its failure catalog are in section 13 of `mat-in-nico-dev.md`.
 
-**nicocli, without compiling anything.** The REST API has its own CLI,
-`nicocli`, and the REST API image ships it, built from the same commit as
-the API. Four steps get it working on the VM.
-
-*Step 1, on the Mac: extract the CLI.* This copies the binary out of the
-REST API image already in docker's store and writes a wrapper. It takes a
-few seconds:
-
-```bash
-get-nicocli.sh <share>/sites/dc1/dev1
-```
-
-Three steps end with a check mark, then a "Done" block prints the two
-commands to run next, with the site path as the VM sees it. The results are
-`<site>/nicocli/nicocli`, a Linux build, and `<site>/run-nicocli.sh`, the
-wrapper. Both are on the share, so the VM sees them at once.
-
-*Step 2, on the VM: bootstrap the organisation, once per fresh site.*
-
-```bash
-ssh nico@192.168.64.126
-~/mac/sites/dc1/dev1/run-nicocli.sh --bootstrap
-```
-
-The first call pauses a few seconds while a token is minted inside the
-cluster. Then two commands run, `infrastructure-provider current` and
-`tenant current`, each printing a JSON object: they create the
-organisation's provider and tenant. Until this has run once, every other
-command answers "Org does not have a Tenant associated".
-
-*Step 3, on the VM: use it.*
-
-```bash
-~/mac/sites/dc1/dev1/run-nicocli.sh vpc list
-~/mac/sites/dc1/dev1/run-nicocli.sh --help
-```
-
-Always go through the wrapper. It supplies the API address, the
-organisation `ncx` and the token; the bare binary knows none of them. The
-token is cached for 25 minutes and renewed on its own. If a command ever
-fails with an authentication error, put `--refresh-token` in front of it
-once.
-
-*Step 4, when to repeat what.* Step 1 again after you deploy a new nico tag,
-so the CLI matches the API. Step 2 never again for this site. Nothing to do
-between MAT runs; the REST side is untouched by the fleet reset. On the Mac
-the same wrapper works too, if you built a Mac `nicocli` with
-`build-nico-clis.py`; otherwise it tells you to use the VM.
-
-## 10. The dev loop
-
-This is the source-build lane's cycle: change code, build images, roll the
-cluster onto them.
-
-```bash
-build-dev-nico.py    <site> --tag t2      # arm64 images, pushed to the colima registry
-redeploy-dev-nico.py <site> --tag t2      # helm upgrade of the nico release only
-kubectl -n nico-system get pods -w
-```
-
-Three rules:
-
-- **Regrafting the tools does not rebuild.** The `nico` image copies the
-  whole checkout, and the grafted tools live inside it; since 2026-09-27
-  `build-dev-nico.py` keeps `tools/nico-dev/` out of the build context, so
-  only source changes recompile. A rebuild that compiles although nothing in
-  `crates/` changed means the tools are older than that fix.
-- **Use a new tag every time.** Both scripts refuse to rebuild or redeploy a
-  tag that is already deployed. If they did not, the cluster would silently
-  keep running the old image under the same name.
-- **Never go backwards.** Each deploy advances the database's migration
-  ledger, and an older binary refuses to run against a newer ledger. To
-  revert, go forward: restore the code, build a fresh tag from the current
-  checkout, and deploy that. If the `nico-api-migrate` job crash-loops with
-  "migration … was previously applied but is missing", delete the job,
-  revert the code, then build and deploy a new tag.
-- **On a full node**, a rolling redeploy may not find room for its new pod.
-  `redeploy: { on_insufficient_cpu: scale-down-first }` in the bringup yaml
-  lets it proceed by removing the old pod first.
-
-For a full deploy, or one release at a time, use `deploy-dev-nico.py <site>
---tag <t>` with `--skip-to <release>` or `--only <release>`. Never delete
-the `nico-system` namespace to recover from a problem; it holds the Helm
-release state.
-
-## 11. Add-ons after bring-up
+## Appendix C - Add-ons after bring-up
 
 Optional components are installed after the site is up, one script per
 component, run from the Mac, at your discretion. Each add-on has its own
@@ -697,26 +734,9 @@ of what is installed, and removal is the chart's own uninstall.
 
 The design, the config format shared by every add-on, and the list of other
 candidates are in `ADDONS.md` and `deploying-extras.md`. DPF is not an
-add-on; it is part of the base site, see section 9.
+add-on; it is part of the base site (Appendix B).
 
-## 12. Reboots and recovery
-
-After the VM reboots, the fabric service recreates its bridges and switches,
-kubelet restarts the cluster, and every pod starts from its cached image.
-Kubernetes has no notion of start order, so all pods start at once and some
-lose the race for their dependencies. If the site looks Running but does not
-work, run the ordered restart on the VM:
-
-```bash
-sudo restart-ordered.sh          # verify infrastructure, restart every consumer in dependency order
-sudo restart-ordered.sh --cold   # scale all to zero first, then up in order
-```
-
-The script checks the infrastructure first, restarts every component in
-dependency order, ends with a pass or fail verdict, and reminds you of the
-Mac route from section 7.
-
-## 13. Learning the fabric
+## Appendix D - Learning the fabric
 
 The simulated fabric is a good place to learn EVPN networking. On the VM,
 `ndev.py ~/mac/sites/dc1/dev1 fabric shell` lists the switches, and
@@ -725,7 +745,7 @@ The simulated fabric is a good place to learn EVPN networking. On the VM,
 you like; `sudo systemctl restart nico-dev-fabric` rebuilds the whole fabric
 from the site yaml. Newcomers should start with `networking-primer.md`.
 
-## 14. Troubleshooting
+## Appendix E - Troubleshooting
 
 - **The VIP refuses connections on a fresh site while all pods are
   Running.** Check `kubectl -n nico-system get endpoints nico-api`. If it is
@@ -733,15 +753,14 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
   deployment/nico-api`; the VIP answers about 30 seconds later.
   `first-boot.sh` and `onboard-golden.sh` already do this once.
 - **The route is missing.** If `netstat -rn | grep 11.133` prints nothing,
-  re-add the route from section 7. It disappears every time the last VM
-  stops.
+  re-add the route from Step 6. It disappears every time the last VM stops.
 - **The `keycloak` step fails, the pod restarts, `kubectl -n nico-rest describe
   pod -l app=keycloak` shows `Container keycloak failed liveness probe, will be
   restarted`.** The upstream Deployment's liveness probe (60 s delay, 30 s
   period, three failures) kills the container about 150 s after start if
   port 8080 is not open yet, and Keycloak's first start on a starved VM (a
-  Mac under load, a VM below the sizing in section 5) takes longer than
-  that: Quarkus augmentation alone is 75 s on a healthy VM. Each kill
+  Mac under load, a VM below the sizing in the Assumptions) takes longer
+  than that: Quarkus augmentation alone is 75 s on a healthy VM. Each kill
   restarts from zero, and the setup script's 180 s rollout wait fails. A
   kill that lands during the schema migration also produces the next
   symptom. Recover by resetting the database, widening the probes and
@@ -803,13 +822,7 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
   then look at `cat /etc/netplan/99-nico-static.yaml` and run
   `sudo netplan apply`.
 
-## 15. Tear down
-
-Stop and delete the VM in UTM, then remove `~/nico-tests/vm1/*.utm`. A
-one-command `dev-down.py` exists for Linux hosts; the Mac version is
-planned. Neither step touches your site folder or your worktree.
-
-## 16. Maintainers
+## Appendix F - Maintainers
 
 - **Bake and export a golden image.** On the VM, with every pod Running,
   MAT stopped and the fleet reset, run `sudo bash bake-golden-image.sh <site
@@ -825,7 +838,7 @@ planned. Neither step touches your site folder or your worktree.
   `git tag validated-YYYYMMDD && git push origin validated-YYYYMMDD`. The
   stable graft channel serves the newest such tag.
 
-## 17. Script reference
+## Appendix G - Script reference
 
 | Script | Runs on | Does |
 |---|---|---|
@@ -841,7 +854,7 @@ planned. Neither step touches your site folder or your worktree.
 | `redeploy-dev-nico.py <site> --tag T` | Mac | roll the nico release to a tag |
 | `deploy-flow.py <site> --config flow.yaml [--status\|--uninstall]` | Mac | Flow add-on, from its own standalone config |
 | `deploy-dpf-sim.py <site> [--phase-dwell T] [--os-install-dwell T] [--repo DIR] [--uninstall]` | Mac | DPF simulator (default site; the `dpf` bring-up step) |
-| `build-nico-clis.py <site> [--mat-only]` | Mac | MAT in a container; admin-cli and nicocli with host toolchains |
+| `build-nico-clis.py <site> [--mat-only] [--repo DIR --out-dir DIR]` | Mac | MAT in a container; admin-cli and nicocli with host toolchains |
 | `configure-clis.py <site>` | Mac | certs, MAT config, wrappers, /etc/hosts |
 | `get-admin-cli.sh <site>` | VM | admin CLI from the API container, no build |
 | `get-nicocli.sh <site>` | Mac | REST CLI from the REST API image, no build; writes `run-nicocli.sh` |
