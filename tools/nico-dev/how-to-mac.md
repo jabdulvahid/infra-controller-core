@@ -249,18 +249,17 @@ worktree on the branch you want to run. On the Mac:
 # appears as /home/nico/mac, so a file written here is visible there at once.
 mkdir -p ~/nico-tests/vm-feature1/shared
 
-# Your primary clone. Find out which remote points at NVIDIA's repository;
-# below it is called UPSTREAM. In a plain clone that is origin; in a personal
-# fork it is usually upstream, because origin is your fork.
+# Your primary clone, set up as CONTRIBUTING.md describes: origin is your fork
+# and upstream is NVIDIA's repository. Check with git remote -v.
 cd ~/projects/infra-controller
 git remote -v
 
 # Fetch first, so the new branch starts from TODAY's NVIDIA main rather than
 # from your last fetch.
-git fetch UPSTREAM main
+git fetch upstream main
 
 # Create the branch and its worktree inside the share in one command.
-git worktree add -b feature1 ~/nico-tests/vm-feature1/shared/infra-controller UPSTREAM/main
+git worktree add -b feature1 ~/nico-tests/vm-feature1/shared/infra-controller upstream/main
 ```
 
 Note: if `feature1` already exists, for example because you pushed it from
