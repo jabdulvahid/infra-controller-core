@@ -237,7 +237,8 @@ folder; its `shared/` is the folder the VM mounts, and inside it lives the
 worktree on the branch you want to run. On the Mac:
 
 ```bash
-# One folder per VM. shared/ is what the VM mounts.
+# One folder per VM. shared/ is what the VM mounts; inside the VM this folder
+# appears as /home/nico/mac, so a file written here is visible there at once.
 mkdir -p ~/nico-tests/vm-feature1/shared
 
 # Your primary clone. Find out which remote points at NVIDIA's repository;
