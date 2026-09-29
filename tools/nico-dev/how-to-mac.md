@@ -183,7 +183,10 @@ image.
    ```
 
    Then split it. Give colima 8 CPUs and 16 GB: the Rust build gains little
-   beyond 8 CPUs, and below 16 GB it gets killed for lack of memory. Give
+   beyond 8 CPUs, and below 16 GB it gets killed for lack of memory. The
+   build runs cargo with as many parallel jobs as colima's CPUs allow, capped
+   at one job per 3 GB of colima memory, so 16 GB gives 5 jobs and 24 GB
+   gives 8; the build prints the number it chose. Give
    the VM 8 CPUs and the rest of the memory minus about 12 GB for macOS,
    at least 16 GB for development. The CPU totals may exceed the core count;
    colima is busy while the VM is idle during the build, and the other way
