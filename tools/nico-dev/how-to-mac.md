@@ -123,6 +123,24 @@ nothing on your Mac or VPN uses; the dry run warns if the Mac already routes
 them. A second site on the same Mac needs its own pair, its own VM name and
 its own `host_num`.
 
+**Golden images.** Once you have a working site, you can turn the VM into a
+golden image: a `.utm` bundle, zipped, that a colleague imports and has
+running in about five minutes with no build at all. `bake-golden-image.sh`
+prepares the VM for that (Appendix H): it saves the site yaml and the
+nico-dev tools inside the image, resets the `nico` user to the default
+password with no SSH keys, cleans caches and logs, and checks that every pod
+is Running and every image is cached in the VM's containerd. You shut the VM
+down, detach the shared folder, and export the bundle from UTM. On the
+receiving Mac, `onboard-golden.sh` (Appendix A) imports it, sets the shared
+folder, and runs `first-boot.sh` inside the VM, which installs that person's
+SSH key, points the VM at their share, and starts the fabric. What the image
+carries is the VM: the cluster, the deployed NICo release at the tag it was
+baked with, the fabric, and the cached images. What it does not carry is
+anything in the share, so the recipient still needs a checkout with the
+nico-dev tools grafted, and a golden image is a snapshot of one NICo
+version: to move forward they redeploy a newer tag (Step 12) or take a newer
+image.
+
 ## Assumptions
 
 1. An Apple Silicon Mac. Pick the row that matches what you plan to do:
@@ -918,13 +936,7 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
 
 ## Appendix F - Maintainers
 
-- **Bake and export a golden image.** On the VM, with every pod Running,
-  MAT stopped and the fleet reset, run `sudo bash bake-golden-image.sh <site
-  yaml>`. Shut the VM down. Remove the shared directory from the VM's UTM
-  settings. In UTM, right-click the VM and choose **Share…** to export the
-  `.utm` bundle, then zip it. Never boot the master copy; give each import
-  its own APFS copy with `cp -cR`. To return the builder VM to development
-  afterwards, see `how-to.md` §12A.4b.
+- **Bake and export a golden image.** Appendix H, step by step.
 - **Smoke test** before pushing any change to the cloud-init seed, the VM
   creation record, or `prepare-vm`: `smoke-test.sh` takes about six minutes
   on a throwaway VM.
@@ -960,6 +972,75 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
 | `first-boot.sh` | VM | personalise a golden clone |
 | `bake-golden-image.sh <site yaml>` | VM | prepare a VM for export |
 | `smoke-test.sh` | Mac | maintainers: boot-path check on a throwaway VM |
+
+## Appendix H - Make a golden image
+
+Turn a working site into a `.utm` bundle that a colleague imports with
+Appendix A. The whole cycle is bake on the VM, export on the Mac, keep the
+export pristine.
+
+Preconditions, all checked by the bake script, which refuses otherwise: every
+pod Running or Completed, Vault in file mode (the default), MAT stopped and
+the fleet reset with `reset-mat-state.py <site> --yes`.
+
+Bake, on the VM:
+
+```bash
+sudo bash ~/mac/infra-controller/tools/nico-dev/bake-golden-image.sh ~/mac/sites/dc1/dev1/dev1.yaml
+```
+
+It saves a canonical copy of the site yaml to `/etc/nico-dev/dev.yaml` and
+the whole nico-dev script bundle to `/usr/local/lib/nico-dev/`, so the
+recipient can run `first-boot.sh` before any share is mounted. It clears
+`/etc/nico-dev/env`, which `first-boot.sh` writes fresh per user. It resets
+the `nico` user for distribution: password `Welcome123!`, empty
+`authorized_keys`, password authentication on. It wipes MAT's runtime
+residue (staged binaries, your client certificates, logs), cleans the Docker
+build cache, the apt cache, the journal and the shell history, and ends with
+the gates: pods Running, images cached in containerd.
+
+Export, on the Mac:
+
+1. Shut the VM down cold: `ssh nico@192.168.64.126 sudo shutdown -h now`.
+2. **Remove the shared directory from the VM's UTM settings** before
+   exporting. Otherwise your Mac path is baked into the bundle's
+   `config.plist`, which both leaks it and trips the importer. Add it back
+   after the export.
+3. In UTM, right-click the VM and choose **Share…**, UTM's export, and save
+   it as `nico-dev-golden-YYYYMMDD.utm`. The result is a bundle, a folder
+   Finder shows as one file, holding one qcow2 disk and `config.plist`,
+   about 24 GB. Zip it for distribution.
+
+Treat the export as a pristine master. Never boot it: booting a copy mutates
+it and `first-boot.sh` personalises it. Give every test or import its own
+copy, which is instant and free on APFS because it is copy-on-write:
+
+```bash
+cp -cR nico-dev-golden-YYYYMMDD.utm ~/nico-tests/vm1/vm1.utm
+```
+
+Import-test rules, learned the hard way: only one nico-dev VM booted at a
+time, since they all carry the same address; a fresh test means a fresh copy
+of the master; and stopping the last UTM VM destroys `bridge100`, so macOS
+flushes the VIP route with it, every export cycle.
+
+Note: **returning the builder VM to development.** Baking turns the VM from
+developer-ready into image-ready. Booted again after the bake it comes up
+without a fabric, because the cleared env makes the boot service deploy
+nothing, which looks like "metallb broken". To use it for development again,
+on the VM restore the site env and the fabric, and on the Mac restore
+passwordless ssh and the route:
+
+```bash
+echo 'NICO_DEV_SITE=/home/nico/mac/sites/dc1/dev1/dev1.yaml' | sudo tee /etc/nico-dev/env && sudo systemctl restart nico-dev-fabric
+```
+
+```bash
+ssh-copy-id nico@192.168.64.126 && sudo route -n add -net 11.133.1.0/27 192.168.64.126
+```
+
+MAT's staging heals itself on the next `run-mat.sh`; everything else the
+bake changed is harmless for development.
 
 Friction is a bug. If a step confused you, or an error message did not get
 you out of trouble, that is a defect in this tooling. Please report it.
