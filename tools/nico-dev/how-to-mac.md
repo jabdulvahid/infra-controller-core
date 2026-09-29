@@ -198,18 +198,25 @@ image.
 On the Mac:
 
 ```bash
-brew install --cask utm            # then launch it once
+# UTM runs the VM. Launch it once after installing so macOS registers it.
+brew install --cask utm
+
+# git and python3 run the nico-dev scripts; helm and kubectl talk to the cluster;
+# colima is the Docker engine on the Mac and docker its command-line client.
 brew install git python3 helm kubectl colima docker
 pip3 install pyyaml
-colima start --cpu 8 --memory 16 --disk 100    # the default 4 CPU / 8 GB OOM-kills the Rust build
-ssh-keygen -t ed25519              # only if you have no keypair
+
+# Start the Docker engine with enough resources. colima's default of 4 CPUs and
+# 8 GB is too small: the Rust build of the NICo images gets killed for lack of memory.
+colima start --cpu 8 --memory 16 --disk 100
+
+# Only if you have no SSH keypair yet. The public key is installed into the VM.
+ssh-keygen -t ed25519
 ```
 
-What each tool is for: UTM runs the virtual machine. colima provides a Docker
-engine on the Mac, and docker is its command-line client; together they build
-the container images and run a small local image registry that the VM pulls
-from. helm and kubectl talk to the Kubernetes cluster inside the VM. python3
-with pyyaml runs the nico-dev scripts.
+colima and docker together build the container images and run the small
+local image registry that the VM pulls from; nothing else on the Mac is
+needed to build.
 
 Note: for the NGC lane, put your key in an environment variable, in your
 shell profile:
