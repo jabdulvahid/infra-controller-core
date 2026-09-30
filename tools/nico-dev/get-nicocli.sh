@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # nico-dev — nicocli (the REST CLI) WITHOUT building anything.
 #
-#   (on the Mac, or a Linux host)  get-nicocli.sh <site-folder e.g. <share>/sites/dc1/dev1>
+#   (on the VM, like get-admin-cli.sh)  get-nicocli.sh ~/mac/sites/dc1/dev1
+#   (or on the Mac / Linux host)        get-nicocli.sh <share>/sites/dc1/dev1
 #
 # The nico-rest-api image ships nicocli at /app/nicocli ("as a debugging
 # convenience", per its Dockerfile), built from the same commit as the REST
 # API it talks to. Unlike the admin CLI it cannot be copied out of a RUNNING
 # pod: the image is distroless (no shell, no cat, no tar), so `kubectl exec`
-# and `kubectl cp` have nothing to run. So this takes it from the IMAGE, which
-# both lanes leave in the host's docker store (the NGC lane pulls it, the
-# source lane pushes it to the colima registry and it is pulled back here if
-# needed): docker create + docker cp, no container ever runs.
+# and `kubectl cp` have nothing to run. So this takes it from the IMAGE. On
+# the VM the image is in containerd (the bring-up delivers every image there
+# for kubelet): `ctr images mount` exposes its filesystem, no container runs.
+# On the host it is in the docker store (the NGC lane pulls it, the source
+# lane pushes it to the local registry and it is pulled back if needed):
+# docker create + docker cp, no container runs either.
 #
 # Writes:
 #   <site>/nicocli/nicocli    Linux ELF for the VM's architecture (arm64 on an
@@ -30,20 +33,20 @@ set -euo pipefail
 
 SITE="${1:?usage: get-nicocli.sh <site-folder e.g. ~/nico-tests/vm1/shared/sites/dc1/dev1>}"
 SITE="$(cd "$SITE" && pwd)"
-command -v docker >/dev/null || { echo "Error: docker is required (this reads the nico-rest-api image from the local docker store)" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "Error: python3 with pyyaml is required" >&2; exit 1; }
 
 SITE_YAML="$(ls "$SITE"/*.yaml 2>/dev/null | grep -v '\.kubeconfig\.yaml$' | head -1)"
 [[ -n "$SITE_YAML" ]] || { echo "Error: no site yaml in $SITE" >&2; exit 1; }
 
 # ── read what we need from the site yaml ─────────────────────────────────────
-read -r REST_TAG REG_PORT VM_IP REPO_FOLDER VM_SITE MAC_SITE < <(python3 - "$SITE_YAML" "$SITE" <<'PYEOF'
+read -r REST_TAG REG_PORT REG_HOST VM_IP REPO_FOLDER VM_SITE MAC_SITE < <(python3 - "$SITE_YAML" "$SITE" <<'PYEOF'
 import sys, os, yaml
 c = yaml.safe_load(open(sys.argv[1])) or {}
 img = c.get('images') or {}
 tags = img.get('tags') or {}
 tag = tags.get('rest') or img.get('tag') or (c.get('registry') or {}).get('nico_tag') or ''
 port = (c.get('registry') or {}).get('port', 5000)
+reg_host = (c.get('registry') or {}).get('host') or '192.168.64.1'   # the registry as the VM sees it
 vm_ip = (c.get('vm') or {}).get('ip') or '192.168.64.126'
 repo = c.get('nico_repo_folder') or 'infra-controller-core'
 # the same site folder as the VM sees it: <nico_mac_folder>/x -> <nico_vm_folder>/x,
@@ -53,47 +56,63 @@ mac_root = os.path.realpath(os.path.expanduser(c.get('nico_mac_folder', ''))).rs
 vm_root = (c.get('nico_vm_folder') or '').rstrip('/')
 vm_site = vm_root + site[len(mac_root):] if mac_root and vm_root and site.startswith(mac_root + '/') else '<site-on-the-VM>'
 mac_site = mac_root + site[len(vm_root):] if mac_root and vm_root and site.startswith(vm_root + '/') else ''
-print(tag, port, vm_ip, repo, vm_site, mac_site or '-')
+print(tag, port, reg_host, vm_ip, repo, vm_site, mac_site or '-')
 PYEOF
 )
 [[ -n "$REST_TAG" ]] || { echo "Error: the site yaml records no images tag yet — deploy nico first" >&2; exit 1; }
 
-# On the VM the site folder sits under nico_vm_folder. The image lives in the
-# HOST's docker store / registry (localhost:<port> there; the VM's docker has no
-# insecure-registry entry for the host), so this has to run on the host.
-if [[ "$MAC_SITE" != "-" ]]; then
-    echo "Error: this looks like the VM ($SITE is under the VM's share mount)." >&2
-    echo "  get-nicocli.sh reads the REST API image from the HOST's docker store; run it there:" >&2
-    echo "    get-nicocli.sh $MAC_SITE" >&2
-    echo "  It writes run-nicocli.sh into the site folder, which you then use here on the VM." >&2
-    exit 1
-fi
-
-IMAGE="localhost:${REG_PORT}/nico-rest-api:${REST_TAG}"
-echo "nico-dev — nicocli from the REST API image"
-echo "  site   : $SITE"
-echo "  image  : $IMAGE"
-echo
-
-# ── Step 1: the image, from the local store or the local registry ────────────
-echo "Step 1: Locating the image..."
-if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "  in the local docker store ✓"
-else
-    echo "  not in the local store — pulling from the local registry (buildx --push keeps no local copy)"
-    docker pull "$IMAGE" >/dev/null || { echo "Error: $IMAGE is neither local nor in the registry — is the REST tag deployed?" >&2; exit 1; }
-    echo "  pulled ✓"
-fi
-ARCH="$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')"
-
-# ── Step 2: copy the binary out (docker create + cp — nothing runs) ───────────
-echo "Step 2: Extracting /app/nicocli..."
 OUT_DIR="$SITE/nicocli"
 mkdir -p "$OUT_DIR"
-CID="$(docker create "$IMAGE")"
-trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
-docker cp "$CID:/app/nicocli" "$OUT_DIR/nicocli"
-docker rm -f "$CID" >/dev/null; trap - EXIT
+echo "nico-dev — nicocli from the REST API image"
+echo "  site   : $SITE"
+
+if [[ "$MAC_SITE" != "-" ]]; then
+    # ── On the VM: the image is in containerd, delivered there for kubelet ──
+    # The site folder sits under nico_vm_folder, so this is the VM. containerd
+    # holds the image under the registry name the VM pulls from; match on the
+    # repository and tag so a different registry host still works.
+    command -v ctr >/dev/null || { echo "Error: ctr (containerd's CLI) is required on the VM" >&2; exit 1; }
+    echo "  where  : VM (containerd)"
+    echo
+    echo "Step 1: Locating the image in containerd..."
+    IMAGE="$(sudo ctr -n k8s.io images ls -q 2>/dev/null | grep -E "/nico-rest-api:${REST_TAG}\$" | head -1 || true)"
+    if [[ -z "$IMAGE" ]]; then
+        echo "Error: no nico-rest-api:${REST_TAG} image in the VM's containerd — is the REST tag deployed?" >&2
+        echo "  (expected ${REG_HOST}:${REG_PORT}/nico-rest-api:${REST_TAG}; sudo ctr -n k8s.io images ls -q | grep nico-rest-api)" >&2
+        exit 1
+    fi
+    echo "  $IMAGE ✓"
+    # ── Step 2: mount the image's filesystem and copy the binary (nothing runs) ─
+    echo "Step 2: Extracting /app/nicocli..."
+    MNT="$(mktemp -d)"
+    trap 'sudo ctr -n k8s.io images unmount "$MNT" >/dev/null 2>&1 || true; rmdir "$MNT" 2>/dev/null || true' EXIT
+    sudo ctr -n k8s.io images mount "$IMAGE" "$MNT" >/dev/null
+    cp "$MNT/app/nicocli" "$OUT_DIR/nicocli"
+    sudo ctr -n k8s.io images unmount "$MNT" >/dev/null; rmdir "$MNT"; trap - EXIT
+    ARCH="linux/$(uname -m)"
+else
+    # ── On the host: the image is in the docker store or the local registry ──
+    command -v docker >/dev/null || { echo "Error: docker is required on the host (this reads the nico-rest-api image from the docker store)" >&2; exit 1; }
+    IMAGE="localhost:${REG_PORT}/nico-rest-api:${REST_TAG}"
+    echo "  where  : host (docker)"
+    echo "  image  : $IMAGE"
+    echo
+    echo "Step 1: Locating the image..."
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+        echo "  in the local docker store ✓"
+    else
+        echo "  not in the local store — pulling from the local registry (buildx --push keeps no local copy)"
+        docker pull "$IMAGE" >/dev/null || { echo "Error: $IMAGE is neither local nor in the registry — is the REST tag deployed?" >&2; exit 1; }
+        echo "  pulled ✓"
+    fi
+    ARCH="$(docker image inspect "$IMAGE" --format '{{.Os}}/{{.Architecture}}')"
+    # ── Step 2: copy the binary out (docker create + cp — nothing runs) ─────
+    echo "Step 2: Extracting /app/nicocli..."
+    CID="$(docker create "$IMAGE")"
+    trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+    docker cp "$CID:/app/nicocli" "$OUT_DIR/nicocli"
+    docker rm -f "$CID" >/dev/null; trap - EXIT
+fi
 chmod 755 "$OUT_DIR/nicocli"
 echo "  $OUT_DIR/nicocli ✓ ($ARCH, $(du -h "$OUT_DIR/nicocli" | cut -f1))"
 
