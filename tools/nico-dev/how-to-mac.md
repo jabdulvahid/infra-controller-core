@@ -636,9 +636,10 @@ says whether a MAT process is running, and the MAT page shows how long ago
 the log was last written, so a MAT that died or was stopped does not look
 like a quiet one. Every state change it sees, machines, endpoints, DPUs and
 DPF phases, is recorded with the time of the poll that first saw it: page 6
-shows them live, and `<site>/monitor-mat-history.log` keeps them for reading
-after the run, which is how you reconstruct a host's path through the
-firmware states later. It finds the MAT log by the site's `dc` name;
+lists them in order, page 7 groups them per object with how long each state
+was held, and `<site>/monitor-mat-history.log` keeps them for reading after
+the run, which is how you reconstruct a host's path through the firmware
+states later. It finds the MAT log by the site's `dc` name;
 `--mat-log <file>` pins a specific one.
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset
