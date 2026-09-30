@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# nico-dev — MAT run monitor with the site hardwired for vm1 (dc1/dev1).
+# nico-dev — MAT run monitor for a site.
 #
-#   (on the VM)  run-monitor-mat.sh                      # full-screen, refresh 30 s, q quits
-#   (on the VM)  run-monitor-mat.sh --once               # one plain-text snapshot (paste-friendly)
-#   (on the VM)  run-monitor-mat.sh --no-tui             # plain text every 30 s
-#   (on the VM)  run-monitor-mat.sh --mat-log /var/log/machine-a-tron-dc1-dev.log   # pin one log
+#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1          # full-screen, refresh 30 s, q quits
+#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --once   # one plain-text snapshot (paste-friendly)
+#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --no-tui # plain text every 30 s
+#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --mat-log /var/log/machine-a-tron-dc1-dev.log   # pin one log
+#
+# The first argument is the site folder when it is a directory. Without it,
+# the one site under /home/<user>/mac/sites/*/* is used when exactly one
+# exists; with several, name it.
 #
 # MAT logs: without --mat-log, every /var/log/machine-a-tron-<dc_name>*.log is
 # passed, where <dc_name> is fabric.dc_name from the site yaml — the name the
@@ -14,14 +18,28 @@
 # exactly the log(s) you want instead. MAT writes its logs as root, so the
 # monitor runs under sudo when a log is not readable.
 #
-# Needs $SITE/run-admin-cli.sh (get-admin-cli.sh writes it): that wrapper is
-# how the monitor asks NICo for machines, endpoints and DPUs. Edit SITE and
-# TOOLS for another site.
+# Needs $SITE/run-admin-cli.sh (get-admin-cli.sh or configure-clis.py writes
+# it): that wrapper is how the monitor asks NICo for machines, endpoints and DPUs.
 
-SITE=/home/nico/mac/sites/dc1/dev1
-TOOLS=/home/nico/mac/infra-controller/tools/nico-dev
+TOOLS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-[[ -x "$SITE/run-admin-cli.sh" ]] || { echo "Error: $SITE/run-admin-cli.sh not found — run get-admin-cli.sh $SITE first" >&2; exit 1; }
+# The site: first argument when it is a directory, else the single site under
+# the share (the share root is two levels above this tools folder's repo).
+if [[ $# -gt 0 && -d "$1" ]]; then
+    SITE="$(cd "$1" && pwd)"; shift
+else
+    share="$(cd "$TOOLS/../../.." && pwd)"                       # <share>/<repo>/tools/nico-dev → <share>
+    sites=("$share"/sites/*/*/)
+    if [[ ${#sites[@]} -eq 1 && -d "${sites[0]}" ]]; then
+        SITE="${sites[0]%/}"
+    else
+        echo "Error: give the site folder as the first argument, e.g. run-monitor-mat.sh ~/mac/sites/dc1/dev1" >&2
+        [[ -d "$share/sites" ]] && { echo "  sites under $share/sites:" >&2; ls -d "$share"/sites/*/*/ 2>/dev/null | sed 's|/$||; s|^|    |' >&2; }
+        exit 1
+    fi
+fi
+
+[[ -x "$SITE/run-admin-cli.sh" ]] || { echo "Error: $SITE/run-admin-cli.sh not found — run get-admin-cli.sh $SITE (or configure-clis.py <site> on the Mac) first" >&2; exit 1; }
 
 # --mat-log given? Then pass the arguments through untouched.
 pinned=0
