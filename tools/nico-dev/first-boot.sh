@@ -319,7 +319,12 @@ echo
 
 # ── Step 5: Copy site yaml with updated folder paths ─────────────────────────
 echo "Step 5: Setting up site yaml..."
+# UTM's 9p share stores guest ownership in xattrs on the Mac file
+# (user.virtfs.uid/gid); a directory this root script creates is root-owned
+# in the guest for good, while Mac-created files show the Mac owner's uid,
+# i.e. the VM user's. Hand every level we create to the user right away.
 mkdir -p "$SITE_DIR"
+chown "${USERNAME}:${USERNAME}" "${VM_SHARE_MOUNT}/sites" "${VM_SHARE_MOUNT}/sites/${DC_NAME}" "$SITE_DIR"
 
 # nico_dev_folder → 'nico-dev': step 8 copies the script bundle to
 # <share>/nico-dev, so the user's yaml must point there (their share may not

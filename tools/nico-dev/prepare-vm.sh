@@ -646,10 +646,13 @@ fi
 
 # Bindfs remount at ~/mac with correct user ownership — the ownership
 # model differs per share filesystem, so the options are an EXPLICIT branch:
-#   9p (UTM/Mac):   the share shows Mac files as root inside the guest and
-#                   writes root's files back as the Mac user → map root↔user
-#                   both ways (--map's reverse rule: user's creations are
-#                   stored as root, which 9p turns into the Mac user).
+#   9p (UTM/Mac):   guest ownership lives in xattrs on the Mac file
+#                   (user.virtfs.uid/gid). A file created on the Mac has
+#                   none and shows the Mac owner's real uid, which is the VM
+#                   user's by design; a file the guest created as root shows
+#                   root, on the Mac it is the Mac user's either way. Map
+#                   root↔user both ways so root-created files (first-boot,
+#                   sudo-run scripts) look like the user's here too.
 #   virtiofs (Linux/libvirt): REAL uids pass through, and the VM user's uid
 #                   equals the host user's by design. --map=root/user would
 #                   store the user's creations as ROOT on the host, locking
