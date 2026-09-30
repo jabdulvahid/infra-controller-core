@@ -639,7 +639,10 @@ DPF phases, is recorded with the time of the poll that first saw it: page 6
 lists them in order, page 7 groups them per object with how long each state
 was held, and `<site>/monitor-mat-history.log` keeps them for reading after
 the run, which is how you reconstruct a host's path through the firmware
-states later. It finds the MAT log by the site's `dc` name;
+states later. Machine ids carry the BMC address a person remembers,
+`[host 11.140.2.3]` or `[dpu 11.140.2.2]`, and `/` on page 6 or 7 narrows
+them to one object: type the address and you get the endpoint and the
+machine it became. It finds the MAT log by the site's `dc` name;
 `--mat-log <file>` pins a specific one.
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset

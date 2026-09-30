@@ -357,7 +357,9 @@ walks `Initial` → `InitialBMCReset` → `SetNtpServers` / `TimeSyncReset` →
 (power cycle) → `RecheckVersions`, and only at `Complete` does the host go
 on to become a machine and reach Ready. The MAT monitor
 (`run-monitor-mat.sh`) records every one of those transitions with its time
-in `<site>/monitor-mat-history.log`, which is the record to read afterwards.
+in `<site>/monitor-mat-history.log`, which is the record to read afterwards;
+its pages 6 and 7 show them live, machine ids tagged with their BMC address
+(`[host 11.140.2.3]`), and `/` narrows them to one address.
 Live, in the nico-api log:
 
 ```bash
