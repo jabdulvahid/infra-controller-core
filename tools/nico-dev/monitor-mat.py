@@ -621,8 +621,11 @@ class Transitions:
         for r in server.get('machines', []):
             seen[('machine', col(r, 'id'))] = col(r, 'state')
         for r in server.get('endpoints', []):
-            pre = col(r, 'pre-ingestion state', 'preingestionstate')
-            seen[('endpoint', col(r, 'address'))] = col(r, 'state') + (f' / {pre}' if pre else '')
+            # the endpoint report has no plain state column; its lifecycle is the
+            # pre-ingestion state, plus whether a machine exists for it yet
+            pre = col(r, 'pre-ingestion state', 'preingestionstate') or '?'
+            has_machine = bool(col(r, 'machineid', 'machine id', 'machine'))
+            seen[('endpoint', col(r, 'address'))] = pre + (' (machine)' if has_machine else '')
         for r in server.get('dpus', []):
             seen[('dpu', col(r, 'dpu id', 'dpuid', 'id'))] = col(r, 'state')
         for d in (dpf or {}).get('dpus', []):
