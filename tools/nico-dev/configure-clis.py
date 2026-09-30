@@ -302,12 +302,13 @@ MAT_BIN="$SITE/mat/machine-a-tron"        # Linux binary (build-nico-clis.py)
 MAT_CONFIG="$SITE/mat/mat-config.toml"    # fleet definition
 # ── no edits below this line: cert + staging plumbing ───────────────────
 
-# MAT must not read the 9p share at runtime (the 0600 key is unreadable to
-# the VM user over 9p → MAT silently proceeds certless → anonymous → 403;
-# other runtime share reads are equally untrustworthy), so everything is
-# staged VM-local first. Staged names carry a variant tag (MAT_BIN's parent
+# MAT's runtime reads nothing from the share: everything is staged VM-local
+# first, so a MAT run does not depend on the share staying mounted (Mac
+# sleep, UTM re-attaching it), the binary executes from local disk rather
+# than over 9p, and staged names carry a variant tag (MAT_BIN's parent
 # folder) so script copies pointing at different builds never overwrite
-# each other.
+# each other. (The original reason, a 0600 client key unreadable to the VM
+# user over 9p, went away when the VM user got the Mac user's uid.)
 VARIANT="$(basename "$(dirname "$MAT_BIN")")"
 BIN="/usr/local/bin/machine-a-tron.$VARIANT"
 CERT_DIR="/etc/machine-a-tron/{dc_name}"

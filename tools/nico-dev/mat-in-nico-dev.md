@@ -75,14 +75,18 @@ The binary lands in `{site}/mat/machine-a-tron` — the VM sees it at
 share files**: `run-mat.sh` copies everything VM-local first. Two reasons,
 both learned the hard way:
 
-- The 9p share presents files with the **Mac owner's uid**. MAT's client
-  key is 0600 — unreadable to the VM user. MAT then *silently* connects
+- History (2026-08-21): the 9p share presents Mac-created files with the
+  **Mac owner's uid**, and the VM user's uid did not match it then. MAT's
+  0600 client key was unreadable to the VM user; MAT *silently* connected
   without its client cert → anonymous principal → HTTP 403 on its first
   real call (`get_desired_firmware_versions`), with no hint why.
   (Diagnostic from nico-sim notes that still applies: `client_num_certs=0`
-  in nico-api spans = the client sent no cert.)
-- Executing/reading off 9p has enough permission edge cases that "copy
-  local, run local" is simply the reliable posture.
+  in nico-api spans = the client sent no cert.) The VM user now gets the
+  Mac user's uid, which resolved that; the copy stayed.
+- What the copy still buys: MAT's runtime never depends on the share being
+  mounted (Mac sleep, UTM re-attaching the share), the binary executes from
+  local disk rather than over 9p, and the variant tag lets several builds
+  coexist (`mat/`, `mat-4494/`, `mat-main/`).
 
 ## 4. Privileges: MAT runs as root
 
@@ -179,7 +183,7 @@ with `configure-clis.py` — it is fully derived from the site yaml.
 | `exec format error` / binary won't run on VM | Mach-O from a native Mac build | container build, `build-nico-clis.py` |
 | `can't find crate for core` mid-build | rustup target added to the default toolchain, repo pins its own (`rust-toolchain.toml`) | obsolete — container build |
 | `Could not find protoc` in container build | plain rust image lacks it; Mac had it invisibly | `nico-mat-build` derived image |
-| HTTP 403, `grpc-status header missing`, on first API call | client key 0600/Mac-uid on 9p → unreadable → MAT silently certless → anonymous (only `forge/Version` allowed) | certs copied VM-local, `run-mat.sh` |
+| HTTP 403, `grpc-status header missing`, on first API call | client key 0600 with the Mac owner's uid on 9p, VM user's uid did not match (pre uid-matching VMs) → unreadable → MAT silently certless → anonymous (only `forge/Version` allowed) | certs copied VM-local, `run-mat.sh` |
 | Bare `Error: Os { code: 13 }` before any log | `fs.protected_regular=2` blocks root O_CREAT on user-owned `/tmp` file | log moved to `/var/log`, `configure-clis.py` |
 | panic `Could not find the crt file for bmc-mock: NotPresent` | bmc-mock server-cert lookup via compile-time `CARGO_MANIFEST_DIR`; `REPO_ROOT` unset | server certs staged + `REPO_ROOT`, both scripts |
 | mocks reachable from VM, `connection refused` from nico | MAT prefix not advertised into BGP (leaf-mat) | `generate-dev-fabric.py` |
