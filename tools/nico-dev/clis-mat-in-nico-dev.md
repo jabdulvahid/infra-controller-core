@@ -231,16 +231,19 @@ section 10.
 
 Everything above talks to NICo's core API. The REST API has its own CLI,
 `nicocli`, and the REST API image ships it, so you do not compile this one
-either. On the Mac:
+either. On the VM, like the admin CLI:
 
 ```bash
-get-nicocli.sh <site>
+get-nicocli.sh ~/mac/sites/dc1/dev1
 ```
 
-This copies the binary out of the REST API image into `<site>/nicocli/` and
-writes `<site>/run-nicocli.sh`. The binary is a Linux build, so use the
-wrapper on the VM. The first call mints an access token inside the cluster,
-which takes a few seconds, and caches it for 25 minutes.
+The image is distroless, so the binary cannot be copied out of the running
+pod; the script mounts the image's filesystem from the VM's containerd,
+copies the binary into `<site>/nicocli/` and writes `<site>/run-nicocli.sh`.
+The same script also runs on the Mac against the Mac-side site path, taking
+the image from docker's store. The first call of the wrapper mints an access
+token inside the cluster, which takes a few seconds, and caches it for
+25 minutes.
 
 ```bash
 ssh nico@192.168.64.126

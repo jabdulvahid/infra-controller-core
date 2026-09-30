@@ -542,16 +542,21 @@ the CLIs and MAT, with what to expect at each stage, is
 The REST API has its own CLI, `nicocli`, and the REST API image ships it,
 built from the same commit as the API. Four steps get it working.
 
-On the Mac, extract the CLI. This copies the binary out of the REST API image
-already in docker's store and writes a wrapper; it takes a few seconds:
+On the VM, extract the CLI, the same way as the admin CLI in Step 8. The
+image is distroless, so the binary cannot be copied out of the running pod;
+the script mounts the image's filesystem from the VM's containerd instead,
+copies the binary out and writes a wrapper. It takes a few seconds:
 
 ```bash
-get-nicocli.sh <share>/sites/dc1/feature1
+ssh nico@192.168.64.126
+get-nicocli.sh ~/mac/sites/dc1/feature1
 ```
 
 You should see three steps end with a check mark, then a "Done" block with
 the two commands to run next. The results are `<site>/nicocli/nicocli`, a
 Linux build, and `<site>/run-nicocli.sh`, the wrapper, both on the share.
+The same script also runs on the Mac against the Mac-side site path, taking
+the image from docker's store instead.
 
 On the VM, bootstrap the organisation, once per fresh site:
 
@@ -1060,7 +1065,7 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
 | `build-nico-clis.py <site> [--mat-only] [--repo DIR --out-dir DIR]` | Mac | MAT in a container; admin-cli and nicocli with host toolchains |
 | `configure-clis.py <site>` | Mac | certs, MAT config, wrappers, /etc/hosts |
 | `get-admin-cli.sh <site>` | VM | admin CLI from the API container, no build |
-| `get-nicocli.sh <site>` | Mac | REST CLI from the REST API image, no build; writes `run-nicocli.sh` |
+| `get-nicocli.sh <site>` | VM or Mac | REST CLI from the REST API image (containerd on the VM, docker on the Mac), no build; writes `run-nicocli.sh` |
 | `run-admin-cli.sh`, `run-nicocli.sh`, `run-mat.sh` | Mac / VM | generated wrappers in the site folder |
 | `reset-mat-state.py <site> --yes` | Mac | fleet back to time zero |
 | `monitor-mat.py --admin-cli W [--mat-log F]… [--no-dpf]` / `run-monitor-mat.sh` | VM | a MAT run on one overview page plus one page per section (endpoints, machines, DPUs, DPF, MAT; digits or ←→ switch, ↑↓ scroll): expected machines, endpoints, machine states with milestones to go, DPUs (NICo and DPF phases), MAT's own view; refresh 30 s |

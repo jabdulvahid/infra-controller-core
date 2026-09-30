@@ -460,10 +460,12 @@ from a worktree is section 10.
 **nicocli, the REST CLI, follows the same idea with one difference.** The
 `nico-rest-api` image ships it at `/app/nicocli`, but that image is
 distroless: no shell, no `cat`, no `tar`, so nothing can be copied out of a
-running pod. `get-nicocli.sh <site>` therefore runs on the Mac and takes the
-binary from the image in docker's store (`docker create` + `docker cp`,
-nothing runs), pulling it from the local registry first on the source-build
-lane where `buildx --push` leaves no local copy. It writes
+running pod. `get-nicocli.sh <site>` therefore takes the binary from the
+IMAGE: on the VM from containerd, where the bring-up delivered it for
+kubelet (`ctr images mount`, nothing runs), or on the Mac from docker's
+store (`docker create` + `docker cp`, nothing runs), pulling it from the
+local registry first on the source-build lane where `buildx --push` leaves
+no local copy. It writes
 `<site>/run-nicocli.sh`, a self-locating wrapper that exports
 `NICO_BASE_URL` (the REST NodePort, `http://<vm-ip>:30388`), `NICO_ORG`
 (`ncx`) and `NICO_TOKEN`. The token comes from
