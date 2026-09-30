@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """
 nico-dev — watch a MAT run: NICo's view (admin CLI) and MAT's view (its logs),
-refreshed every 30 s, in a full-screen text UI or as plain text.
+refreshed every 10 s, in a full-screen text UI or as plain text.
 
   monitor-mat.py --admin-cli <site>/run-admin-cli.sh \\
                  [--mat-log /var/log/machine-a-tron-dc1-base.log ...] \\
-                 [--interval 30] [--once] [--no-tui]
+                 [--interval 10] [--history FILE | --no-history] [--filter SUBSTR] \\
+                 [--once] [--no-tui]
 
   --admin-cli   the site's run-admin-cli.sh wrapper (or a nico-admin-cli on PATH
                 with API_URL/*_PATH already exported). Required.
   --mat-log     a MAT log file; repeatable; optional. Without it the monitor
                 shows the server side only. Unreadable files are reported, not
                 fatal (MAT logs under /var/log are root-owned: run with sudo).
-  --interval    seconds between refreshes (default 30).
+  --interval    seconds between refreshes (default 10).
+  --history     file the state transitions are appended to and read back from
+                at start (default <site>/monitor-mat-history.log next to the
+                admin CLI wrapper); --no-history keeps them in memory only.
+  --filter      show only one object's transitions on the history and timeline
+                pages: part of a BMC address, a machine id or a kind (the TUI's
+                `/` key does the same).
   --once        one refresh, plain text, exit (for scripts and pasting).
   --no-tui      plain text every interval instead of the curses screen.
   --kubeconfig  for the DPF section (default: the *.kubeconfig.yaml next to the
@@ -25,6 +32,11 @@ What it shows
      machine each became, the last exploration error.
   3. Machines: state as NICo reports it, the lifecycle milestone that state
      belongs to, how many milestones remain to Ready, and Ready/Failed marks.
+     A machine id is tagged with what a person remembers, `[host 11.140.2.3]`
+     or `[dpu 11.140.2.2]`: DPUs from the endpoint report's MachineId column,
+     hosts by matching the product serial of `machine show <id>` (read once
+     per host) against the report's Serial Number column. The tags also
+     appear on the history and timeline pages and answer to the filter.
   4. DPUs as NICo sees them (`dpu status`: state, health, firmware status) and
      as DPF sees them (kubectl: every DPU resource with its phase, where that
      phase sits on the simulator's happy path, how many phases remain, how long
@@ -37,15 +49,19 @@ What it shows
      keeps the latest per machine.)
 
 Pages (full-screen mode). Page 0 is the overview: every section expanded
-except MAT, which is collapsed to a count line because it has its own page
-(e m u d l toggle any section on page 0). Pages 1-5 show
-one section alone, in full, and scroll: 1 endpoints, 2 machines, 3 DPUs
-(NICo), 4 DPF, 5 MAT. Keys: the digit, or ←/→, Tab/Shift-Tab, n/p to step;
-↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll; ? or h opens a help page
-listing the pages, keys and columns; r refreshes now; q quits. With several
---mat-log files the MAT page opens on the most recently written one; [ and ]
-step through the others and a shows them all (--all-logs opens on all).
-Plain-text mode (--once, --no-tui) prints every section, as before.
+except MAT, history and timeline, which are collapsed to a count line because
+they have their own pages (e m u d l t y toggle any section on page 0). Pages
+1-7 show one section alone, in full, and scroll: 1 endpoints, 2 machines,
+3 DPUs (NICo), 4 DPF, 5 MAT, 6 history (every state change seen, with the
+time of the poll that first saw it, machines, endpoints, DPUs and DPF phases),
+7 timeline (the same changes grouped per object with how long each state was
+held). / on pages 6 and 7 filters them to one object (part of a BMC address,
+a machine id or a kind); an empty answer clears. Keys: the digit, or ←/→,
+Tab/Shift-Tab, n/p to step; ↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll;
+? or h opens a help page listing the pages, keys and columns; r refreshes now;
+q quits. With several --mat-log files the MAT page opens on the most recently
+written one; [ and ] step through the others and a shows them all (--all-logs
+opens on all). Plain-text mode (--once, --no-tui) prints every section.
 
 Milestones, from docs/architecture/state_machines/managedhost.md: a managed
 host walks Created → DpuDiscovering → DPUInitializing → HostInitializing →
@@ -279,6 +295,17 @@ def fetch_server(admin_cli):
     out['machines'] = parse_table(text) if text else []
     if err:
         out['errors'].append(f'machine show: {err}')
+    # A host's BMC address is not in any list: the endpoint report names the
+    # machine id for DPU BMCs only. `machine show <id>` has the product serial,
+    # which the endpoint report also lists, so look each new host up once.
+    for r in out['machines']:
+        mid = col(r, 'id')
+        if mid and col(r, 'type').lower().startswith('host') and mid not in HOST_SERIALS:
+            detail, err = run_cli(admin_cli, ['machine', 'show', mid])
+            if err is None:
+                m = re.search(r'^PRODUCT SERIAL\s*:\s*(\S+)', detail or '', re.M)
+                HOST_SERIALS[mid] = m.group(1) if m else ''
+    out['host_serials'] = {k: v for k, v in HOST_SERIALS.items() if v}
 
     text, err = run_cli(admin_cli, ['dpu', 'status'])
     out['dpus'] = parse_table(text) if text else []
@@ -493,7 +520,7 @@ def sec_machines(server, width):
         m, _ = milestone_of(state)
         sty = state_style(state)
         mark = ' ✓' if sty == OK else (' ✗' if sty == BAD else '')
-        L.append([(f'  {short(col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} ', PLAIN),
+        L.append([(f'  {label("machine", col(r, "id"), 44):<44} {short(col(r, "type"), 6):<6} {short(m, 17):<17} ', PLAIN),
                   (f'{to_go(state) + mark:<6}', sty), (' ' + state, sty)])
     return L
 
@@ -647,6 +674,7 @@ class Transitions:
 
     def observe(self, server, dpf):
         now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        update_labels(server)
         seen = {}
         for r in server.get('machines', []):
             seen[('machine', col(r, 'id'))] = col(r, 'state')
@@ -688,10 +716,60 @@ class Transitions:
 
 HISTORY = Transitions()
 FILTER = ''   # substring on kind or id that pages 6 and 7 restrict themselves to ('/' in the TUI, --filter)
+LABELS = {}   # machine id → (host|dpu, BMC address): what a person remembers instead of the 60-char id
+HOST_SERIALS = {}   # host machine id → product serial, from one `machine show <id>` per host (fetch_server)
+
+
+def update_labels(server):
+    """From this refresh: the endpoint report's MachineId column maps a DPU's BMC
+    address to its machine id (it is empty for host BMCs); a host joins through
+    its product serial, which the report lists per BMC and fetch_server read from
+    `machine show <id>`. The machine list's Type column says host or DPU. Kept
+    across refreshes so a machine that is gone still carries its tag in the
+    history."""
+    types = {col(r, 'id'): col(r, 'type').lower() for r in server.get('machines', [])}
+    dpu_ids = {col(r, 'dpu id', 'dpuid', 'id') for r in server.get('dpus', [])}
+
+    def kind_of(mid, default):
+        t = types.get(mid, '')
+        if t.startswith('dpu') or mid in dpu_ids:
+            return 'dpu'
+        if t.startswith('host'):
+            return 'host'
+        return LABELS[mid][0] if mid in LABELS else default
+
+    by_serial = {}
+    for r in server.get('endpoints', []):
+        addr = col(r, 'address')
+        serial = col(r, 'serial number', 'serialnumber', 'serial')
+        if serial:
+            by_serial[serial] = addr
+        mid = col(r, 'machineid', 'machine id', 'machine')
+        if mid:
+            LABELS[mid] = (kind_of(mid, 'dpu'), addr)
+    for mid, serial in server.get('host_serials', {}).items():
+        if serial in by_serial:
+            LABELS[mid] = (kind_of(mid, 'host'), by_serial[serial])
+    for mid, (kind, addr) in list(LABELS.items()):
+        if kind_of(mid, kind) != kind:
+            LABELS[mid] = (kind_of(mid, kind), addr)
+
+
+def label(kind, ident, width=44):
+    """`<id> [host 11.140.2.6]` for a machine id with a known endpoint, else the id."""
+    tag = LABELS.get(ident) if kind == 'machine' else None
+    if not tag:
+        return short(ident, width)
+    suffix = f' [{tag[0]} {tag[1]}]'
+    return short(ident, max(8, width - len(suffix))) + suffix
 
 
 def matches(kind, ident):
-    return not FILTER or FILTER.lower() in kind.lower() or FILTER.lower() in ident.lower()
+    if not FILTER:
+        return True
+    f = FILTER.lower()
+    tag = LABELS.get(ident, ('', ''))
+    return f in kind.lower() or f in ident.lower() or f in tag[0] or f in tag[1]
 
 
 def filtered_events():
@@ -717,7 +795,7 @@ def sec_history(width, limit=400):
         return L
     L.append([(f'  {"time":<9} {"kind":<8} {"id":<44} from -> to', HDR)])
     for now, kind, ident, old, new in events[-limit:]:
-        L.append([(f'  {now[11:19]:<9} {kind:<8} {short(ident, 44):<44} ', PLAIN),
+        L.append([(f'  {now[11:19]:<9} {kind:<8} {label(kind, ident, 44):<44} ', PLAIN),
                   (f'{short(old if old is not None else "(new)", 40)}', HDR), (' -> ', PLAIN),
                   (short(new, max(20, width - 110)), state_style(new))])
     return L
@@ -749,7 +827,7 @@ def sec_timeline(width):
     for (kind, ident) in sorted(by_obj, key=lambda k: (KIND_ORDER.get(k[0], 9), k[1])):
         steps = by_obj[(kind, ident)]
         L.append([])
-        L.append([(f'  {kind} {short(ident, 60)}', HDR), (f'   {len(steps)} state(s), now: ', PLAIN), (short(steps[-1][1], 40), state_style(steps[-1][1]))])
+        L.append([(f'  {kind} {label(kind, ident, 72)}', HDR), (f'   {len(steps)} state(s), now: ', PLAIN), (short(steps[-1][1], 40), state_style(steps[-1][1]))])
         for i, (ts, state) in enumerate(steps):
             end = parse(steps[i + 1][0]) if i + 1 < len(steps) else now_ts
             held = int((end - parse(ts)).total_seconds())
@@ -827,7 +905,7 @@ HELP = [
     ('PAGES', [
         ('0', 'overview: every section expanded except MAT, which is collapsed to a count line'),
         ('1', 'endpoints — the site explorer\'s BMC endpoints, pre-ingestion state, the machine each became'),
-        ('2', 'machines — every machine as NICo reports it, its lifecycle milestone and milestones to go'),
+        ('2', 'machines — every machine as NICo reports it, its lifecycle milestone and milestones to go; ids tagged [host <BMC address>] / [dpu <BMC address>]'),
         ('3', 'DPUs (NICo) — dpu status and dpf show: health, firmware version status, DPF enablement'),
         ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
         ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
@@ -848,7 +926,7 @@ HELP = [
         ('a', 'show every MAT log at once, or back to one'),
     ]),
     ('HISTORY / TIMELINE PAGES (6, 7)', [
-        ('/', 'filter to one object: type part of an address, a machine id or a kind (machine, endpoint, dpu, dpf); empty clears. From another page, / jumps to the timeline'),
+        ('/', 'filter to one object: type part of a BMC address (matches the endpoint and the machine tagged with it), a machine id or a kind (machine, endpoint, dpu, dpf); empty clears. From another page, / jumps to the timeline'),
     ]),
     ('ALWAYS', [
         ('r', 'refresh now'), ('q', 'quit'),
