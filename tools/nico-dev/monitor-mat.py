@@ -432,7 +432,11 @@ def log_age(log):
 
 
 def fmt_age(secs):
-    return f'{secs}s' if secs < 60 else f'{secs // 60}m{secs % 60:02d}s'
+    if secs < 60:
+        return f'{secs}s'
+    if secs < 3600:
+        return f'{secs // 60}m{secs % 60:02d}s'
+    return f'{secs // 3600}h{(secs % 3600) // 60:02d}m'
 
 
 def render_header(server, admin_cli, interval, page='all'):
@@ -683,20 +687,36 @@ class Transitions:
 
 
 HISTORY = Transitions()
+FILTER = ''   # substring on kind or id that pages 6 and 7 restrict themselves to ('/' in the TUI, --filter)
+
+
+def matches(kind, ident):
+    return not FILTER or FILTER.lower() in kind.lower() or FILTER.lower() in ident.lower()
+
+
+def filtered_events():
+    return [e for e in HISTORY.events if matches(e[1], e[2])]
+
+
+def filter_note():
+    return f'   filter: "{FILTER}" (/ to change, empty clears)' if FILTER else ''
 
 
 def sec_history(width, limit=400):
+    events = filtered_events()
     L = [[('HISTORY', SECTION),
-          (f'   {len(HISTORY.events)} transitions, newest last'
+          (f'   {len(events)} transitions' + (f' of {len(HISTORY.events)}' if FILTER else '') + ', newest last'
            + (f' ({HISTORY.loaded} read back from the file at start)' if HISTORY.loaded else '')
-           + (f'   file: {HISTORY.path}' if HISTORY.path else '   (not written to a file)'), PLAIN)]]
+           + (f'   file: {HISTORY.path}' if HISTORY.path else '   (not written to a file)'), PLAIN),
+          (filter_note(), NUM)]]
     if HISTORY.error:
         L.append([(f'  ! {HISTORY.error}', BAD)])
-    if not HISTORY.events:
-        L.append([('  (nothing observed yet — the first refresh records every object as (new))', HDR)])
+    if not events:
+        L.append([('  (nothing observed yet — the first refresh records every object as (new))' if not HISTORY.events
+                   else f'  (nothing matches "{FILTER}")', HDR)])
         return L
     L.append([(f'  {"time":<9} {"kind":<8} {"id":<44} from -> to', HDR)])
-    for now, kind, ident, old, new in HISTORY.events[-limit:]:
+    for now, kind, ident, old, new in events[-limit:]:
         L.append([(f'  {now[11:19]:<9} {kind:<8} {short(ident, 44):<44} ', PLAIN),
                   (f'{short(old if old is not None else "(new)", 40)}', HDR), (' -> ', PLAIN),
                   (short(new, max(20, width - 110)), state_style(new))])
@@ -711,13 +731,15 @@ def sec_timeline(width):
     per machine, endpoint, DPU and DPF resource, each state on its own line
     with how long the object stayed in it (until the next change, or until
     now for the current state)."""
+    events = filtered_events()
     L = [[('TIMELINE', SECTION),
-          (f'   per object, oldest first; "held" = time in that state (current state: so far)', PLAIN)]]
-    if not HISTORY.events:
-        L.append([('  (nothing observed yet)', HDR)])
+          (f'   per object, oldest first; "held" = time in that state (current state: so far)', PLAIN),
+          (filter_note(), NUM)]]
+    if not events:
+        L.append([('  (nothing observed yet)' if not HISTORY.events else f'  (nothing matches "{FILTER}")', HDR)])
         return L
     by_obj = OrderedDict()
-    for now, kind, ident, old, new in HISTORY.events:
+    for now, kind, ident, old, new in events:
         by_obj.setdefault((kind, ident), []).append((now, new))
     now_ts = datetime.now(timezone.utc)
 
@@ -825,6 +847,9 @@ HELP = [
         ('[ ]', 'previous / next MAT log when several were given (the newest is shown first)'),
         ('a', 'show every MAT log at once, or back to one'),
     ]),
+    ('HISTORY / TIMELINE PAGES (6, 7)', [
+        ('/', 'filter to one object: type part of an address, a machine id or a kind (machine, endpoint, dpu, dpf); empty clears. From another page, / jumps to the timeline'),
+    ]),
     ('ALWAYS', [
         ('r', 'refresh now'), ('q', 'quit'),
     ]),
@@ -897,6 +922,7 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None, default_log=None):
             wake.clear()
 
     def main(stdscr):
+        global FILTER
         curses.curs_set(0)
         stdscr.nodelay(True)
         stdscr.keypad(True)
@@ -969,8 +995,10 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None, default_log=None):
                 if PAGES[page] == 'mat' and len(logs) > 1:
                     which = 'all logs' if sel is None else f'log {sel + 1}/{len(logs)} {os.path.basename(logs[sel].path)}'
                     extra += f'   [ ] a: {which}'
+            if FILTER:
+                extra += f'   filter: {FILTER}'
             try:
-                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  ? help  {status}   page ←→/Tab: {pages}{extra}', w - 1, curses.A_REVERSE)
+                stdscr.addnstr(h - 1, 0, f'q quit  r refresh  ? help  / filter  {status}   page ←→/Tab: {pages}{extra}', w - 1, curses.A_REVERSE)
             except curses.error:
                 pass
             stdscr.refresh()
@@ -985,6 +1013,24 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None, default_log=None):
                 stdscr.clear()
             elif ch in (ord('?'), ord('h'), ord('H')):
                 helping, top = not helping, 0
+                stdscr.clear()
+            elif ch == ord('/'):
+                # filter for the history and timeline pages: a substring of an
+                # address, a machine id or a kind (machine/endpoint/dpu/dpf)
+                stdscr.nodelay(False)
+                curses.echo()
+                try:
+                    stdscr.addnstr(h - 1, 0, ' ' * (w - 1), w - 1, curses.A_REVERSE)
+                    stdscr.addnstr(h - 1, 0, 'filter (id / address / kind, empty clears): ', w - 1, curses.A_REVERSE)
+                    stdscr.refresh()
+                    FILTER = stdscr.getstr(h - 1, 45, max(1, w - 47)).decode('utf-8', 'replace').strip()
+                except curses.error:
+                    pass
+                curses.noecho()
+                stdscr.nodelay(True)
+                if PAGES[page] not in ('history', 'timeline'):
+                    page = PAGES.index('timeline')
+                top, helping = 0, False
                 stdscr.clear()
             elif ch in (curses.KEY_RIGHT, ord('\t'), ord('n'), ord('N')):
                 page, top, helping = (page + 1) % len(PAGES), 0, False
@@ -1034,13 +1080,16 @@ def main():
     p.add_argument('--history', default=None, metavar='FILE',
                    help='append every observed state change to this file (default: monitor-mat-history.log next to the admin CLI wrapper, i.e. in the site folder)')
     p.add_argument('--no-history', action='store_true', help='keep the history in memory only')
+    p.add_argument('--filter', default='', metavar='SUBSTR',
+                   help='history and timeline pages: only objects whose id, address or kind contains this (also "/" in the full-screen view)')
     p.add_argument('--once', action='store_true', help='one plain-text refresh, then exit')
     p.add_argument('--no-tui', action='store_true', help='plain text instead of the full-screen view')
     p.add_argument('--kubeconfig', default=None, help='for the DPF section (default: *.kubeconfig.yaml next to the admin CLI wrapper)')
     p.add_argument('--dpf-namespace', default='dpf-operator-system')
     p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
     a = p.parse_args()
-    global HISTORY
+    global HISTORY, FILTER
+    FILTER = a.filter.strip()
     if not a.no_history:
         HISTORY = Transitions(a.history or os.path.join(os.path.dirname(os.path.abspath(a.admin_cli)), 'monitor-mat-history.log'))
     mat_logs = a.mat_log
