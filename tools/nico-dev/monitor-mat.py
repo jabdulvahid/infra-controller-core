@@ -601,12 +601,16 @@ class Transitions:
     machines (state), endpoints (state / pre-ingestion state), DPUs (state) and
     DPF DPU resources (phase). Resolution is the poll interval."""
 
+    LINE_RE = re.compile(r'^(\S+)\s+(\S+)\s+(\S+)\s+(.*?) -> (.*)$')
+
     def __init__(self, path=None):
         self.path = path
         self.last = {}          # (kind, id) → state string
         self.events = []        # (time, kind, id, old, new)
         self.error = None
+        self.loaded = 0         # transitions read back from an existing file
         if path:
+            self._load(path)
             try:
                 with open(path, 'a') as f:
                     f.write(f'# monitor-mat transitions — started {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}; '
@@ -614,6 +618,28 @@ class Transitions:
             except OSError as e:
                 self.error = f'{path}: {e.strerror}'
                 self.path = None
+
+    def _load(self, path):
+        """Read an existing history file so a restarted monitor shows the whole
+        run and continues from the last recorded state of every object."""
+        try:
+            with open(path) as f:
+                for line in f:
+                    m = self.LINE_RE.match(line.rstrip('\n'))
+                    if not m:
+                        continue
+                    now, kind, ident, old, new = m.groups()
+                    self.events.append((now, kind, ident, None if old == '(new)' else old, new))
+                    if new == '(gone)':
+                        self.last.pop((kind, ident), None)
+                    else:
+                        self.last[(kind, ident)] = new
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            self.error = f'{path}: {e.strerror}'
+            return
+        self.loaded = len(self.events)
 
     def observe(self, server, dpf):
         now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -630,11 +656,16 @@ class Transitions:
             seen[('dpu', col(r, 'dpu id', 'dpuid', 'id'))] = col(r, 'state')
         for d in (dpf or {}).get('dpus', []):
             seen[('dpf', d['name'])] = d['phase']
+        # a source that was not fetched this round (kubectl off, --no-dpf, an
+        # admin-cli error) says nothing about its objects: do not mark them gone
+        fetched = {'machine', 'endpoint', 'dpu'} if not server.get('errors') else set()
+        if dpf is not None:
+            fetched.add('dpf')
         for key, state in seen.items():
             old = self.last.get(key)
             if old != state:
                 self._record(now, key, old, state)
-        for key in [k for k in self.last if k not in seen]:
+        for key in [k for k in self.last if k not in seen and k[0] in fetched]:
             self._record(now, key, self.last[key], '(gone)')
             del self.last[key]
         self.last.update(seen)
@@ -656,7 +687,8 @@ HISTORY = Transitions()
 
 def sec_history(width, limit=400):
     L = [[('HISTORY', SECTION),
-          (f'   {len(HISTORY.events)} transitions this session, newest last'
+          (f'   {len(HISTORY.events)} transitions, newest last'
+           + (f' ({HISTORY.loaded} read back from the file at start)' if HISTORY.loaded else '')
            + (f'   file: {HISTORY.path}' if HISTORY.path else '   (not written to a file)'), PLAIN)]]
     if HISTORY.error:
         L.append([(f'  ! {HISTORY.error}', BAD)])
