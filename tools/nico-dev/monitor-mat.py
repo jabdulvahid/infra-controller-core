@@ -399,15 +399,30 @@ def state_style(state):
     return WIP
 
 
+MAT_CMD_RE = re.compile(r'(?:^|/)(machine-a-tron(?:\.[^/\s]+)?)(?:\s|$)')
+
+
 def mat_pids():
-    """PIDs of running machine-a-tron processes (empty when none). The monitor
-    only reads the log and the API, so without this a MAT that was killed looks
-    like a quiet one."""
+    """Running MAT processes as [(pid, binary name)], empty when none. The
+    monitor only reads the log and the API, so without this a MAT that was
+    killed looks like a quiet one. run-mat*.sh installs the binary as
+    /usr/local/bin/machine-a-tron.<variant>, so the 15-char process name is
+    truncated and `pgrep -x machine-a-tron` misses it: match the command line
+    instead, binary name with optional .<variant>, followed by its config
+    argument. The monitor's own --mat-log …/machine-a-tron-dc1.log does not
+    match (a '-' follows the name), nor does the sudo/env wrapper twice, since
+    the pid list is deduplicated by binary name."""
     try:
-        r = subprocess.run(['pgrep', '-x', 'machine-a-tron'], capture_output=True, text=True, timeout=5)
-        return [p for p in r.stdout.split() if p.isdigit()]
+        r = subprocess.run(['pgrep', '-af', 'machine-a-tron'], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return []
+    found = {}
+    for line in r.stdout.splitlines():
+        pid, _, cmd = line.partition(' ')
+        m = MAT_CMD_RE.search(cmd)
+        if m and pid.isdigit() and 'sudo' not in cmd.split(' ', 1)[0]:
+            found.setdefault(m.group(1), pid)
+    return [(pid, name) for name, pid in found.items()]
 
 
 def log_age(log):
@@ -433,7 +448,7 @@ def render_header(server, admin_cli, interval, page='all'):
     else:
         where = f'   {page}'
     L = [[('MAT run monitor', TITLE), (f'  {now}  refresh {interval}s{where}   MAT process: ', PLAIN),
-          ((f'running (pid {", ".join(pids)})', OK) if pids else ('NOT RUNNING', BAD)),
+          ((f'running ({", ".join(f"{name} pid {pid}" for pid, name in pids)})', OK) if pids else ('NOT RUNNING', BAD)),
           (f'   admin-cli: {short(admin_cli, 60)}', PLAIN)],
          [('expected machines: ', PLAIN), (str(len(server.get('expected', []))), NUM),
           ('    endpoints: ', PLAIN), (str(len(server.get('endpoints', []))), NUM),
