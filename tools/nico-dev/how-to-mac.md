@@ -356,7 +356,7 @@ redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
-firmware_sim: true  # only for firmware-upgrade work (Step 11); default false
+firmware_sim: true  # nico-api gets a firmware definition and autoupdate, MAT reports old versions (Step 11); default false
 
 dc: dc1
 site: feature1
@@ -377,9 +377,12 @@ What the fields mean:
 - `dpf`: `true`, the default, gives you NICo's DPF provisioning path
   together with the DPF simulator. `false` gives the older iPXE path.
   Appendix C explains both.
-- `firmware_sim`: `true` makes MAT hosts start with outdated firmware so
-  ingestion runs the upgrade chain. Leave it out unless you work on that
-  (Step 11).
+- `firmware_sim`: a scenario switch that configures both sides. `true`
+  gives nico-api a firmware definition for the mock GB200 with
+  `firmware_global.autoupdate` on, and makes MAT hosts report older
+  versions, so ingestion runs the upgrade chain. `false` leaves nico-api
+  without any firmware definition, the standard MAT flow. Leave it out
+  unless you work on that (Step 11).
 - `dc`, `site`: the names of your datacenter and site. They appear in
   folder names and in the cluster. `dc` is 1-3 characters, `site` 1-8.
 - `underlay`, `overlay`: two numbers that become the first octet of every
@@ -676,8 +679,9 @@ failure catalog are in `mat-in-nico-dev.md`.
 
 ## Step 11 - Firmware upgrade simulation
 
-By default MAT hosts report firmware that already matches what NICo wants, so
-ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
+By default nico-api has no firmware definition for the mock GB200 and
+`firmware_global.autoupdate` is off, so ingestion never uploads anything,
+whatever versions MAT reports. `firmware_sim: true` in `bringup.yaml`
 (Step 3) changes that for every host: MAT reports the `initial` BMC and UEFI
 versions and nico-api gets a firmware definition for the mock GB200 requiring
 the `desired` ones, written into the chart's firmware volume by an init

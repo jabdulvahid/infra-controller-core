@@ -418,8 +418,8 @@ def main():
                    help='DPF as the DPU-provisioning path (default; config: dpf: true|false). '
                         '--no-dpf = legacy iPXE path: no DPF CRDs, no simulator, [dpf] off')
     p.add_argument('--firmware-sim', action=argparse.BooleanOptionalAction, default=False,
-                   help='start MAT hosts with outdated BMC/UEFI firmware and give nico-api the '
-                        'desired versions, so ingestion runs the firmware upgrade chain '
+                   help='give nico-api a firmware definition for the mock GB200 with autoupdate on, '
+                        'and start MAT hosts below it, so ingestion runs the firmware upgrade chain '
                         '(config: firmware_sim: true|false; site yaml nico-system.firmware_sim)')
     p.add_argument('--nico-api-site-config-extra', default='', metavar='TOML',
                    help='raw TOML appended verbatim to nico-api\'s site config, for sections '

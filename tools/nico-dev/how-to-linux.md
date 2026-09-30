@@ -147,7 +147,7 @@ redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
-firmware_sim: false # true: hosts start with outdated firmware so ingestion runs the upgrade chain (§6)
+firmware_sim: false # true: nico-api gets a firmware definition and autoupdate, MAT reports old versions (§6)
 
 dc: dc1
 site: dev1
@@ -342,8 +342,9 @@ fresh mocks locks the endpoints out.
 
 ### Firmware upgrade simulation
 
-By default MAT hosts report firmware that already matches what NICo wants, so
-ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
+By default nico-api has no firmware definition for the mock GB200 and
+`firmware_global.autoupdate` is off, so ingestion never uploads anything,
+whatever versions MAT reports. `firmware_sim: true` in `bringup.yaml`
 changes that for every host: MAT reports the `initial` BMC and UEFI versions
 and nico-api gets a firmware definition for the mock GB200 requiring the
 `desired` ones, written into the chart's firmware volume by an init
