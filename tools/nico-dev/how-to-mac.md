@@ -631,10 +631,14 @@ overview of the whole run, in a second VM terminal:
 
 It shows expected machines, endpoints, machine states with the milestones
 still to go, DPUs, DPF phases and MAT's own view, one page per section
-(digits or ←→ switch pages, `?` for help), refreshing every 30 s. The header
+(digits or ←→ switch pages, `?` for help), refreshing every 10 s. The header
 says whether a MAT process is running, and the MAT page shows how long ago
 the log was last written, so a MAT that died or was stopped does not look
-like a quiet one. It finds the MAT log by the site's `dc` name;
+like a quiet one. Every state change it sees, machines, endpoints, DPUs and
+DPF phases, is recorded with the time of the poll that first saw it: page 6
+shows them live, and `<site>/monitor-mat-history.log` keeps them for reading
+after the run, which is how you reconstruct a host's path through the
+firmware states later. It finds the MAT log by the site's `dc` name;
 `--mat-log <file>` pins a specific one.
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset
@@ -673,13 +677,21 @@ ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
 (Step 3) changes that for every host: MAT reports the `initial` BMC and UEFI
 versions and nico-api gets a firmware definition for the mock GB200 requiring
 the `desired` ones, written into the chart's firmware volume by an init
-container. Ingestion then runs the full chain per host: preingestion finds
-the versions below the minimum, uploads through `SimpleUpdate`, polls the
-Redfish task to `Completed`, power-cycles, reads the new version back, and
-only then continues to Ready. Watch it in the nico-api log, on the Mac:
+container, and it turns on `firmware_global.autoupdate` in nico-api's site
+config, which gates the preingestion upload as well as later updates;
+without it nico-api logs the check and quietly marks the endpoint complete.
+The upgrade then runs per host while the endpoint is still in preingestion,
+before a machine exists: the site explorer's `Pre-ingestion State` column
+walks `Initial` → `InitialBMCReset` → `SetNtpServers` / `TimeSyncReset` →
+`UpgradeFirmwareWait` (the Redfish task is polled) → `ResetForNewFirmware`
+(power cycle) → `RecheckVersions`, and only at `Complete` does the host go
+on to become a machine and reach Ready. The MAT monitor records every one of
+those transitions with its time in `<site>/monitor-mat-history.log`
+(Step 10), which is the record to read afterwards. Live, in the nico-api log
+on the Mac:
 
 ```bash
-kubectl -n nico-system logs deploy/nico-api | grep -E "preingestion minimum|firmware upload|Firmware version satisfies"
+kubectl -n nico-system logs deploy/nico-api --timestamps | grep -E "preingestion minimum|firmware upload|task not yet complete|satisfies preingestion"
 ```
 
 To confirm the definition reached nico-api:

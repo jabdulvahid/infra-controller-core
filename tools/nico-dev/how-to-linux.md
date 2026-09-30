@@ -347,13 +347,21 @@ ingestion never uploads anything. `firmware_sim: true` in `bringup.yaml`
 changes that for every host: MAT reports the `initial` BMC and UEFI versions
 and nico-api gets a firmware definition for the mock GB200 requiring the
 `desired` ones, written into the chart's firmware volume by an init
-container. Ingestion then runs the full chain per host: preingestion finds
-the versions below the minimum, uploads through `SimpleUpdate`, polls the
-Redfish task to `Completed`, power-cycles, reads the new version back, and
-only then continues to Ready. Watch it in the nico-api log:
+container, and it turns on `firmware_global.autoupdate` in nico-api's site
+config, which gates the preingestion upload as well as later updates;
+without it nico-api logs the check and quietly marks the endpoint complete.
+The upgrade then runs per host while the endpoint is still in preingestion,
+before a machine exists: the site explorer's `Pre-ingestion State` column
+walks `Initial` → `InitialBMCReset` → `SetNtpServers` / `TimeSyncReset` →
+`UpgradeFirmwareWait` (the Redfish task is polled) → `ResetForNewFirmware`
+(power cycle) → `RecheckVersions`, and only at `Complete` does the host go
+on to become a machine and reach Ready. The MAT monitor
+(`run-monitor-mat.sh`) records every one of those transitions with its time
+in `<site>/monitor-mat-history.log`, which is the record to read afterwards.
+Live, in the nico-api log:
 
 ```bash
-kubectl -n nico-system logs deploy/nico-api | grep -E "preingestion minimum|firmware upload|Firmware version satisfies"
+kubectl -n nico-system logs deploy/nico-api --timestamps | grep -E "preingestion minimum|firmware upload|task not yet complete|satisfies preingestion"
 ```
 
 The versions are `nico-system.firmware_sim` in the site yaml (`initial` 1.0,

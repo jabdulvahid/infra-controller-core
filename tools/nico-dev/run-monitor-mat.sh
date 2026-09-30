@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # nico-dev — MAT run monitor for a site.
 #
-#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1          # full-screen, refresh 30 s, q quits
+#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1          # full-screen, refresh 10 s, q quits
 #   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --once   # one plain-text snapshot (paste-friendly)
-#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --no-tui # plain text every 30 s
+#   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --no-tui # plain text every 10 s
+#
+# Every state change the monitor sees (machines, endpoints, DPUs, DPF phases)
+# is appended with its poll time to <site>/monitor-mat-history.log, so the
+# transitions can be read after the run; page 6 shows them live.
 #   (on the VM)  run-monitor-mat.sh ~/mac/sites/dc1/dev1 --mat-log /var/log/machine-a-tron-dc1-dev.log   # pin one log
 #
 # The first argument is the site folder when it is a directory. Without it,
