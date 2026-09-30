@@ -631,8 +631,11 @@ overview of the whole run, in a second VM terminal:
 
 It shows expected machines, endpoints, machine states with the milestones
 still to go, DPUs, DPF phases and MAT's own view, one page per section
-(digits or ←→ switch pages, `?` for help), refreshing every 30 s. It finds
-the MAT log by the site's `dc` name; `--mat-log <file>` pins a specific one.
+(digits or ←→ switch pages, `?` for help), refreshing every 30 s. The header
+says whether a MAT process is running, and the MAT page shows how long ago
+the log was last written, so a MAT that died or was stopped does not look
+like a quiet one. It finds the MAT log by the site's `dc` name;
+`--mat-log <file>` pins a specific one.
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset
 the fleet, on the Mac:
