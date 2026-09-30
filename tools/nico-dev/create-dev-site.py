@@ -69,10 +69,10 @@ def parse_args():
                         'the API config, DPF CRDs before nico, dpf-sim-controller at the end '
                         'of bring-up. false = legacy iPXE path. From bringup.yaml `dpf:`.')
     p.add_argument('--firmware-sim', choices=['true', 'false'], default='false',
-                   help='firmware upgrade simulation (default false): MAT hosts start below the '
-                        'desired BMC/UEFI versions and nico-api gets a firmware definition for '
-                        'them, so ingestion runs the upgrade chain. From bringup.yaml '
-                        '`firmware_sim:`.')
+                   help='firmware upgrade simulation (default false): nico-api gets a firmware '
+                        'definition for the mock GB200 with firmware_global.autoupdate on, and '
+                        'MAT hosts report versions below it, so ingestion runs the upgrade chain. '
+                        'From bringup.yaml `firmware_sim:`.')
     p.add_argument('--nico-api-site-config-extra', default='', metavar='TOML',
                    help='raw TOML appended verbatim to nico-api\'s site config after the '
                         'generated sections (site yaml nico-system.site_config_extra). '

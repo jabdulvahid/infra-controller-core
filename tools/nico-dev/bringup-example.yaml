@@ -93,12 +93,20 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # dpf: true
 
 # ── Firmware upgrade simulation ─────────────────────────────────────────
-# false (default): MAT hosts report firmware that already matches, so NICo
-# never upgrades anything. true: MAT hosts start below the desired BMC and
-# UEFI versions and nico-api gets a firmware definition for the mock GB200,
-# so every ingestion runs SimpleUpdate → Redfish task → power cycle →
-# version recheck. The versions live in the site yaml under
-# nico-system.firmware_sim (initial 1.0, desired 2.0 by default). Both lanes.
+# A site-level scenario switch: it changes nico-api's configuration and MAT's
+# together, which is why it lives here and not in MAT's toml alone.
+# false (default): nico-api gets no firmware definition and
+# firmware_global.autoupdate stays false, so it never upgrades anything; MAT
+# hosts report the mock's hardware-default versions. This is the standard MAT
+# flow.
+# true: an init container gives nico-api a firmware definition for the mock
+# GB200 (vendor Nvidia, model "GB200 NVL") requiring the `desired` BMC and
+# UEFI versions and switches firmware_global.autoupdate on; MAT hosts report
+# the `initial` versions. Every host is then upgraded during ingestion:
+# SimpleUpdate → Redfish task → reset → version recheck. The versions live in
+# the site yaml under nico-system.firmware_sim (initial 1.0, desired 2.0 by
+# default); vendor, model and inventory ids are fixed to the mock (see
+# generate_dev_values.py firmware_sim_init_container). Both lanes.
 # firmware_sim: false
 
 # ── Extra nico-api site config ──────────────────────────────────────────
