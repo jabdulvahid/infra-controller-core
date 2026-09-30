@@ -379,7 +379,7 @@ TITLE, SECTION, HDR, OK, WIP, BAD, NUM, PLAIN = 'title', 'section', 'hdr', 'ok',
 # Page 0 shows every section expanded except MAT, which has its own page (5):
 # it is the longest table and the one that pushed the others off the screen.
 SECTIONS = [('endpoints', 'e', True), ('machines', 'm', True), ('dpus', 'u', True), ('dpf', 'd', True), ('mat', 'l', False),
-            ('history', 't', False)]
+            ('history', 't', False), ('timeline', 'y', False)]
 DEFAULT_SHOW = {name for name, _, on in SECTIONS if on}
 # Pages: 0 is the overview (every section, collapsed or expanded per the
 # toggles above); 1..5 show one section in full, scrollable.
@@ -668,6 +668,39 @@ def sec_history(width, limit=400):
     return L
 
 
+KIND_ORDER = {'machine': 0, 'endpoint': 1, 'dpu': 2, 'dpf': 3}
+
+
+def sec_timeline(width):
+    """The same transitions as the history page, grouped per object: one block
+    per machine, endpoint, DPU and DPF resource, each state on its own line
+    with how long the object stayed in it (until the next change, or until
+    now for the current state)."""
+    L = [[('TIMELINE', SECTION),
+          (f'   per object, oldest first; "held" = time in that state (current state: so far)', PLAIN)]]
+    if not HISTORY.events:
+        L.append([('  (nothing observed yet)', HDR)])
+        return L
+    by_obj = OrderedDict()
+    for now, kind, ident, old, new in HISTORY.events:
+        by_obj.setdefault((kind, ident), []).append((now, new))
+    now_ts = datetime.now(timezone.utc)
+
+    def parse(ts):
+        return datetime.strptime(ts, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+
+    for (kind, ident) in sorted(by_obj, key=lambda k: (KIND_ORDER.get(k[0], 9), k[1])):
+        steps = by_obj[(kind, ident)]
+        L.append([])
+        L.append([(f'  {kind} {short(ident, 60)}', HDR), (f'   {len(steps)} state(s), now: ', PLAIN), (short(steps[-1][1], 40), state_style(steps[-1][1]))])
+        for i, (ts, state) in enumerate(steps):
+            end = parse(steps[i + 1][0]) if i + 1 < len(steps) else now_ts
+            held = int((end - parse(ts)).total_seconds())
+            tail = f'held {fmt_age(held)}' if i + 1 < len(steps) else f'so far {fmt_age(held)}'
+            L.append([(f'    {ts[11:19]}  ', PLAIN), (f'{short(state, max(30, width - 40)):<{max(30, width - 40)}}', state_style(state)), (f'  {tail}', HDR)])
+    return L
+
+
 def collapsed(name, server, dpf, logs):
     """The one-line stand-in for a section hidden on the overview page."""
     key = {n: k for n, k, _ in SECTIONS}[name]
@@ -683,6 +716,8 @@ def collapsed(name, server, dpf, logs):
         txt = f'  {len(dpf["dpus"])} DPUs, {sum(1 for d in dpf["dpus"] if d["phase"] == "Ready")} Ready'
     elif name == 'history':
         txt = f'  {len(HISTORY.events)} transitions'
+    elif name == 'timeline':
+        txt = f'  {len({(k, i) for _, k, i, _, _ in HISTORY.events})} objects'
     else:
         if not logs:
             return None
@@ -701,6 +736,8 @@ def render_section(name, server, logs, dpf, width):
         return sec_dpf(dpf, width)
     if name == 'history':
         return sec_history(width)
+    if name == 'timeline':
+        return sec_timeline(width)
     return sec_mat(logs, width)
 
 
@@ -738,15 +775,16 @@ HELP = [
         ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
         ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
         ('6', 'history — every state change seen since the monitor started (machines, endpoints, DPUs, DPF phases), with the poll time; also appended to the history file for reading after the run'),
+        ('7', 'timeline — the same changes grouped per object: each machine, endpoint, DPU and DPF resource with its states in order and how long it held each'),
         ('? h', 'this help; any page key, ?, h or 0 returns'),
     ]),
     ('MOVING', [
-        ('0-6', 'go to that page'),
+        ('0-7', 'go to that page'),
         ('→ Tab n', 'next page'), ('← Shift-Tab p', 'previous page'),
-        ('↑ ↓ j k', 'scroll one line (pages 1-6)'), ('PgUp PgDn Space', 'scroll one screen'), ('Home End', 'top / bottom'),
+        ('↑ ↓ j k', 'scroll one line (pages 1-7)'), ('PgUp PgDn Space', 'scroll one screen'), ('Home End', 'top / bottom'),
     ]),
     ('OVERVIEW (page 0)', [
-        ('e m u d l t', 'collapse or expand endpoints / machines / DPUs / DPF / MAT / history'),
+        ('e m u d l t y', 'collapse or expand endpoints / machines / DPUs / DPF / MAT / history / timeline'),
     ]),
     ('MAT PAGE (5)', [
         ('[ ]', 'previous / next MAT log when several were given (the newest is shown first)'),
