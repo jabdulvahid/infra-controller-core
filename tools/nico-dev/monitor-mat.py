@@ -298,14 +298,18 @@ def fetch_server(admin_cli):
     # A host's BMC address is not in any list: the endpoint report names the
     # machine id for DPU BMCs only. `machine show <id>` has the product serial,
     # which the endpoint report also lists, so look each new host up once.
+    # A "Host (Predicted)" machine, created from its DPUs before the host BMC
+    # report is tied to it, has no serial yet: skip it and look again once the
+    # type is plain Host. Only a found serial is cached.
     for r in out['machines']:
-        mid = col(r, 'id')
-        if mid and col(r, 'type').lower().startswith('host') and mid not in HOST_SERIALS:
+        mid, mtype = col(r, 'id'), col(r, 'type').lower()
+        if mid and mtype.startswith('host') and 'predicted' not in mtype and mid not in HOST_SERIALS:
             detail, err = run_cli(admin_cli, ['machine', 'show', mid])
             if err is None:
                 m = re.search(r'^PRODUCT SERIAL\s*:\s*(\S+)', detail or '', re.M)
-                HOST_SERIALS[mid] = m.group(1) if m else ''
-    out['host_serials'] = {k: v for k, v in HOST_SERIALS.items() if v}
+                if m:
+                    HOST_SERIALS[mid] = m.group(1)
+    out['host_serials'] = dict(HOST_SERIALS)
 
     text, err = run_cli(admin_cli, ['dpu', 'status'])
     out['dpus'] = parse_table(text) if text else []
