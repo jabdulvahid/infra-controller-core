@@ -314,10 +314,12 @@ class MatLog:
         self.firmware_noise = 0
         self.first_ts = None
         self.last_ts = None
+        self.mtime = None               # last write to the file, for the "idle" indicator
 
     def refresh(self):
         try:
             size = os.path.getsize(self.path)
+            self.mtime = os.path.getmtime(self.path)
         except OSError as e:
             self.error = f'{self.path}: {e.strerror}'
             return
@@ -397,8 +399,29 @@ def state_style(state):
     return WIP
 
 
+def mat_pids():
+    """PIDs of running machine-a-tron processes (empty when none). The monitor
+    only reads the log and the API, so without this a MAT that was killed looks
+    like a quiet one."""
+    try:
+        r = subprocess.run(['pgrep', '-x', 'machine-a-tron'], capture_output=True, text=True, timeout=5)
+        return [p for p in r.stdout.split() if p.isdigit()]
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+
+def log_age(log):
+    """Seconds since the MAT log was last written, or None."""
+    return None if log is None or log.mtime is None else max(0, int(time.time() - log.mtime))
+
+
+def fmt_age(secs):
+    return f'{secs}s' if secs < 60 else f'{secs // 60}m{secs % 60:02d}s'
+
+
 def render_header(server, admin_cli, interval, page='all'):
     now = datetime.now().strftime('%H:%M:%S')
+    pids = mat_pids()
     machines = server.get('machines', [])
     ready = sum(1 for r in machines if col(r, 'state').lower().startswith('ready'))
     failed = sum(1 for r in machines if col(r, 'state').lower().startswith('failed'))
@@ -409,7 +432,9 @@ def render_header(server, admin_cli, interval, page='all'):
         where = f'   page {PAGES.index(page)}/{len(PAGES) - 1}: {page}'
     else:
         where = f'   {page}'
-    L = [[('MAT run monitor', TITLE), (f'  {now}  refresh {interval}s{where}   admin-cli: {short(admin_cli, 60)}', PLAIN)],
+    L = [[('MAT run monitor', TITLE), (f'  {now}  refresh {interval}s{where}   MAT process: ', PLAIN),
+          ((f'running (pid {", ".join(pids)})', OK) if pids else ('NOT RUNNING', BAD)),
+          (f'   admin-cli: {short(admin_cli, 60)}', PLAIN)],
          [('expected machines: ', PLAIN), (str(len(server.get('expected', []))), NUM),
           ('    endpoints: ', PLAIN), (str(len(server.get('endpoints', []))), NUM),
           ('    machines: ', PLAIN), (str(len(machines)), NUM), (f' ({hosts} hosts, {len(machines) - hosts} DPUs)', PLAIN),
@@ -522,6 +547,14 @@ def sec_mat(logs, width):
         head = [(f'MAT ({os.path.basename(log.path)})', SECTION)]
         if log.lines:
             head.append((f'   lines: {log.lines}   span {log.first_ts[11:] if log.first_ts else "?"}–{log.last_ts[11:] if log.last_ts else "?"}', PLAIN))
+        age = log_age(log)
+        if age is not None:
+            # MAT writes something every few seconds while it runs; a quiet
+            # log with no process behind it means the run is over.
+            running = bool(mat_pids())
+            head.append((f'   last write {fmt_age(age)} ago', PLAIN if running and age < 120 else BAD))
+            if not running:
+                head.append(('   — MAT is not running', BAD))
         if log.firmware_noise:
             head.append((f'   firmware-refresh noise lines: {log.firmware_noise}', HDR))
         L.append(head)
