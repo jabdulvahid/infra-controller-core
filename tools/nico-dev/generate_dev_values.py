@@ -497,8 +497,14 @@ def gen_site_config_toml(cfg):
     L.append('enabled = false')
     L.append('')
 
+    # autoupdate gates BOTH post-ingestion updates and the preingestion upload:
+    # start_firmware_uploads_or_continue() returns early (debug log only) and
+    # marks the endpoint complete when it is false, so hosts ingest at their
+    # old versions. With firmware_sim the upload is the point, so enable it.
+    fw_sim_on = bool((cfg['nico-system'].get('firmware_sim') or {}).get('enabled', False))
     L.append('[firmware_global]')
-    L.append('autoupdate = false')
+    L.append(f'autoupdate = {"true" if fw_sim_on else "false"}'
+             + ('  # firmware_sim: preingestion uploads need it' if fw_sim_on else ''))
     L.append('no_reset_retries = true')
     L.append('')
 

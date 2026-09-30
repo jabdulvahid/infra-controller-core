@@ -378,7 +378,8 @@ TITLE, SECTION, HDR, OK, WIP, BAD, NUM, PLAIN = 'title', 'section', 'hdr', 'ok',
 # sections, their toggle key, and whether they show by default
 # Page 0 shows every section expanded except MAT, which has its own page (5):
 # it is the longest table and the one that pushed the others off the screen.
-SECTIONS = [('endpoints', 'e', True), ('machines', 'm', True), ('dpus', 'u', True), ('dpf', 'd', True), ('mat', 'l', False)]
+SECTIONS = [('endpoints', 'e', True), ('machines', 'm', True), ('dpus', 'u', True), ('dpf', 'd', True), ('mat', 'l', False),
+            ('history', 't', False)]
 DEFAULT_SHOW = {name for name, _, on in SECTIONS if on}
 # Pages: 0 is the overview (every section, collapsed or expanded per the
 # toggles above); 1..5 show one section in full, scrollable.
@@ -593,6 +594,80 @@ def sec_mat(logs, width):
     return L
 
 
+class Transitions:
+    """Remembers every object's state between refreshes and records each change
+    with the time of the poll that first saw it, in memory for the history page
+    and appended to a plain-text file for reading after the run. Objects:
+    machines (state), endpoints (state / pre-ingestion state), DPUs (state) and
+    DPF DPU resources (phase). Resolution is the poll interval."""
+
+    def __init__(self, path=None):
+        self.path = path
+        self.last = {}          # (kind, id) → state string
+        self.events = []        # (time, kind, id, old, new)
+        self.error = None
+        if path:
+            try:
+                with open(path, 'a') as f:
+                    f.write(f'# monitor-mat transitions — started {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}; '
+                            f'time = the poll that first saw the new state\n')
+            except OSError as e:
+                self.error = f'{path}: {e.strerror}'
+                self.path = None
+
+    def observe(self, server, dpf):
+        now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        seen = {}
+        for r in server.get('machines', []):
+            seen[('machine', col(r, 'id'))] = col(r, 'state')
+        for r in server.get('endpoints', []):
+            pre = col(r, 'pre-ingestion state', 'preingestionstate')
+            seen[('endpoint', col(r, 'address'))] = col(r, 'state') + (f' / {pre}' if pre else '')
+        for r in server.get('dpus', []):
+            seen[('dpu', col(r, 'dpu id', 'dpuid', 'id'))] = col(r, 'state')
+        for d in (dpf or {}).get('dpus', []):
+            seen[('dpf', d['name'])] = d['phase']
+        for key, state in seen.items():
+            old = self.last.get(key)
+            if old != state:
+                self._record(now, key, old, state)
+        for key in [k for k in self.last if k not in seen]:
+            self._record(now, key, self.last[key], '(gone)')
+            del self.last[key]
+        self.last.update(seen)
+
+    def _record(self, now, key, old, new):
+        kind, ident = key
+        self.events.append((now, kind, ident, old, new))
+        if self.path:
+            try:
+                with open(self.path, 'a') as f:
+                    f.write(f'{now} {kind:<8} {ident:<44} {old if old is not None else "(new)"} -> {new}\n')
+            except OSError as e:
+                self.error = f'{self.path}: {e.strerror}'
+                self.path = None
+
+
+HISTORY = Transitions()
+
+
+def sec_history(width, limit=400):
+    L = [[('HISTORY', SECTION),
+          (f'   {len(HISTORY.events)} transitions this session, newest last'
+           + (f'   file: {HISTORY.path}' if HISTORY.path else '   (not written to a file)'), PLAIN)]]
+    if HISTORY.error:
+        L.append([(f'  ! {HISTORY.error}', BAD)])
+    if not HISTORY.events:
+        L.append([('  (nothing observed yet — the first refresh records every object as (new))', HDR)])
+        return L
+    L.append([(f'  {"time":<9} {"kind":<8} {"id":<44} from -> to', HDR)])
+    for now, kind, ident, old, new in HISTORY.events[-limit:]:
+        L.append([(f'  {now[11:19]:<9} {kind:<8} {short(ident, 44):<44} ', PLAIN),
+                  (f'{short(old if old is not None else "(new)", 40)}', HDR), (' -> ', PLAIN),
+                  (short(new, max(20, width - 110)), state_style(new))])
+    return L
+
+
 def collapsed(name, server, dpf, logs):
     """The one-line stand-in for a section hidden on the overview page."""
     key = {n: k for n, k, _ in SECTIONS}[name]
@@ -606,6 +681,8 @@ def collapsed(name, server, dpf, logs):
         if dpf is None:
             return None
         txt = f'  {len(dpf["dpus"])} DPUs, {sum(1 for d in dpf["dpus"] if d["phase"] == "Ready")} Ready'
+    elif name == 'history':
+        txt = f'  {len(HISTORY.events)} transitions'
     else:
         if not logs:
             return None
@@ -622,6 +699,8 @@ def render_section(name, server, logs, dpf, width):
         return sec_dpus(server, width)
     if name == 'dpf':
         return sec_dpf(dpf, width)
+    if name == 'history':
+        return sec_history(width)
     return sec_mat(logs, width)
 
 
@@ -658,15 +737,16 @@ HELP = [
         ('3', 'DPUs (NICo) — dpu status and dpf show: health, firmware version status, DPF enablement'),
         ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
         ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
+        ('6', 'history — every state change seen since the monitor started (machines, endpoints, DPUs, DPF phases), with the poll time; also appended to the history file for reading after the run'),
         ('? h', 'this help; any page key, ?, h or 0 returns'),
     ]),
     ('MOVING', [
-        ('0-5', 'go to that page'),
+        ('0-6', 'go to that page'),
         ('→ Tab n', 'next page'), ('← Shift-Tab p', 'previous page'),
-        ('↑ ↓ j k', 'scroll one line (pages 1-5)'), ('PgUp PgDn Space', 'scroll one screen'), ('Home End', 'top / bottom'),
+        ('↑ ↓ j k', 'scroll one line (pages 1-6)'), ('PgUp PgDn Space', 'scroll one screen'), ('Home End', 'top / bottom'),
     ]),
     ('OVERVIEW (page 0)', [
-        ('e m u d l', 'collapse or expand endpoints / machines / DPUs / DPF / MAT'),
+        ('e m u d l t', 'collapse or expand endpoints / machines / DPUs / DPF / MAT / history'),
     ]),
     ('MAT PAGE (5)', [
         ('[ ]', 'previous / next MAT log when several were given (the newest is shown first)'),
@@ -705,6 +785,7 @@ def run_plain(admin_cli, logs, interval, once, dpf_cfg=None):
         dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
         for log in logs:
             log.refresh()
+        HISTORY.observe(server, dpf)
         print(plain(render(server, logs, admin_cli, interval, dpf=dpf, show={n for n, _, _ in SECTIONS})))   # plain text: everything
         if once:
             return
@@ -736,6 +817,7 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None, default_log=None):
             dpf = fetch_dpf(*dpf_cfg) if dpf_cfg else None
             for log in logs:
                 log.refresh()
+            HISTORY.observe(server, dpf)
             with lock:
                 data.update(server=server, dpf=dpf, at=time.time(), busy=False)
             wake.wait(interval)
@@ -875,13 +957,19 @@ def main():
                    help='MAT log file (repeatable, optional). With several, only the most recently '
                         'modified one is shown unless --all-logs is given')
     p.add_argument('--all-logs', action='store_true', help='show every --mat-log, not just the newest')
-    p.add_argument('--interval', type=int, default=30, help='seconds between refreshes (default 30)')
+    p.add_argument('--interval', type=int, default=10, help='seconds between refreshes (default 10; also the resolution of the history)')
+    p.add_argument('--history', default=None, metavar='FILE',
+                   help='append every observed state change to this file (default: monitor-mat-history.log next to the admin CLI wrapper, i.e. in the site folder)')
+    p.add_argument('--no-history', action='store_true', help='keep the history in memory only')
     p.add_argument('--once', action='store_true', help='one plain-text refresh, then exit')
     p.add_argument('--no-tui', action='store_true', help='plain text instead of the full-screen view')
     p.add_argument('--kubeconfig', default=None, help='for the DPF section (default: *.kubeconfig.yaml next to the admin CLI wrapper)')
     p.add_argument('--dpf-namespace', default='dpf-operator-system')
     p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
     a = p.parse_args()
+    global HISTORY
+    if not a.no_history:
+        HISTORY = Transitions(a.history or os.path.join(os.path.dirname(os.path.abspath(a.admin_cli)), 'monitor-mat-history.log'))
     mat_logs = a.mat_log
     # The launcher passes every log it finds (base, dev, plain); the run in
     # progress is the one written most recently. Showing the others as well
