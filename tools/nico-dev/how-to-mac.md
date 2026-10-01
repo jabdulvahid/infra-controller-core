@@ -663,23 +663,24 @@ NICo remembers the fleet it has seen: the endpoints it explored, the
 machines it expected, and the BMC credentials it rotated. Without the reset,
 a new run against fresh mocks is locked out.
 
-Note: **running a MAT you built yourself.** When you change MAT's source,
-build from your own worktree into a separate folder so the site's baseline
-binary stays untouched. `--out-dir` is required with `--repo` for that reason:
+Note: **working on MAT's source.** The site is built from one checkout, the
+`repo:` of your `bringup.yaml`, and that checkout can be the branch you are
+developing on: any folder or git worktree inside the share works, on any
+branch. Edit there, then rebuild only what changed:
 
 ```bash
-build-nico-clis.py <site> --mat-only --repo ~/projects/my-mat-worktree --out-dir <site>/mat-dev
-cp <site>/run-mat.sh <site>/run-mat-dev.sh
+build-nico-clis.py <site> --mat-only     # MAT from the checkout's current HEAD → <site>/mat/
 ```
 
-Then change the two paths at the top of `run-mat-dev.sh`, `MAT_BIN` and
-`MAT_CONFIG`, to the `mat-dev` folder, and copy `<site>/mat/mat-config.toml`
-to `<site>/mat-dev/mat-config.toml` if you want a custom config, for example
-an `acceleration_factor` or a `[machines.<group>.timing_overrides]` block.
-The run script derives its log name from its own name, so
-`run-mat-dev.sh` logs to `/var/log/machine-a-tron-dc1-dev.log` and the
-baseline and your build never overwrite each other. The details and the
-failure catalog are in `mat-in-nico-dev.md`.
+`run-mat.sh` on the VM installs whatever `<site>/mat/` holds and prints
+which commit it came from (`BUILD_INFO`, written by the build); the MAT
+monitor shows the same line, so a binary older than your HEAD is visible.
+For a custom `mat-config.toml`, for example an `acceleration_factor` or a
+`[machines.<group>.timing_overrides]` block, edit the generated file or point
+the `MAT_CONFIG` line of `run-mat.sh` at another one under the site folder.
+When the feature touches NICo itself, `bring-up.py --config X --from build`
+rebuilds the images from the same checkout. The details and the failure
+catalog are in `mat-in-nico-dev.md`.
 
 ## Step 11 - Firmware upgrade simulation
 

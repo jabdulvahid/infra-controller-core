@@ -131,48 +131,48 @@ class Checks:
 UPSTREAM_URL = 'https://github.com/dsx-ai-factory/infra-controller'
 
 
-def checkout_freshness(c, repo):
-    """Is this checkout at (or ahead of) upstream main? A site built from a
-    fork's stale main pairs old charts and RBAC with images built elsewhere
-    (20260918-#3/#4). Needs the network; silent when it is unavailable."""
-    c.section('checkout vs upstream main (informational)')
+DEPLOYMENT_INPUTS = ['helm-prereqs/setup.sh', 'helm', 'helm-prereqs']
+
+
+def deployment_inputs_vs_upstream(c, repo):
+    """Has upstream main changed the deployment inputs nico-dev mirrors (setup.sh,
+    the charts, helm-prereqs) since this checkout branched from it? Only those
+    paths are compared: a checkout on a feature branch is ahead of main by
+    design and that is not reported. Needs the network; silent when it is
+    unavailable. The fetch touches FETCH_HEAD only."""
+    c.section('deployment inputs vs upstream main (informational)')
     try:
-        tip = subprocess.run(['git', 'ls-remote', UPSTREAM_URL, 'refs/heads/main'],
-                             capture_output=True, text=True, timeout=20).stdout.split()
-        head = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'],
-                              capture_output=True, text=True, timeout=20).stdout.strip()
+        fetched = subprocess.run(['git', '-C', str(repo), 'fetch', '--quiet', '--no-tags',
+                                  UPSTREAM_URL, 'main'],
+                                 capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
         c.ok('upstream unreachable — skipped')
         return
-    if not tip or not head:
-        c.ok('could not determine upstream main or HEAD — skipped')
+    if fetched.returncode != 0:
+        c.ok('upstream unreachable — skipped')
         return
-    tip = tip[0]
-    known = subprocess.run(['git', '-C', str(repo), 'cat-file', '-e', f'{tip}^{{commit}}'],
-                           capture_output=True).returncode == 0
-    # One copy-pasteable line brings the checkout current in place; no need to
-    # recreate the worktree. --ff-only refuses if the branch has its own
-    # commits — then `git rebase FETCH_HEAD` instead.
-    update = (f'git -C {repo} fetch {UPSTREAM_URL} main && '
-              f'git -C {repo} merge --ff-only FETCH_HEAD')
-    why = ('harmless for a source build (images, charts and RBAC all come from this '
-           'checkout). If you plan to deploy pre-built images (`ngc:` in bringup.yaml), '
-           'make the checkout current first: those images are built from a newer upstream '
-           'than these charts, so a chart may lack a value, RBAC rule or CRD the newer '
-           'nico-api expects, and the deploy fails or the API misbehaves at runtime')
-    if not known:
-        c.warn(f'checkout is behind upstream main {tip[:9]} (that commit is not in its history; '
-               f'the fork or fetch it was cut from is older)',
-               f'{why}. To make it current:\n      {update}\n      (a branch with its own '
-               f'commits: replace the merge with `git -C {repo} rebase FETCH_HEAD`)')
+    git = lambda *a: subprocess.run(['git', '-C', str(repo), *a],  # noqa: E731
+                                    capture_output=True, text=True).stdout.strip()
+    tip = git('rev-parse', 'FETCH_HEAD')
+    base = git('merge-base', 'HEAD', 'FETCH_HEAD')
+    if not tip or not base:
+        c.ok('could not relate HEAD to upstream main — skipped')
         return
-    behind = subprocess.run(['git', '-C', str(repo), 'rev-list', '--count', f'{head}..{tip}'],
-                            capture_output=True, text=True).stdout.strip()
-    if behind and behind != '0':
-        c.warn(f'checkout is {behind} commit(s) behind upstream main {tip[:9]}',
-               f'{why}. To make it current:\n      {update}')
-    else:
-        c.ok(f'checkout contains upstream main {tip[:9]}')
+    if base == tip:
+        c.ok(f'contain upstream main {tip[:9]} (nothing newer there)')
+        return
+    changed = git('diff', '--name-only', base, tip, '--', *DEPLOYMENT_INPUTS).splitlines()
+    if not changed:
+        c.ok(f'unchanged on upstream main since this branch left it ({base[:9]}..{tip[:9]})')
+        return
+    shown = '\n      '.join(changed[:12]) + ('\n      …' if len(changed) > 12 else '')
+    c.warn(f'upstream main changed {len(changed)} deployment input file(s) since this branch '
+           f'left it ({base[:9]}..{tip[:9]})',
+           f'a source build still deploys consistently (images, charts and RBAC all come from '
+           f'this checkout), but pre-built images (`ngc:`) are built from the newer upstream and '
+           f'may expect these changes. Review, or bring the branch up to date with '
+           f'`git -C {repo} rebase FETCH_HEAD` (main itself: `git -C {repo} merge --ff-only '
+           f'FETCH_HEAD`). Changed:\n      {shown}')
 
 
 def run(repo, quiet):
@@ -256,7 +256,7 @@ def run(repo, quiet):
         c.bad(f'dpf-sim-controller manager.yaml args = {args}', 'deploy-dpf-sim.py render_manifests',
               'the simulator flags changed; update render_manifests in deploy-dpf-sim.py')
 
-    checkout_freshness(c, repo)
+    deployment_inputs_vs_upstream(c, repo)
     return c.fail
 
 

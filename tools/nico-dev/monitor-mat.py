@@ -519,10 +519,24 @@ def render_header(server, admin_cli, interval, page='all'):
           ('    machines: ', PLAIN), (str(len(machines)), NUM), (f' ({hosts} hosts, {len(machines) - hosts} DPUs)', PLAIN),
           ('    Ready: ', PLAIN), (f'{ready}/{len(machines)}', OK if machines and ready == len(machines) else NUM),
           ('    Failed: ', PLAIN), (str(failed), BAD if failed else PLAIN)]]
+    build = mat_build_info(admin_cli)
+    if build:
+        L.append([('MAT binary: ', PLAIN), (build, HDR)])
     for e in server.get('errors', []):
         L.append([(f'  ! {e}', BAD)])
     L.append([])
     return L
+
+
+def mat_build_info(admin_cli):
+    """`commit <sha> (<branch>) built <time>` from <site>/mat/BUILD_INFO, written
+    by build-nico-clis.py next to the binary; empty when absent."""
+    try:
+        text = open(os.path.join(os.path.dirname(os.path.abspath(admin_cli)), 'mat', 'BUILD_INFO')).read().strip()
+    except OSError:
+        return ''
+    m = re.search(r'(commit \S+ \([^)]*\) built \S+)', text)
+    return m.group(1) if m else short(text, 80)
 
 
 def sec_endpoints(server, width):

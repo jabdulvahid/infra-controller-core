@@ -127,7 +127,7 @@ def preflight(args):
               f'check-parity.py {repo_dir} lists them and the nico-dev file to update):\n      '
               + '\n      '.join(drift[:6]))
     else:
-        check(False, '', f'nico repo not found at {repo_dir} (share/{args.repo}; --repo names the folder inside the share)')
+        check(False, '', f'nico repo not found at {repo_dir} (share/{args.repo}; --repo names a checkout inside the share — any folder or worktree there, on any branch)')
     if args.ngc_tag:
         check(os.environ.get(args.token_env),
               f'NGC API key present in env var {args.token_env}',
@@ -386,6 +386,23 @@ def apply_ngc_mode(steps, args, site_mac):
     return steps
 
 
+def default_tag(repo_dir):
+    """Image tag for a source build when --tag is not given: <branch>-<short sha>
+    of the checkout the site is built from (plus -dirty with uncommitted
+    changes), so a rebuild on a new commit gets a new tag by itself. Falls back
+    to main-YYYYMMDD when the checkout is not a git tree."""
+    def git(*a):
+        r = subprocess.run(['git', '-C', str(repo_dir), *a], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ''
+    sha = git('rev-parse', '--short=9', 'HEAD')
+    if not sha:
+        return 'main-' + datetime.date.today().strftime('%Y%m%d')
+    branch = git('rev-parse', '--abbrev-ref', 'HEAD') or 'detached'
+    dirty = '-dirty' if git('status', '--porcelain', '--untracked-files=no') else ''
+    tag = re.sub(r'[^a-z0-9_.-]+', '-', f'{branch}-{sha}{dirty}'.lower()).strip('-.')
+    return tag[:120]
+
+
 def main():
     p = argparse.ArgumentParser(
         description='One-command nico-dev bring-up (runner over the unit scripts)',
@@ -555,7 +572,7 @@ def main():
     if not args.ngc_tag:
         args.ngc_images = {}
     if not args.tag:
-        args.tag = 'main-' + datetime.date.today().strftime('%Y%m%d')
+        args.tag = default_tag(Path(args.share).expanduser() / args.repo)
     # One fact, one key: the VM lives at <subnet>.<host_num>. The builder
     # creates nico-nat on that subnet and every later step uses the address.
     if not re.fullmatch(r'(\d{1,3})\.(\d{1,3})\.(\d{1,3})', args.subnet):

@@ -273,7 +273,26 @@ def container_cargo_build(repo_path, crate, binary, dest_dir, label):
     dest.chmod(0o755)
     size_mb = dest.stat().st_size / 1024 / 1024
     print(f'  ✓ {dest}  ({size_mb:.0f} MB, ELF {ELF_MACHINE} — verified)')
+    # Which source this binary is: run-mat.sh prints it and the MAT monitor
+    # shows it, so a binary that predates the checkout's HEAD is visible.
+    info = f'{binary} {_build_provenance(repo_path)}'
+    (dest_dir / 'BUILD_INFO').write_text(info + '\n')
+    print(f'  {info}')
     return dest
+
+
+def _build_provenance(repo_path):
+    """`commit <sha> (<branch>[, dirty]) built <UTC time> from <path>`."""
+    import datetime
+
+    def git(*a):
+        r = subprocess.run(['git', '-C', str(repo_path), *a], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ''
+    sha = git('rev-parse', '--short=9', 'HEAD') or 'unknown'
+    branch = git('rev-parse', '--abbrev-ref', 'HEAD') or 'detached'
+    dirty = ', dirty' if git('status', '--porcelain', '--untracked-files=no') else ''
+    when = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return f'commit {sha} ({branch}{dirty}) built {when} from {Path(repo_path).resolve()}'
 
 
 def build_mat_container(repo_path, site_folder, out_dir=None):

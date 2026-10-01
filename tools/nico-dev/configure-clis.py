@@ -287,11 +287,12 @@ def gen_run_mat_sh(cfg, site_folder):
 #   ~/mac/sites/{dc_name}/{sitename}/run-mat.sh
 #
 # Only two paths matter: the MAT binary and the fleet toml, both set just
-# below. To run a custom build: copy this script, point those two lines at
-# your binary/config (they must live under the site folder — the VM can't
-# see other Mac paths), run the copy. Everything below the marker is
-# plumbing you never edit — its main job is putting the client certs where
-# MAT expects them so they don't have to be spelled on every command line.
+# below. The binary is whatever build-nico-clis.py last delivered from the
+# site's checkout (BUILD_INFO next to it says which commit); to run another
+# binary or config, point those two lines at it (under the site folder, which
+# is what the VM can see). Everything below the marker is plumbing you never
+# edit — its main job is putting the client certs where MAT expects them so
+# they don't have to be spelled on every command line.
 
 set -euo pipefail
 # Self-locating: resolves to the site folder on whichever side runs it.
@@ -304,19 +305,19 @@ MAT_CONFIG="$SITE/mat/mat-config.toml"    # fleet definition
 
 # MAT's runtime reads nothing from the share: everything is staged VM-local
 # first, so a MAT run does not depend on the share staying mounted (Mac
-# sleep, UTM re-attaching it), the binary executes from local disk rather
-# than over 9p, and staged names carry a variant tag (MAT_BIN's parent
-# folder) so script copies pointing at different builds never overwrite
-# each other. (The original reason, a 0600 client key unreadable to the VM
-# user over 9p, went away when the VM user got the Mac user's uid.)
-VARIANT="$(basename "$(dirname "$MAT_BIN")")"
-BIN="/usr/local/bin/machine-a-tron.$VARIANT"
+# sleep, UTM re-attaching it) and the binary executes from local disk rather
+# than over 9p. (The original reason, a 0600 client key unreadable to the VM
+# user over 9p, went away when the VM user got the host user's uid.)
+BIN="/usr/local/bin/machine-a-tron"
 CERT_DIR="/etc/machine-a-tron/{dc_name}"
-CONF="$CERT_DIR/config.$VARIANT.toml"
+CONF="$CERT_DIR/config.toml"
 
 if [[ ! -f "$MAT_BIN" ]]; then
-    echo "ERROR: $MAT_BIN not found — run build-nico-clis.py on the Mac first." >&2
+    echo "ERROR: $MAT_BIN not found — run build-nico-clis.py on the host first." >&2
     exit 1
+fi
+if [[ -f "$(dirname "$MAT_BIN")/BUILD_INFO" ]]; then
+    echo "MAT binary: $(cat "$(dirname "$MAT_BIN")/BUILD_INFO")"
 fi
 if ! file "$MAT_BIN" | grep -q ELF; then
     echo "ERROR: $MAT_BIN is not a Linux binary — rebuild with the current" >&2
@@ -335,11 +336,9 @@ for f in mat-ca.pem mat-client.pem mat-client-key.pem; do
 done
 sudo chmod 600 "$CERT_DIR"/mat-client-key.pem
 sudo cp "$MAT_CONFIG" "$CONF"
-# The log path derives from THIS script's name (run-mat-foo.sh → suffix
-# "-foo"), so parallel dev variants never overwrite each other's logs.
-# Rewritten in the STAGED copy only; the source toml is untouched.
-TAG="$(basename "${{BASH_SOURCE[0]}}" .sh)"; TAG="${{TAG#run-mat}}"
-MAT_LOG="/var/log/machine-a-tron-{dc_name}$TAG.log"
+# The log path is fixed per dc; rewritten in the STAGED copy only, the
+# source toml is untouched.
+MAT_LOG="/var/log/machine-a-tron-{dc_name}.log"
 sudo sed -i '/^log_file *=/d' "$CONF"
 sudo sed -i '1i log_file = "'"$MAT_LOG"'"' "$CONF"
 echo "MAT log: $MAT_LOG"
