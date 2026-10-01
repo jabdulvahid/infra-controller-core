@@ -110,6 +110,17 @@ def cargo_jobs():
     return jobs
 
 
+def checkout_id(repo_path):
+    """Short stable id of a source checkout (its real path), naming its cargo
+    target cache in the docker daemon; the same scheme build-nico-clis.py uses
+    for the MAT target volume."""
+    import hashlib
+    cid = hashlib.sha1(str(Path(repo_path).resolve()).encode()).hexdigest()[:8]
+    print(f'  cargo target cache: nico-dev-target-{cid} (one per source checkout; '
+          f'first build cold, later builds recompile only what changed)')
+    return cid
+
+
 def docker_build(tag, dockerfile, context, build_args=None, label=''):
     print(f'  Building {label or tag}...')
     cmd = ['docker', 'build', '--progress=plain', '-t', tag, '-f', str(dockerfile)]
@@ -322,6 +333,9 @@ def main():
                     'GNU_TRIPLET':               f'{MACHINE}-linux-gnu',
                     # cargo --jobs from the daemon's CPUs/memory (see cargo_jobs)
                     'CARGO_BUILD_JOBS':          str(cargo_jobs()),
+                    # names the persistent cargo target cache for THIS checkout
+                    # (Dockerfile.nico-dev header, item 4)
+                    'CHECKOUT_ID':               checkout_id(repo_path),
                 },
                 label=f'nico:{args.tag} ({DOCKER_ARCH} dev)',
             )

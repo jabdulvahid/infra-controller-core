@@ -8,6 +8,14 @@
 #      docker daemon's CPUs and memory; default 2 = the old fixed value that
 #      kept a 16 GB Mac's colima VM from running out of memory)
 #   3. Separate sccache cache ID (sccache-aarch64-dev) from production
+#   4. A persistent cargo target directory (BuildKit cache mount, one per
+#      source checkout: CHECKOUT_ID from build-dev-nico.py) and a shared
+#      cargo registry cache, so a rebuild after a code change recompiles
+#      only what changed instead of the whole workspace. The target dir is
+#      per checkout because cargo judges freshness by mtime and two
+#      checkouts mounted at the same path would reuse each other's crates
+#      (20260918-#1). Caches live in the docker daemon; `docker builder
+#      prune` clears them.
 #
 # The runtime stage is structurally identical to production: same binaries,
 # same COPY paths, same directory layout — compatible with Nico helm charts.
@@ -29,6 +37,8 @@ ENV VERSION $VERSION
 # cargo --jobs: passed by build-dev-nico.py from the docker daemon's
 # resources (min(CPUs, GB/3), never below 2). 2 is the old fixed value.
 ARG CARGO_BUILD_JOBS=2
+# Names the per-checkout cargo target cache (see header, item 4).
+ARG CHECKOUT_ID=shared
 ENV CONTAINER_REPO_ROOT=/carbide
 
 RUN USER=root cargo new --bin carbide
@@ -44,19 +54,23 @@ RUN awk 'BEGIN{n=0} /^\[dev-dependencies\]$/{n++; if(n==2){exit}} {print}' \
 # Dev build: plain cargo build, no CI gates, sccache for speed.
 # Cache ID is separate from the production aarch64 cache (sccache-aarch64)
 # to avoid cross-contamination between dev and prod build artifacts.
+# The cargo target directory is a cache mount (persists across builds, is
+# never part of the image); the binaries are copied out of it into the
+# image layer the runtime stage reads from.
 RUN --mount=type=cache,id=sccache-aarch64-dev,target=/sccache \
+    --mount=type=cache,id=nico-dev-target-${CHECKOUT_ID},target=/target \
+    --mount=type=cache,id=nico-dev-cargo-registry,target=/usr/local/cargo/registry \
   export DATABASE_URL="postgresql://root@%2Fvar%2Frun%2Fpostgresql/root" && \
   export SCCACHE_DIR=/sccache && \
   export RUSTC_WRAPPER=sccache && \
   export CARGO_PROFILE_RELEASE_DEBUG=false && \
+  export CARGO_TARGET_DIR=/target && \
   /etc/init.d/postgresql start && \
   sudo -u postgres psql -c "ALTER USER root WITH SUPERUSER;" && \
   createdb root && \
   cargo build --release --workspace --exclude bmc-mock --jobs "${CARGO_BUILD_JOBS}" && \
   mkdir -p /carbide/target/bin && \
-  find /carbide/target/release -maxdepth 1 -type f -exec cp -t /carbide/target/bin {} + && \
-  rm -rf /carbide/target/debug && \
-  rm -rf /carbide/target/release
+  find /target/release -maxdepth 1 -type f -executable -exec cp -t /carbide/target/bin {} +
 
 FROM $CONTAINER_RUNTIME_AARCH64
 RUN mkdir -p /opt/carbide/migrations && \
