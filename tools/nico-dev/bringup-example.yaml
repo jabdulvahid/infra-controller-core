@@ -64,7 +64,7 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # The host must hold the VM plus ~8 GB for a source build plus its own OS:
 #   16 GB / 4 cores  → NGC lane only,      cpus: 4  mem_mb: 8192
 #   32 GB / 8+ cores → NGC or source build, cpus: 6  mem_mb: 12288  (recommended)
-# (how-to-linux §1 has the table and the two host rules: Ubuntu Server, no
+# (how-to-linux.md Assumptions has the table and the two host rules: Ubuntu Server, no
 # suspend.)
 # vm:
 #   cpus: 6                       # vCPUs (default 6)
