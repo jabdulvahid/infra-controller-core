@@ -13,7 +13,8 @@ Two ways to get NICo images into the site:
 - **Source-build lane**: your worktree's branch, built into images on the
   host and deployed. First build 20 to 40 minutes on the recommended machine
   (2 to 3 hours on a 4-core host of 2012 vintage, see the table below),
-  minutes afterwards.
+  minutes afterwards: the cargo target directory persists between builds,
+  so a code change recompiles only what it touched.
 
 Both share every other step.
 
@@ -426,7 +427,15 @@ kubectl -n nico-system get pods -w
 Rules that save an afternoon:
 
 - **Bump the tag every time.** Both scripts refuse a same-tag rebuild or
-  redeploy, because the cluster would silently keep the old image.
+  redeploy, because the cluster would silently keep the old image. Without
+  `--tag`, bring-up derives one from the checkout, `<branch>-<short sha>`
+  (`-dirty` with uncommitted changes), so a new commit is a new tag by
+  itself; the explicit `--tag` is for rebuilding the same commit.
+- **Rebuilds are incremental.** The nico image keeps its cargo target
+  directory in a docker cache mount, one per source checkout, so a rebuild
+  after a code change recompiles only the crates that changed and finishes
+  in minutes; only the first build of a checkout is the full 20 to 40.
+  `docker builder prune` drops the caches when disk gets tight.
 - **No downgrades.** Each deploy advances the database's migration ledger,
   and an older binary refuses to run against a newer ledger. Revert by going
   forward: restore the code, build a fresh tag from the current checkout,

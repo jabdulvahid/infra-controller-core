@@ -464,8 +464,8 @@ def main():
                    help='nico-dev folder path relative to the share '
                         f'(default: {DEF_REL})')
     p.add_argument('--tag', default=None,
-                   help='source-build image tag (default main-YYYYMMDD; '
-                        'mutually exclusive with --ngc-tag)')
+                   help='source-build image tag (default <branch>-<short sha> of the repo checkout, '
+                        '-dirty with uncommitted changes; mutually exclusive with --ngc-tag)')
     p.add_argument('--ngc-tag', default=None, metavar='TAG',
                    help='deploy this pre-built NGC image tag instead of '
                         'building from source (replaces the build+nico '
