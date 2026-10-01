@@ -52,11 +52,17 @@ Pages (full-screen mode). Page 0 is the overview: every section expanded
 except MAT, history and timeline, which are collapsed to a count line because
 they have their own pages (e m u d l t y toggle any section on page 0). Pages
 1-7 show one section alone, in full, and scroll: 1 endpoints, 2 machines,
-3 DPUs (NICo), 4 DPF, 5 MAT, 6 history (every state change seen, with the
-time of the poll that first saw it, machines, endpoints, DPUs and DPF phases),
-7 timeline (the same changes grouped per object with how long each state was
-held). / on pages 6 and 7 filters them to one object (part of a BMC address,
-a machine id or a kind); an empty answer clears. Keys: the digit, or ←/→,
+3 DPUs (NICo), 4 DPF, 5 MAT, 6 history (every state change the monitor saw,
+with the time of the poll that first saw it: machines, endpoints, DPUs and
+DPF phases; a fleet reset by reset-mat-state.py shows as a separator),
+7 timeline (per object, its states in order with how long each was held;
+machines come from NICo's own state history, `machine show <id> -c 250`,
+which is complete, exactly timed and independent of when the monitor
+started, so a MAT run that began before the monitor is shown in full;
+endpoints and DPF phases, which NICo keeps no history for, come from the
+poll diary since the last fleet reset). / on pages 6 and 7 filters them to
+one object (part of a BMC address, a machine id or a kind); an empty answer
+clears. Keys: the digit, or ←/→,
 Tab/Shift-Tab, n/p to step; ↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll;
 ? or h opens a help page listing the pages, keys and columns; r refreshes now;
 q quits. With several --mat-log files the MAT page opens on the most recently
@@ -295,20 +301,42 @@ def fetch_server(admin_cli):
     out['machines'] = parse_table(text) if text else []
     if err:
         out['errors'].append(f'machine show: {err}')
-    # A host's BMC address is not in any list: the endpoint report names the
-    # machine id for DPU BMCs only. `machine show <id>` has the product serial,
-    # which the endpoint report also lists, so look each new host up once.
+    # `machine show <id> -c 250` gives two things the lists do not: the
+    # machine's own state history as NICo recorded it (every persisted state
+    # with its timestamp, 250 kept per machine) and the product serial, which
+    # ties a host to its BMC address through the endpoint report's Serial Number
+    # column (the report names machine ids for DPU BMCs only). One call per
+    # machine, and only when its State Version changed since the last fetch or
+    # a host's serial is still unknown, so a quiet fleet costs nothing.
     # A "Host (Predicted)" machine, created from its DPUs before the host BMC
-    # report is tied to it, has no serial yet: skip it and look again once the
-    # type is plain Host. Only a found serial is cached.
+    # report is tied to it, has no serial yet; only a found serial is cached.
+    listed = set()
     for r in out['machines']:
         mid, mtype = col(r, 'id'), col(r, 'type').lower()
-        if mid and mtype.startswith('host') and 'predicted' not in mtype and mid not in HOST_SERIALS:
-            detail, err = run_cli(admin_cli, ['machine', 'show', mid])
+        if not mid:
+            continue
+        listed.add(mid)
+        version = col(r, 'state version', 'stateversion')
+        entry = MACHINE_HISTORY.get(mid)
+        need_serial = mtype.startswith('host') and 'predicted' not in mtype and mid not in HOST_SERIALS
+        if entry is None or entry['version'] != version or need_serial:
+            detail, err = run_cli(admin_cli, ['machine', 'show', mid, '-c', '250'])
             if err is None:
                 m = re.search(r'^PRODUCT SERIAL\s*:\s*(\S+)', detail or '', re.M)
                 if m:
                     HOST_SERIALS[mid] = m.group(1)
+                rows = parse_state_history(detail or '')
+                if rows or entry is None:
+                    MACHINE_HISTORY[mid] = {'version': version, 'rows': rows, 'gone': False,
+                                            'state': col(r, 'state'), 'type': col(r, 'type')}
+            elif entry is None:
+                out['errors'].append(f'machine show {mid[:12]}…: {err}')
+        else:
+            entry['state'], entry['type'], entry['gone'] = col(r, 'state'), col(r, 'type'), False
+    if not out['errors']:
+        for mid, entry in MACHINE_HISTORY.items():
+            if mid not in listed:
+                entry['gone'] = True
     out['host_serials'] = dict(HOST_SERIALS)
 
     text, err = run_cli(admin_cli, ['dpu', 'status'])
@@ -637,6 +665,9 @@ class Transitions:
     DPF DPU resources (phase). Resolution is the poll interval."""
 
     LINE_RE = re.compile(r'^(\S+)\s+(\S+)\s+(\S+)\s+(.*?) -> (.*)$')
+    # reset-mat-state.py appends this when it wipes the fleet: the boundary
+    # between runs, since NICo's ids are deterministic and reappear after a reset
+    MARK_RE = re.compile(r'^# ---- fleet reset (\S+)')
 
     def __init__(self, path=None):
         self.path = path
@@ -660,6 +691,12 @@ class Transitions:
         try:
             with open(path) as f:
                 for line in f:
+                    mark = self.MARK_RE.match(line)
+                    if mark:
+                        # everything before the reset is a previous run
+                        self.events.append((mark.group(1), 'reset', '', None, 'fleet reset'))
+                        self.last.clear()
+                        continue
                     m = self.LINE_RE.match(line.rstrip('\n'))
                     if not m:
                         continue
@@ -721,7 +758,50 @@ class Transitions:
 HISTORY = Transitions()
 FILTER = ''   # substring on kind or id that pages 6 and 7 restrict themselves to ('/' in the TUI, --filter)
 LABELS = {}   # machine id → (host|dpu, BMC address): what a person remembers instead of the 60-char id
-HOST_SERIALS = {}   # host machine id → product serial, from one `machine show <id>` per host (fetch_server)
+HOST_SERIALS = {}   # host machine id → product serial, from `machine show <id>` (fetch_server)
+# machine id → {'version', 'rows': [(timestamp, compact state, raw json)], 'state', 'type', 'gone'}:
+# NICo's own state history per machine, refreshed when its State Version changes.
+# Unlike the poll diary it is complete, exactly timed, and starts with the
+# machine rather than with the monitor. A machine that left the list stays here
+# as gone until the monitor restarts.
+MACHINE_HISTORY = {}
+
+HISTORY_ROW_RE = re.compile(r'^\s*(\{.*\})\s+(V\S+)\s+(\S+)\s*$')
+
+
+def compact_state(raw):
+    """`hostinit/waitingfordiscovery` from a state-history JSON row: the top
+    state and the first nested state below it; the raw JSON when unparseable."""
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return raw[:60]
+    top = str(d.get('state', '?'))
+    for k, v in d.items():
+        if k == 'state':
+            continue
+        if isinstance(v, dict) and 'state' in v:
+            return f'{top}/{v["state"]}'
+        if isinstance(v, str):
+            return f'{top}/{v}'
+    return top
+
+
+def parse_state_history(text):
+    """Rows of the STATE HISTORY table in `machine show <id> -c N` output, oldest
+    first, as (timestamp, compact state, raw json)."""
+    rows, inside = [], False
+    for line in text.splitlines():
+        if line.startswith('STATE HISTORY'):
+            inside = True
+            continue
+        if inside and line and not line[0].isspace():
+            break
+        if inside:
+            m = HISTORY_ROW_RE.match(line)
+            if m:
+                rows.append((m.group(3), compact_state(m.group(1)), m.group(1)))
+    return rows
 
 
 def update_labels(server):
@@ -769,7 +849,7 @@ def label(kind, ident, width=44):
 
 
 def matches(kind, ident):
-    if not FILTER:
+    if not FILTER or kind == 'reset':
         return True
     f = FILTER.lower()
     tag = LABELS.get(ident, ('', ''))
@@ -799,6 +879,9 @@ def sec_history(width, limit=400):
         return L
     L.append([(f'  {"time":<9} {"kind":<8} {"id":<44} from -> to', HDR)])
     for now, kind, ident, old, new in events[-limit:]:
+        if kind == 'reset':
+            L.append([(f'  {now[11:19]:<9} ---- fleet reset (reset-mat-state.py) — a new run starts here ' + '-' * max(0, width - 80), SECTION)])
+            continue
         L.append([(f'  {now[11:19]:<9} {kind:<8} {label(kind, ident, 44):<44} ', PLAIN),
                   (f'{short(old if old is not None else "(new)", 40)}', HDR), (' -> ', PLAIN),
                   (short(new, max(20, width - 110)), state_style(new))])
@@ -808,35 +891,79 @@ def sec_history(width, limit=400):
 KIND_ORDER = {'machine': 0, 'endpoint': 1, 'dpu': 2, 'dpf': 3}
 
 
+def parse_ts(ts):
+    """UTC datetime from `2026-09-30T20:30:21Z` or `…21.836924Z` (any number of
+    fraction digits; the fraction is dropped, the pages show whole seconds)."""
+    return datetime.strptime(re.sub(r'\.\d+', '', ts.rstrip('Z')), '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
+
+
+def timeline_block(L, header, steps, width, now_ts):
+    """One object's block: header line, then each state with the time it was
+    entered and how long it was held (the current state: so far). Consecutive
+    identical states are folded into one line with a count."""
+    folded = []
+    for ts, state in steps:
+        if folded and folded[-1][1] == state:
+            folded[-1][2] += 1
+        else:
+            folded.append([ts, state, 1])
+    L.append([])
+    L.append(header)
+    for i, (ts, state, n) in enumerate(folded):
+        end = parse_ts(folded[i + 1][0]) if i + 1 < len(folded) else now_ts
+        held = int((end - parse_ts(ts)).total_seconds())
+        tail = f'held {fmt_age(held)}' if i + 1 < len(folded) else f'so far {fmt_age(held)}'
+        if n > 1:
+            tail += f'  (x{n})'
+        L.append([(f'    {ts[11:19]}  ', PLAIN), (f'{short(state, max(30, width - 44)):<{max(30, width - 44)}}', state_style(state)), (f'  {tail}', HDR)])
+
+
 def sec_timeline(width):
-    """The same transitions as the history page, grouped per object: one block
-    per machine, endpoint, DPU and DPF resource, each state on its own line
-    with how long the object stayed in it (until the next change, or until
-    now for the current state)."""
-    events = filtered_events()
+    """Per object, its states in order with how long each was held. Machines
+    (hosts and DPUs) come from NICo's own state history, `machine show <id>
+    -c 250`: complete, exactly timed, independent of when the monitor started,
+    and per run, since a fleet reset deletes the machine and its history.
+    Endpoints and DPF resources have no history in NICo, so they come from the
+    poll diary, restricted to the current run (after the last fleet-reset
+    marker)."""
     L = [[('TIMELINE', SECTION),
-          (f'   per object, oldest first; "held" = time in that state (current state: so far)', PLAIN),
+          (f'   per object, oldest first; "held" = time in that state (current state: so far); '
+           f'machines from NICo\'s state history, endpoints and DPF from the poll diary (current run)', PLAIN),
           (filter_note(), NUM)]]
-    if not events:
-        L.append([('  (nothing observed yet)' if not HISTORY.events else f'  (nothing matches "{FILTER}")', HDR)])
-        return L
+    now_ts = datetime.now(timezone.utc)
+    shown = 0
+
+    for mid in sorted(MACHINE_HISTORY, key=lambda m: (LABELS.get(m, ('zz',))[0] != 'host', m)):
+        if not matches('machine', mid):
+            continue
+        entry = MACHINE_HISTORY[mid]
+        steps = [(ts, state) for ts, state, _ in entry['rows']]
+        if not steps:
+            continue
+        shown += 1
+        now = '(gone)' if entry['gone'] else entry['state']
+        header = [(f'  machine {label("machine", mid, 72)}', HDR),
+                  (f'   {short(entry["type"], 16)}, {len(steps)} state(s) in NICo, now: ', PLAIN),
+                  (short(now, 40), state_style(now))]
+        timeline_block(L, header, steps, width, now_ts)
+
+    # endpoints and DPF phases: the diary, current run only
+    events = filtered_events()
+    resets = [i for i, e in enumerate(events) if e[1] == 'reset']
+    events = events[resets[-1] + 1:] if resets else events
     by_obj = OrderedDict()
     for now, kind, ident, old, new in events:
-        by_obj.setdefault((kind, ident), []).append((now, new))
-    now_ts = datetime.now(timezone.utc)
-
-    def parse(ts):
-        return datetime.strptime(ts, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-
+        if kind in ('endpoint', 'dpf'):
+            by_obj.setdefault((kind, ident), []).append((now, new))
     for (kind, ident) in sorted(by_obj, key=lambda k: (KIND_ORDER.get(k[0], 9), k[1])):
         steps = by_obj[(kind, ident)]
-        L.append([])
-        L.append([(f'  {kind} {label(kind, ident, 72)}', HDR), (f'   {len(steps)} state(s), now: ', PLAIN), (short(steps[-1][1], 40), state_style(steps[-1][1]))])
-        for i, (ts, state) in enumerate(steps):
-            end = parse(steps[i + 1][0]) if i + 1 < len(steps) else now_ts
-            held = int((end - parse(ts)).total_seconds())
-            tail = f'held {fmt_age(held)}' if i + 1 < len(steps) else f'so far {fmt_age(held)}'
-            L.append([(f'    {ts[11:19]}  ', PLAIN), (f'{short(state, max(30, width - 40)):<{max(30, width - 40)}}', state_style(state)), (f'  {tail}', HDR)])
+        shown += 1
+        header = [(f'  {kind} {label(kind, ident, 72)}', HDR), (f'   {len(steps)} state(s) observed, now: ', PLAIN),
+                  (short(steps[-1][1], 40), state_style(steps[-1][1]))]
+        timeline_block(L, header, steps, width, now_ts)
+
+    if not shown:
+        L.append([('  (nothing yet)' if not (MACHINE_HISTORY or HISTORY.events) else f'  (nothing matches "{FILTER}")', HDR)])
     return L
 
 
@@ -856,7 +983,7 @@ def collapsed(name, server, dpf, logs):
     elif name == 'history':
         txt = f'  {len(HISTORY.events)} transitions'
     elif name == 'timeline':
-        txt = f'  {len({(k, i) for _, k, i, _, _ in HISTORY.events})} objects'
+        txt = f'  {len(MACHINE_HISTORY)} machines, {len({(k, i) for _, k, i, _, _ in HISTORY.events if k in ("endpoint", "dpf")})} endpoints/DPF'
     else:
         if not logs:
             return None
@@ -914,7 +1041,7 @@ HELP = [
         ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
         ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
         ('6', 'history — every state change seen since the monitor started (machines, endpoints, DPUs, DPF phases), with the poll time; also appended to the history file for reading after the run'),
-        ('7', 'timeline — the same changes grouped per object: each machine, endpoint, DPU and DPF resource with its states in order and how long it held each'),
+        ('7', 'timeline — per object, its states in order and how long it held each: machines (hosts and DPUs) from NICo\'s own state history (machine show -c 250: complete, exact times, per run), endpoints and DPF phases from the poll diary since the last fleet reset'),
         ('? h', 'this help; any page key, ?, h or 0 returns'),
     ]),
     ('MOVING', [
