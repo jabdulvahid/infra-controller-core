@@ -109,6 +109,19 @@ def validate_share_folder(share_root, rel, what, hint_names):
     actually exists in the share to make the fix obvious.
     """
     root = Path(share_root).expanduser()
+    if rel.startswith(('/', '~')):
+        # An absolute path is accepted when it lies inside the share, since
+        # the VM reaches the repo only through the share: it is recorded
+        # share-relative. A feature worktree under the share qualifies.
+        given = Path(rel).expanduser().resolve()
+        try:
+            rel = str(given.relative_to(root.resolve()))
+        except ValueError:
+            print(f'Error: {what} {given} is outside the share ({root}); the VM can only '
+                  f'reach it through the share. Create the worktree inside the share '
+                  f'(e.g. git worktree add {root}/<name> <branch>) and point --repo at it.',
+                  file=sys.stderr)
+            sys.exit(1)
     rel = rel.strip('/')
     if (root / rel).is_dir():
         return rel

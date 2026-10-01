@@ -147,12 +147,18 @@ overlay: 12                       #   prefixes (<underlay>.133.1.0/27 holds the
 # ── Where the code is inside the folder specified in share: above ──────
 # Both defaults are derived from where these tools sit
 # (<share>/<repo>/tools/nico-dev).
-# repo: infra-controller          # the nico repo folder name inside share: —
-                                  #   the worktree the VM builds and deploys
-                                  #   from. default: the folder these tools are
-                                  #   grafted into. Set it only when the tools
-                                  #   live outside the repo (<share>/nico-dev
-                                  #   next to the repo).
+# repo: infra-controller          # the nico checkout inside share: that the
+                                  #   site is built and deployed from: images,
+                                  #   charts, MAT and the CLIs all come from it,
+                                  #   on whatever branch it has checked out.
+                                  #   Any folder or git worktree inside the
+                                  #   share works, so a feature worktree
+                                  #   (git worktree add <share>/nico-7023 …)
+                                  #   can be the site's checkout: one tree for
+                                  #   bring-up and for the feature, no copying
+                                  #   between them. Default: the folder these
+                                  #   tools are grafted into. An absolute path
+                                  #   is accepted when it lies inside the share.
 # nico_dev_rel: infra-controller/tools/nico-dev
                                   # the tools folder, relative to share:.
                                   #   default: derived the same way; set it only

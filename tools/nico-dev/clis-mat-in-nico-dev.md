@@ -213,19 +213,21 @@ and a `--password`; you rarely need that.
 
 ## 9. Run a MAT you built yourself
 
-When you change MAT's source, build from your own worktree into a separate
-folder so the site's baseline binary stays untouched:
+The site has one checkout, `repo:` in `bringup.yaml`, and it can be the
+branch you are developing on: any folder or git worktree inside the share,
+on any branch. Edit MAT there and rebuild only MAT:
 
 ```bash
-build-nico-clis.py <site> --mat-only --repo ~/projects/my-mat-worktree --out-dir <site>/mat-dev
+build-nico-clis.py <site> --mat-only
 ```
 
-Then copy `run-mat.sh` to `run-mat-dev.sh` and change the two paths at its
-top, `MAT_BIN` and `MAT_CONFIG`, to the `mat-dev` folder. The copy logs to
-its own file, `/var/log/machine-a-tron-dc1-dev.log`, so the baseline and
-your build never overwrite each other. The details, including a custom
-`mat-config.toml` with timing overrides, are in `mat-in-nico-dev.md`,
-section 10.
+The binary lands in `<site>/mat/` next to a `BUILD_INFO` line naming the
+commit it was built from; `run-mat.sh` prints it on start and the MAT
+monitor shows it in its header, so a stale binary announces itself. A
+custom `mat-config.toml`, for example with timing overrides, is either an
+edit of the generated file or another file under the site folder that the
+`MAT_CONFIG` line of `run-mat.sh` points at. Details in
+`mat-in-nico-dev.md`, sections 9 and 10.
 
 ## 10. nicocli, the REST CLI
 

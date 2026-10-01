@@ -407,10 +407,13 @@ The legacy iPXE path is still available in two ways:
 `nico-system.dpf`. What the simulator does and does not reproduce, and its
 failure catalog: `mat-in-nico-dev.md` §13.
 
-Your own MAT build against the site's certificates: build with
-`--repo <worktree> --out-dir <dir>` so the site's baseline binary is
-untouched, copy `run-mat.sh`, and change the two paths at its top. Details
-and the failure catalog: `mat-in-nico-dev.md`.
+Working on MAT's source: the site's checkout (`repo:` in `bringup.yaml`,
+any folder or git worktree inside the share, on any branch) is where you
+develop. Rebuild only MAT with `build-nico-clis.py <site> --mat-only`; it
+lands in `<site>/mat/` with a `BUILD_INFO` naming the commit, which
+`run-mat.sh` prints and the monitor shows. A NICo change is `bring-up.py
+--config X --from build` from the same checkout. Details and the failure
+catalog: `mat-in-nico-dev.md`.
 
 ## 7. The dev loop
 

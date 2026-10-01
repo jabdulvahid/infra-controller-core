@@ -64,9 +64,14 @@ The container build (`build-nico-clis.py`):
   incremental (~1–2 min after the first).
 - `CARGO_PROFILE_RELEASE_DEBUG=false` (same knob as the nico image build):
   41 MB binary instead of 229 MB with debug info.
-- `--repo <dir>` builds from a feature worktree instead of the site-yaml
-  repo; if `<dir>/.git` is a worktree pointer file, the main clone's `.git`
-  is auto-mounted so git-embedding build scripts still work.
+- The site's checkout may itself be a git worktree: if `<dir>/.git` is a
+  worktree pointer file, the main clone's `.git` is auto-mounted so
+  git-embedding build scripts still work. `--repo <dir>` builds from some
+  other checkout (then `--out-dir` is required so `{site}/mat/` is not
+  overwritten); the normal path is to make the feature branch the site's
+  checkout and not need it.
+- `BUILD_INFO` next to the delivered binary records commit, branch, dirty
+  state and build time; `run-mat.sh` prints it and the monitor shows it.
 
 ## 3. Delivery: the share is transport, never runtime
 
@@ -84,9 +89,8 @@ both learned the hard way:
   in nico-api spans = the client sent no cert.) The VM user now gets the
   Mac user's uid, which resolved that; the copy stayed.
 - What the copy still buys: MAT's runtime never depends on the share being
-  mounted (Mac sleep, UTM re-attaching the share), the binary executes from
-  local disk rather than over 9p, and the variant tag lets several builds
-  coexist (`mat/`, `mat-4494/`, `mat-main/`).
+  mounted (Mac sleep, UTM re-attaching the share) and the binary executes
+  from local disk rather than over 9p.
 
 ## 4. Privileges: MAT runs as root
 
@@ -194,76 +198,63 @@ with `configure-clis.py` — it is fully derived from the site yaml.
 
 ## 9. The feature-development loop (e.g. epic #3796)
 
+One checkout for everything. The site's `repo:` is a checkout inside the
+share, and it can be the feature branch itself, a worktree created there:
+
 ```bash
-# baseline (from the site yaml's repo, e.g. ~/golden/infra-controller @ main)
-python3 build-nico-clis.py <site> --mat-only --skip-nicocli
+# once: the feature worktree inside the share, and a bringup.yaml whose
+# repo: names it (bring-up builds images, charts, MAT and CLIs from it)
+git -C <share>/infra-controller worktree add <share>/nico-7023 -b fix/my-feature upstream/main
 
-# feature build (from your worktree) — --out-dir is REQUIRED with --repo, so
-# the feature binary can never overwrite the baseline in {site}/mat/
-python3 build-nico-clis.py <site> --mat-only --skip-nicocli --repo ~/projects/nico-mat --out-dir <site>/mat-dev
+# edit MAT in <share>/nico-7023, then rebuild only MAT
+build-nico-clis.py <site> --mat-only --skip-nicocli      # → <site>/mat/, BUILD_INFO says the commit
 
-# on the VM: one run script per build (copy run-mat.sh, change MAT_BIN/MAT_CONFIG)
-~/mac/sites/<dc>/<site>/run-mat.sh          # baseline
-~/mac/sites/<dc>/<site>/run-mat-dev.sh      # feature
+# on the VM, the one run script; it prints the BUILD_INFO line on start
+~/mac/sites/<dc>/<site>/run-mat.sh
 ```
 
-For a clean A/B the baseline must come from the feature branch's OWN base
-commit, not from whatever the site's checkout happens to be: a detached
-worktree at that commit (`git worktree add --detach <dir> <base-sha>`) built
-with `--repo <dir> --out-dir <site>/mat-base` differs from the feature build
-by exactly the feature's diff. Each source checkout gets its own cargo target
-volume (`nico-mat-target-<id>`), so the first build per checkout is cold;
-sharing one volume across checkouts reused stale crates (20260918-#1).
+Switching branches in that checkout and rebuilding is the whole A/B: the
+binary in `{site}/mat/` is always "the checkout's HEAD as of the last build",
+and `BUILD_INFO`, `run-mat.sh` and the monitor header say which commit that
+is. Each source checkout gets its own cargo target volume
+(`nico-mat-target-<id>`), so the first build per checkout is cold; sharing
+one volume across checkouts reused stale crates (20260918-#1).
 
-Baseline and feature runs use the identical launch path, so any behavior
-difference is your code, not the harness. Incremental rebuilds are ~1–2 min
-(warm named volumes). Logs: `sudo tail -f /var/log/machine-a-tron-<dc>.log`.
+Incremental rebuilds are ~1–2 min (warm named volumes). Logs:
+`sudo tail -f /var/log/machine-a-tron-<dc>.log`.
 Watch progression: `run-monitor-mat.sh` (both sides on one screen, see
 `clis-mat-in-nico-dev.md` §5), or by hand with `run-admin-cli.sh
 site-explorer get-report endpoint`, `run-admin-cli.sh machine show`, or the
 admin GUI at `https://<u>.133.1.17/admin`.
 
-## 10. Custom builds: your own binary, the site's certs
+## 10. Another binary or config, the site's certs
 
-For feature work you often want to run a **custom build** (from a repo other
-than the site yaml's — e.g. a worktree) *directly*, without touching what a
-typical user's site contains. The certs issued by `configure-clis.py` are
-identity, not build artifacts — **reuse them as-is** for any binary you build.
-The recipe is deliberately dumb: copy the run script, change two paths.
-
-### Custom MAT
+The certs issued by `configure-clis.py` are identity, not build artifacts;
+any binary you run reuses them. `run-mat.sh` has exactly two lines meant to
+be edited, `MAT_BIN` and `MAT_CONFIG`; everything below them (cert sync,
+/etc/hosts, REPO_ROOT, sudo) is plumbing. To run a binary that is not the
+checkout's last build, or a config that is not the generated one, point
+those two lines at files under the site folder (the VM sees nothing else):
 
 ```bash
-# 1. Build from your worktree — --out-dir is REQUIRED with --repo, so the
-#    baseline in {site}/mat/ is never touched
+# a binary from some other checkout (--out-dir is REQUIRED with --repo, so
+# {site}/mat/ is not overwritten); a BUILD_INFO lands next to it as well
 python3 build-nico-clis.py <site> --mat-only --skip-nicocli \
-    --repo ~/projects/nico-mat --out-dir ~/projects/nico-mat/out
+    --repo ~/projects/other-checkout --out-dir <site>/mat-other
 
-# 2. Put the binary somewhere the VM can see (NOT {site}/mat/):
-mkdir -p <site>/mat-dev
-cp ~/projects/nico-mat/out/machine-a-tron <site>/mat-dev/
+# a custom config: copy and edit (acceleration_factor, timing_overrides …)
+cp <site>/mat/mat-config.toml <site>/mat-other/mat-config.toml
 
-# 3. (optional) a custom config for your experiment:
-cp <site>/mat/mat-config.toml <site>/mat-dev/mat-config.toml
-#    edit it — e.g. add acceleration_factor / [.. .timing_overrides].
-#    (No need to touch log_file: the run script derives the log name from
-#    its OWN name, so variants never overwrite each other's logs.)
-
-# 4. Copy the run script and change the TWO paths at the top:
-cp <site>/run-mat.sh <site>/run-mat-dev.sh
-#    MAT_BIN="$SITE/mat/machine-a-tron"       → "$SITE/mat-dev/machine-a-tron"
-#    MAT_CONFIG="$SITE/mat/mat-config.toml"   → "$SITE/mat-dev/mat-config.toml"
-
-# 5. On the VM:
-~/mac/sites/<dc>/<site>/run-mat-dev.sh
+# then in run-mat.sh:
+#    MAT_BIN="$SITE/mat/machine-a-tron"       → "$SITE/mat-other/machine-a-tron"
+#    MAT_CONFIG="$SITE/mat/mat-config.toml"   → "$SITE/mat-other/mat-config.toml"
 ```
 
-Everything below the two paths — cert sync, /etc/hosts, REPO_ROOT, sudo —
-carries over unchanged from the copied script; don't touch it. The staged
-binary/config names carry the variant tag (`machine-a-tron.mat` vs
-`machine-a-tron.mat-dev`), so baseline and dev never overwrite each other.
-Only one MAT can run at a time anyway (port 443, the bridge aliases). To go
-back to baseline, just run the original `run-mat.sh`.
+Only one MAT runs at a time (port 443, the bridge aliases), and the staged
+runtime names are fixed (`/usr/local/bin/machine-a-tron`,
+`/etc/machine-a-tron/<dc>/config.toml`, one log per dc), so there is nothing
+to keep apart. Keeping a copy of `run-mat.sh` with other paths is fine if you
+like, but it is not the mechanism; the two lines are.
 
 ### Custom admin-cli (or any client CLI)
 
