@@ -637,12 +637,16 @@ still to go, DPUs, DPF phases and MAT's own view, one page per section
 (digits or ←→ switch pages, `?` for help), refreshing every 10 s. The header
 says whether a MAT process is running, and the MAT page shows how long ago
 the log was last written, so a MAT that died or was stopped does not look
-like a quiet one. Every state change it sees, machines, endpoints, DPUs and
-DPF phases, is recorded with the time of the poll that first saw it: page 6
-lists them in order, page 7 groups them per object with how long each state
-was held, and `<site>/monitor-mat-history.log` keeps them for reading after
-the run, which is how you reconstruct a host's path through the firmware
-states later. Machine ids carry the BMC address a person remembers,
+like a quiet one. Page 7 is the timeline: per object, its states in order
+with how long each was held. For machines, hosts and DPUs alike, it reads
+NICo's own state history (`machine show <id> -c 250`), which is complete,
+exactly timed and starts with the machine, so a run that began before the
+monitor is shown in full. Endpoints and DPF phases have no history in NICo;
+for those the monitor keeps a diary of what each 10 s poll saw, page 6 lists
+it in order, and `<site>/monitor-mat-history.log` keeps it for reading after
+the run, which is how you reconstruct a host's path through the pre-ingestion
+firmware states. `reset-mat-state.py` writes a run marker into that file so
+runs do not blend. Machine ids carry the BMC address a person remembers,
 `[host 11.140.2.3]` or `[dpu 11.140.2.2]`, and `/` on page 6 or 7 narrows
 them to one object: type the address and you get the endpoint and the
 machine it became. It finds the MAT log by the site's `dc` name;

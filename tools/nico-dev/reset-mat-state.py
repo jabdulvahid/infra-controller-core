@@ -210,6 +210,18 @@ def main():
             r = admin_cli(*cmd_args, check=True)
             print(f'  created {label} ✓')
 
+    # The MAT monitor's diary is per site, not per run, and NICo's ids come
+    # back after a reset; a marker line lets it tell the runs apart.
+    history = site / 'monitor-mat-history.log'
+    if history.exists():
+        stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        try:
+            with open(history, 'a') as f:
+                f.write(f'# ---- fleet reset {stamp} (reset-mat-state.py) ----\n')
+            print(f'  run marker appended to {history.name} ✓')
+        except OSError as e:
+            print(f'  (could not mark {history}: {e.strerror})')
+
     print('\n' + '=' * 55)
     print('  Fleet state reset ✓ — next MAT run starts from t0.')
     if args.full:
