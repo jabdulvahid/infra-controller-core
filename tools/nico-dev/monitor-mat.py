@@ -969,6 +969,7 @@ EXPECTATIONS = [
     ('endpoint', r'InitialBMCReset.*WaitForExplorer', lambda: EXPLORER_REFRESH),
     ('endpoint', r'^SetNtpServers|^TimeSyncReset', lambda: 2 * NICO_PASS),
     ('endpoint', r'^UpgradeFirmwareWait', lambda: _mat('firmware_upgrade') + NICO_PASS),
+    ('endpoint', r'^NewFirmwareReportedWait.*Uefi', lambda: _mat('reboot') + EXPLORER_REFRESH),
     ('endpoint', r'^NewFirmwareReportedWait', lambda: _mat('bmc_reset') + EXPLORER_REFRESH),
     ('endpoint', r'^ResetForNewFirmware.*Uefi', lambda: _mat('reboot') + EXPLORER_REFRESH),
     ('endpoint', r'^ResetForNewFirmware', lambda: _mat('bmc_reset') + EXPLORER_REFRESH),
