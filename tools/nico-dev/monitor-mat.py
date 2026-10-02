@@ -911,9 +911,112 @@ def parse_ts(ts):
     return datetime.strptime(re.sub(r'\.\d+', '', ts.rstrip('Z')), '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
 
 
-def timeline_block(L, header, steps, width, now_ts):
+# ── expected hold per state ──────────────────────────────────────────────────
+# How long an object normally stays in a state, so "so far 17m" can be read as
+# on time or stalled. Two kinds of time add up: MAT's simulated hardware
+# (host reboot, BMC reset, firmware task; the GB200 profile at real time, scaled
+# by acceleration_factor and the timing_overrides in mat-config.toml) and
+# NICo's own cadences (pre-ingestion pass and explorer refresh every 30 s,
+# machine controller passes), which do not scale. Values are the GB200 profile
+# plus what nico-dev runs have shown; they are expectations, not limits.
+SITE_DIR = ''
+MAT_TIMING = {'factor': 1.0, 'reboot': 600, 'bmc_reset': 90, 'firmware_upgrade': 2, 'source': 'GB200 profile defaults'}
+NICO_PASS = 30          # pre-ingestion manager / explorer cadence, seconds
+EXPLORER_REFRESH = 120  # a fresh exploration report after a change, observed
+
+_DUR_RE = re.compile(r'^\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)?\s*$')
+
+
+def _dur_secs(text):
+    m = _DUR_RE.match(text.strip().strip('"\''))
+    if not m:
+        return None
+    v, unit = float(m.group(1)), m.group(2) or 's'
+    return v * {'ms': 0.001, 's': 1, 'm': 60, 'h': 3600}[unit]
+
+
+def load_mat_timing(site_dir):
+    """acceleration_factor and the host timing_overrides from
+    <site>/mat/mat-config.toml, by regex (no toml module on older Pythons).
+    Missing file or keys leave the GB200 defaults."""
+    path = os.path.join(site_dir, 'mat', 'mat-config.toml')
+    try:
+        text = open(path).read()
+    except OSError:
+        return
+    m = re.search(r'^\s*acceleration_factor\s*=\s*([0-9.]+)', text, re.M)
+    if m:
+        MAT_TIMING['factor'] = float(m.group(1))
+    for key in ('reboot', 'bmc_reset', 'firmware_upgrade'):
+        m = re.search(rf'^\s*host\.{key}\s*=\s*("[^"]*"|\S+)', text, re.M)
+        secs = _dur_secs(m.group(1)) if m else None
+        if secs is not None:
+            MAT_TIMING[key] = secs
+    MAT_TIMING['source'] = f'{os.path.basename(path)} (factor {MAT_TIMING["factor"]:g})'
+
+
+def _mat(key):
+    return MAT_TIMING[key] * MAT_TIMING['factor']
+
+
+# (kind, pattern on the state as displayed, expected seconds as a function).
+# First match wins; states without a row have no expectation (Ready, Complete).
+EXPECTATIONS = [
+    # pre-ingestion (endpoint): the site explorer's Pre-ingestion State column
+    ('endpoint', r'^Initial\b', lambda: NICO_PASS),
+    ('endpoint', r'InitialBMCReset.*Start', lambda: NICO_PASS),
+    ('endpoint', r'InitialBMCReset.*WaitForBmc', lambda: _mat('bmc_reset') + NICO_PASS),
+    ('endpoint', r'InitialBMCReset.*WaitForExplorer', lambda: EXPLORER_REFRESH),
+    ('endpoint', r'^SetNtpServers|^TimeSyncReset', lambda: 2 * NICO_PASS),
+    ('endpoint', r'^UpgradeFirmwareWait', lambda: _mat('firmware_upgrade') + NICO_PASS),
+    ('endpoint', r'^NewFirmwareReportedWait', lambda: _mat('bmc_reset') + EXPLORER_REFRESH),
+    ('endpoint', r'^ResetForNewFirmware.*Uefi', lambda: _mat('reboot') + EXPLORER_REFRESH),
+    ('endpoint', r'^ResetForNewFirmware', lambda: _mat('bmc_reset') + EXPLORER_REFRESH),
+    ('endpoint', r'^RecheckVersions', lambda: NICO_PASS),
+    # machines (NICo state history, compact or display form)
+    ('machine', r'(?i)^created$|configureastra|^initializing$|^configuring$', lambda: NICO_PASS),
+    ('machine', r'(?i)dpudiscovering', lambda: 2 * NICO_PASS),
+    ('machine', r'(?i)handlereboot', lambda: _mat('reboot') + NICO_PASS),
+    ('machine', r'(?i)dpuinit.*(dpfstates|provisioning|waitingforready)', lambda: 5 * NICO_PASS),
+    ('machine', r'(?i)waitingfornetworkconfig', lambda: 2 * NICO_PASS),
+    ('machine', r'(?i)waitingfordiscovery|discovered', lambda: _mat('reboot') + 2 * NICO_PASS),
+    ('machine', r'(?i)hostcleanup|waitingforcleanup', lambda: 2 * NICO_PASS),
+    ('machine', r'(?i)waitingforlockdown', lambda: _mat('reboot') + 2 * NICO_PASS),
+    ('machine', r'(?i)machinevalidat', lambda: _mat('reboot') + 2 * NICO_PASS),
+    ('machine', r'(?i)hostinit|enableipmi|setbootorder|uefisetup|spdm|bomvalidat|^validation', lambda: 3 * NICO_PASS),
+    ('machine', r'(?i)hostreprovision.*waitingforfirmwareupgrade', lambda: _mat('firmware_upgrade') + NICO_PASS),
+    ('machine', r'(?i)hostreprovision.*newfirmwarereportedwait', lambda: _mat('bmc_reset') + EXPLORER_REFRESH),
+    ('machine', r'(?i)hostreprovision.*resetfornewfirmware', lambda: _mat('reboot') + EXPLORER_REFRESH),
+    ('machine', r'(?i)hostreprovision', lambda: 3 * NICO_PASS),
+    # DPF resource phases (simulator dwell is short; reboots are MAT's)
+    ('dpf', r'(?i)reboot', lambda: _mat('reboot') + NICO_PASS),
+    ('dpf', r'(?i)initializ|pending|provision|config|os ?install|dpuclusterconfig', lambda: 5 * NICO_PASS),
+]
+_EXPECT_COMPILED = [(k, re.compile(p), f) for k, p, f in EXPECTATIONS]
+
+
+def expected_for(kind, state):
+    """Expected hold in seconds for (kind, state), or None for a terminal or
+    unknown state."""
+    for k, rx, f in _EXPECT_COMPILED:
+        if k == kind and rx.search(state or ''):
+            return int(f())
+    return None
+
+
+def hold_style(held, expect):
+    """OK within the expectation, WIP up to 1.5x, BAD beyond."""
+    if expect is None:
+        return HDR
+    if held <= expect:
+        return OK
+    return WIP if held <= 1.5 * expect else BAD
+
+
+def timeline_block(L, header, steps, width, now_ts, kind=''):
     """One object's block: header line, then each state with the time it was
-    entered and how long it was held (the current state: so far). Consecutive
+    entered and how long it was held (the current state: so far, with the
+    expected hold and a colour: on time, over, well over). Consecutive
     identical states are folded into one line with a count."""
     folded = []
     for ts, state in steps:
@@ -924,12 +1027,17 @@ def timeline_block(L, header, steps, width, now_ts):
     L.append([])
     L.append(header)
     for i, (ts, state, n) in enumerate(folded):
-        end = parse_ts(folded[i + 1][0]) if i + 1 < len(folded) else now_ts
+        current = i + 1 == len(folded)
+        end = now_ts if current else parse_ts(folded[i + 1][0])
         held = int((end - parse_ts(ts)).total_seconds())
-        tail = f'held {fmt_age(held)}' if i + 1 < len(folded) else f'so far {fmt_age(held)}'
+        expect = expected_for(kind, state)
+        tail = f'so far {fmt_age(held)}' if current else f'held {fmt_age(held)}'
+        if expect is not None:
+            tail += f' (expect ~{fmt_age(expect)})'
         if n > 1:
             tail += f'  (x{n})'
-        L.append([(f'    {ts[11:19]}  ', PLAIN), (f'{short(state, max(30, width - 44)):<{max(30, width - 44)}}', state_style(state)), (f'  {tail}', HDR)])
+        sty = hold_style(held, expect) if current else HDR
+        L.append([(f'    {ts[11:19]}  ', PLAIN), (f'{short(state, max(30, width - 60)):<{max(30, width - 60)}}', state_style(state)), (f'  {tail}', sty)])
 
 
 def sec_timeline(width):
@@ -943,7 +1051,11 @@ def sec_timeline(width):
     L = [[('TIMELINE', SECTION),
           (f'   per object, oldest first; "held" = time in that state (current state: so far); '
            f'machines from NICo\'s state history, endpoints and DPF from the poll diary (current run)', PLAIN),
-          (filter_note(), NUM)]]
+          (filter_note(), NUM)],
+         [(f'   expected holds from {MAT_TIMING["source"]}: host reboot {fmt_age(int(_mat("reboot")))}, '
+           f'BMC reset {fmt_age(int(_mat("bmc_reset")))}, firmware task {fmt_age(int(_mat("firmware_upgrade")))}, '
+           f'plus NICo\'s {NICO_PASS} s passes; ', PLAIN),
+          ('on time', OK), (' / ', PLAIN), ('over', WIP), (' / ', PLAIN), ('well over (1.5x)', BAD)]]
     now_ts = datetime.now(timezone.utc)
     shown = 0
 
@@ -959,7 +1071,7 @@ def sec_timeline(width):
         header = [(f'  machine {label("machine", mid, 72)}', HDR),
                   (f'   {short(entry["type"], 16)}, {len(steps)} state(s) in NICo, now: ', PLAIN),
                   (short(now, 40), state_style(now))]
-        timeline_block(L, header, steps, width, now_ts)
+        timeline_block(L, header, steps, width, now_ts, kind='machine')
 
     # endpoints and DPF phases: the diary, current run only
     events = filtered_events()
@@ -974,7 +1086,7 @@ def sec_timeline(width):
         shown += 1
         header = [(f'  {kind} {label(kind, ident, 72)}', HDR), (f'   {len(steps)} state(s) observed, now: ', PLAIN),
                   (short(steps[-1][1], 40), state_style(steps[-1][1]))]
-        timeline_block(L, header, steps, width, now_ts)
+        timeline_block(L, header, steps, width, now_ts, kind=kind)
 
     if not shown:
         L.append([('  (nothing yet)' if not (MACHINE_HISTORY or HISTORY.events) else f'  (nothing matches "{FILTER}")', HDR)])
@@ -1055,7 +1167,7 @@ HELP = [
         ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
         ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
         ('6', 'history — every state change seen since the monitor started (machines, endpoints, DPUs, DPF phases), with the poll time; also appended to the history file for reading after the run'),
-        ('7', 'timeline — per object, its states in order and how long it held each: machines (hosts and DPUs) from NICo\'s own state history (machine show -c 250: complete, exact times, per run), endpoints and DPF phases from the poll diary since the last fleet reset'),
+        ('7', 'timeline — per object, its states in order and how long it held each: machines (hosts and DPUs) from NICo\'s own state history (machine show -c 250: complete, exact times, per run), endpoints and DPF phases from the poll diary since the last fleet reset. The current state shows its expected hold (GB200 profile x acceleration_factor from mat-config.toml, plus NICo\'s 30 s passes) and is coloured on time / over / well over'),
         ('? h', 'this help; any page key, ?, h or 0 returns'),
     ]),
     ('MOVING', [
@@ -1311,7 +1423,9 @@ def main():
     p.add_argument('--dpf-namespace', default='dpf-operator-system')
     p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
     a = p.parse_args()
-    global HISTORY, FILTER
+    global HISTORY, FILTER, SITE_DIR
+    SITE_DIR = os.path.dirname(os.path.abspath(a.admin_cli))
+    load_mat_timing(SITE_DIR)
     FILTER = a.filter.strip()
     if not a.no_history:
         HISTORY = Transitions(a.history or os.path.join(os.path.dirname(os.path.abspath(a.admin_cli)), 'monitor-mat-history.log'))
