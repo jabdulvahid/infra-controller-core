@@ -663,8 +663,11 @@ states. `reset-mat-state.py` writes a run marker into that file so runs do
 not blend. Machine ids carry the BMC address a person remembers,
 `[host 11.140.2.3]` or `[dpu 11.140.2.2]`, and `/` on page 6 or 7 narrows
 them to one object: type the address and you get the endpoint and the
-machine it became. It finds the MAT log by the site's `dc` name;
-`--mat-log <file>` pins a specific one.
+machine it became. Each object's current state carries its expected hold,
+from the GB200 profile scaled by `acceleration_factor` in `mat-config.toml`
+plus NICo's 30 s passes, and is coloured on time, over, or well over, so a
+stall is visible without knowing the timings by heart. It finds the MAT log
+by the site's `dc` name; `--mat-log <file>` pins a specific one.
 
 **Between MAT runs**, after stopping MAT and before starting it again, reset
 the fleet, on the host:
