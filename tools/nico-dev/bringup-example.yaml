@@ -108,6 +108,13 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # default); vendor, model and inventory ids are fixed to the mock (see
 # generate_dev_values.py firmware_sim_init_container). Both lanes.
 # firmware_sim: false
+#
+# How nico-api gets that definition when firmware_sim is true. legacy
+# (default): the init container above. api: nothing is written, the site
+# starts without a definition like a real one, and you load it after
+# bring-up through the REST API with helm-prereqs/load-host-firmware-config.py
+# via run-nicocli.sh (how-to, Step 11). Linux lane.
+# firmware_sim_delivery: legacy
 
 # ── Extra nico-api site config ──────────────────────────────────────────
 # Raw TOML appended verbatim to nico-api's site config

@@ -224,8 +224,15 @@ nico-system:
   # task → power cycle → version recheck for every host. false = today's
   # behaviour: no firmware definition, no upgrade. Versions are plain strings
   # the mock accepts as-is; keep initial below desired.
+  # delivery (bringup.yaml `firmware_sim_delivery:`, default legacy) says how
+  # nico-api gets the definition. legacy = the init container above.
+  # api = no init container: the site starts without a definition, as a real
+  # site does, and you load one through the REST API after bring-up with
+  # helm-prereqs/load-host-firmware-config.py (how-to, Step 11); `desired`
+  # is then whatever that definition says.
   firmware_sim:
     enabled: FIRMWARE_SIM_ENABLED
+    delivery: FIRMWARE_SIM_DELIVERY
     initial: { bmc: "1.0", uefi: "1.0" }
     desired: { bmc: "2.0", uefi: "2.0" }
 
