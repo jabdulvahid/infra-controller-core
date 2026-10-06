@@ -605,6 +605,13 @@ def gen_nico(cfg):
     fw_sim = ns.get('firmware_sim') or {}
     fw_sim_enabled = bool(fw_sim.get('enabled', False))
     fw_desired = fw_sim.get('desired') or {}
+    # delivery (default legacy): legacy = the init container below writes the
+    # definition; api = none is written, the operator loads one through the
+    # REST API after bring-up (load-host-firmware-config.py). MAT's initial
+    # versions and autoupdate are the same either way.
+    fw_delivery = str(fw_sim.get('delivery') or 'legacy')
+    if fw_delivery not in ('legacy', 'api'):
+        raise SystemExit(f"nico-system.firmware_sim.delivery must be legacy or api, got {fw_delivery!r}")
 
     values = {
         'global': {
@@ -717,7 +724,7 @@ def gen_nico(cfg):
             },
         },
     }
-    if fw_sim_enabled:
+    if fw_sim_enabled and fw_delivery == 'legacy':
         values['nico-api']['initContainers'] = [firmware_sim_init_container(fw_desired)]
     return values
 

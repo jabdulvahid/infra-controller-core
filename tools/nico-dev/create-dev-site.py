@@ -73,6 +73,12 @@ def parse_args():
                         'definition for the mock GB200 with firmware_global.autoupdate on, and '
                         'MAT hosts report versions below it, so ingestion runs the upgrade chain. '
                         'From bringup.yaml `firmware_sim:`.')
+    p.add_argument('--firmware-sim-delivery', choices=['legacy', 'api'], default='legacy',
+                   help='how nico-api gets the firmware_sim definition (default legacy): legacy = '
+                        'an init container writes metadata.toml into the firmware volume; api = '
+                        'nothing is written, load it after bring-up through the REST API with '
+                        'helm-prereqs/load-host-firmware-config.py. From bringup.yaml '
+                        '`firmware_sim_delivery:`.')
     p.add_argument('--nico-api-site-config-extra', default='', metavar='TOML',
                    help='raw TOML appended verbatim to nico-api\'s site config after the '
                         'generated sections (site yaml nico-system.site_config_extra). '
@@ -186,6 +192,7 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('DPF_ENABLED',                  args.dpf),
         # Firmware upgrade simulation (bringup.yaml firmware_sim:, default false)
         ('FIRMWARE_SIM_ENABLED',         args.firmware_sim),
+        ('FIRMWARE_SIM_DELIVERY',        args.firmware_sim_delivery),
         # The VM, for host-side scripts (image delivery over ssh)
         ('VM_IP',      args.vm_ip),
         ('VM_USER',    args.vm_user),

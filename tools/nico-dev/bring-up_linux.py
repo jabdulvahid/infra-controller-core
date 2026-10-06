@@ -287,6 +287,7 @@ def build_steps(args):
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
                  f' --dpf {str(args.dpf).lower()}'
                  f' --firmware-sim {str(args.firmware_sim).lower()}'
+                 f' --firmware-sim-delivery {args.firmware_sim_delivery}'
                  + (f' --nico-api-site-config-extra {shlex.quote(args.nico_api_site_config_extra)}'
                     if args.nico_api_site_config_extra else '')
                  + f' --vm-ip {args.ip} --vm-user {args.user}'
@@ -448,6 +449,11 @@ def main():
                    help='give nico-api a firmware definition for the mock GB200 with autoupdate on, '
                         'and start MAT hosts below it, so ingestion runs the firmware upgrade chain '
                         '(config: firmware_sim: true|false; site yaml nico-system.firmware_sim)')
+    p.add_argument('--firmware-sim-delivery', choices=['legacy', 'api'], default='legacy',
+                   help='how nico-api gets the firmware_sim definition: legacy (default) = an init '
+                        'container writes metadata.toml; api = nothing is written, load it after '
+                        'bring-up with helm-prereqs/load-host-firmware-config.py through run-nicocli.sh '
+                        '(config: firmware_sim_delivery: legacy|api)')
     p.add_argument('--nico-api-site-config-extra', default='', metavar='TOML',
                    help='raw TOML appended verbatim to nico-api\'s site config, for sections '
                         'nico-dev has no key for (config: nico_api_site_config_extra: | ...; '

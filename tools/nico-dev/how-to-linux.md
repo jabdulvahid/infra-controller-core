@@ -393,6 +393,10 @@ What the fields mean:
   versions, so ingestion runs the upgrade chain. `false` leaves nico-api
   without any firmware definition, the standard MAT flow. Leave it out
   unless you work on that (Step 11).
+- `firmware_sim_delivery`: how nico-api gets that definition. `legacy`,
+  the default, writes it into the pod with an init container. `api` writes
+  nothing: you load it after bring-up through the REST API, the way a real
+  site is configured (Step 11).
 - `dc`, `site`: the names of your datacenter and site. They appear in
   folder names and in the cluster. `dc` is 1-3 characters, `site` 1-8.
 - `underlay`, `overlay`: two numbers that become the first octet of every
@@ -739,6 +743,35 @@ Changing them after bring-up means `bring-up.py --config X --from nico
 `configure-clis.py <site>` for the MAT config, then `reset-mat-state.py` and
 a fresh MAT run. `false` renders exactly what the site rendered before the
 option existed.
+
+### Loading the definition through the API instead
+
+A real site has no init container: its firmware catalog is loaded after
+deployment through the Host Firmware Config API, and the shipped definition
+for the mock GB200 lives in the repository at
+`helm-prereqs/host-firmware/gb200-nvl-simulation.yaml`. To run the
+simulation that way, set `firmware_sim_delivery: api` in `bringup.yaml`. MAT
+still reports the `initial` versions and `autoupdate` is still on, but
+nico-api starts without any definition, so nothing is uploaded until you
+load one. After Step 9 has set up `run-nicocli.sh`, on the host:
+
+```bash
+<repo>/helm-prereqs/load-host-firmware-config.py <repo>/helm-prereqs/host-firmware --nicocli <site>/run-nicocli.sh
+```
+
+It validates the file, finds the one site the REST API knows, and upserts the
+definition; the output names the vendor, model and versions it loaded. Then
+start MAT as usual. The `--check` flag validates and prints the request
+without calling anything, and `--delete Nvidia 'GB200 NVL'` removes the
+definition again. Without `--nicocli` the script runs `nicocli` from `PATH`,
+which is what a real site does once `nicocli init` has been run.
+
+The definition's artifacts are two files of this repository on GitHub,
+pinned to a commit: the mock ignores the bytes, but nico-api downloads them
+before the upload, so the VM needs the same internet access it needed to
+pull images, and the URLs must be `https`. The legacy init container writes
+local dummy files instead, which is why its definition cannot be loaded
+through the API unchanged.
 
 ## Step 12 - The dev loop
 
