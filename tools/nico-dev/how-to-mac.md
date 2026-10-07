@@ -730,7 +730,7 @@ The source-build cycle: change code, build images, roll the cluster onto
 them. On the Mac:
 
 ```bash
-build-dev-nico.py    <site> --tag t2      # arm64 images, pushed to the colima registry
+build-dev-nico.py    <site> --tag t2 --profile release   # arm64 images, pushed to the colima registry (--profile dev = faster debug build, Linux how-to Step 12)
 redeploy-dev-nico.py <site> --tag t2      # helm upgrade of the nico release only
 kubectl -n nico-system get pods -w
 ```
@@ -1088,7 +1088,7 @@ from the site yaml. Newcomers should start with `networking-primer.md`.
 | `bring-up.py --config X [--dry-run] [--from step]` | Mac | the whole bring-up |
 | `bring-up-status.py --config X [--once]` | Mac | high-level progress of that bring-up in a second terminal: steps done/running/failed, per-step time, what the current step is doing, ssh/kubeconfig/URL, resume command |
 | `ngc-tags.py --config X` | Mac | deployable NGC tags |
-| `build-dev-nico.py <site> --tag T` | Mac | build images, push to the colima registry |
+| `build-dev-nico.py <site> --tag T --profile release\|dev` | Mac | build images, push to the colima registry (the Mac runner passes `release`) |
 | `deploy-dev-nico.py <site> --tag T` | Mac | full helm deploy, resumable |
 | `redeploy-dev-nico.py <site> --tag T` | Mac | roll the nico release to a tag |
 | `deploy-flow.py <site> --config flow.yaml [--status\|--uninstall]` | Mac | Flow add-on, from its own standalone config |

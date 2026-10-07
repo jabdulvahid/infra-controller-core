@@ -73,6 +73,19 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 #                                 #   an NGC bring-up, more with source builds
 #                                 #   (default 120)
 
+# ── Build profile (source builds only; REQUIRED, no default) ──────────────
+# The cargo profile build-dev-nico.py compiles the nico image with:
+#   dev     = the Tilt build: debug profile, incremental compilation, only the
+#             packages whose binaries the image ships, no sccache. A one-crate
+#             change rebuilds in minutes; the code runs unoptimized, which the
+#             simulators do not notice. The choice for the dev loop.
+#   release = the shipped build: cargo build --release of the whole workspace,
+#             optimized, several times slower. For testing what a release ships.
+# Recorded on the image as label io.nico-dev.profile; a same-tag rebuild is
+# refused and the refusal names the existing image's profile. Not used with
+# `ngc:`. Linux lane (the Mac runner builds release).
+# build_profile: dev
+
 # ── Redeploy policy (recorded in the site yaml; redeploy-dev-nico.py reads it) ─
 # When a rolling redeploy cannot schedule its surge pod ("Insufficient cpu" —
 # a fully deployed site on a 6-CPU node, issues.md 20260903-#2):

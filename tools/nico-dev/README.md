@@ -227,8 +227,9 @@ implementation for your host. What differs on Linux:
   `ssh -L 8443:<underlay>.133.1.17:443 <linux-host>` → `https://localhost:8443/admin`
   (if the login flow redirects to the VIP itself, use
   `sshuttle -r <linux-host> <underlay>.133.1.0/27` instead)
-- The dev loop on your branch: edit → `build-dev-nico.py <site> --tag t2`
-  → `redeploy-dev-nico.py <site> --tag t2` (minutes per cycle). **Bump the
+- The dev loop on your branch: edit → `build-dev-nico.py <site> --tag t2 --profile dev`
+  → `redeploy-dev-nico.py <site> --tag t2` (minutes per cycle; `--profile release`
+  is the shipped, optimized build and takes several times longer). **Bump the
   tag every time** — both scripts refuse a same-tag rebuild/redeploy because
   the cluster would silently keep the old image. On a 6-CPU VM a rollout can
   stick on `Insufficient cpu`; set `redeploy: { on_insufficient_cpu: scale-down-first }`

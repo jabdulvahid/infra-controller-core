@@ -366,6 +366,7 @@ redeploy:
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
 firmware_sim: true  # nico-api gets a firmware definition and autoupdate, MAT reports old versions (Step 11); default false
+build_profile: dev  # cargo profile of the source build, required: dev = Tilt build (minutes per change), release = the shipped build (Step 12)
 
 dc: dc1
 site: feature1
@@ -397,6 +398,10 @@ What the fields mean:
   the default, writes it into the pod with an init container. `api` writes
   nothing: you load it after bring-up through the REST API, the way a real
   site is configured (Step 11).
+- `build_profile`: the cargo profile of the source build, and the runner
+  refuses to build without it. `dev` is the Tilt build, debug and
+  incremental, minutes per change; `release` is the shipped, optimized build
+  and several times slower. Not used with `ngc:` (Step 12).
 - `dc`, `site`: the names of your datacenter and site. They appear in
   folder names and in the cluster. `dc` is 1-3 characters, `site` 1-8.
 - `underlay`, `overlay`: two numbers that become the first octet of every
@@ -779,21 +784,32 @@ The source-build cycle: change code in the worktree, build images, roll the
 cluster onto them. On the host:
 
 ```bash
-build-dev-nico.py    <site> --tag t2      # images for the host arch, pushed to the local registry
-redeploy-dev-nico.py <site> --tag t2      # helm upgrade of the nico release only
+build-dev-nico.py    <site> --tag t2 --profile dev   # images for the host arch, pushed to the local registry
+redeploy-dev-nico.py <site> --tag t2                 # helm upgrade of the nico release only
 kubectl -n nico-system get pods -w
 ```
 
 or, through the runner from the same checkout, `bring-up.py --config
 bringup-feature1.yaml --from build`, which builds, pushes and redeploys with
-a tag derived from the commit.
+a tag derived from the commit and the profile from `build_profile:`.
 
-Five rules:
+Six rules:
 
+- **Pick the profile deliberately; the build script insists on it.**
+  `--profile dev` is the Tilt build: debug profile, incremental compilation,
+  only the packages whose binaries the image ships, no sccache. A one-crate
+  change rebuilds in a few minutes and the code runs unoptimized, which the
+  simulators do not notice. `--profile release` is the shipped build:
+  `cargo build --release` of the whole workspace, optimized, several times
+  slower. Use `dev` for the loop and `release` when you want to test what a
+  release ships. The profile is recorded on the image as the label
+  `io.nico-dev.profile`, and the same-tag refusal below names it.
 - **Rebuilds are incremental.** The nico image keeps its cargo target
   directory in a Docker cache mount, one per source checkout, so a rebuild
   after a code change recompiles only the crates that changed and finishes
-  in minutes; only the first build of a checkout is the full 20 to 40.
+  in minutes; only the first build of a checkout is the full 20 to 40. The
+  two profiles keep separate build outputs in that cache, so switching
+  profile once costs a full build, switching back does not.
   `docker builder prune` drops the caches when disk gets tight.
 - **Regrafting the tools does not rebuild.** The `nico` image copies the
   whole checkout, and the grafted tools live inside it; since 2026-09-27
@@ -1105,7 +1121,7 @@ should start with `networking-primer.md`.
 | `bring-up-status.py --config X [--once]` | host | high-level progress of that bring-up in a second terminal: steps done/running/failed, per-step time, what the current step is doing, ssh/kubeconfig/URL, resume command |
 | `dev-down.py --config X [--remove-infra]` | host | the whole teardown |
 | `ngc-tags.py --config X` | host | deployable NGC tags |
-| `build-dev-nico.py <site> --tag T` | host | build images, push to the local registry; incremental per checkout |
+| `build-dev-nico.py <site> --tag T --profile dev\|release` | host | build images, push to the local registry; incremental per checkout; `dev` = Tilt build (minutes), `release` = shipped build |
 | `deploy-dev-nico.py <site> --tag T` | host | full helm deploy, resumable |
 | `redeploy-dev-nico.py <site> --tag T` | host | roll the nico release to a tag |
 | `deploy-flow.py <site> --config flow.yaml [--status\|--uninstall]` | host | Flow add-on, from its own standalone config |

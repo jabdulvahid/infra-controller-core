@@ -121,6 +121,27 @@ def checkout_id(repo_path):
     return cid
 
 
+def registry_image_labels(registry, repo, tag):
+    """Labels of an image in the local registry, read without pulling it:
+    manifest → config blob → config.Labels. {} when anything is missing."""
+    import json
+    accept = ','.join([
+        'application/vnd.docker.distribution.manifest.v2+json',
+        'application/vnd.oci.image.manifest.v1+json',
+    ])
+    def get(url, acc):
+        r = subprocess.run(['curl', '-sf', '-m', '5', '-H', f'Accept: {acc}', url],
+                           capture_output=True, text=True)
+        return json.loads(r.stdout) if r.returncode == 0 and r.stdout else None
+    manifest = get(f'http://{registry}/v2/{repo}/manifests/{tag}', accept)
+    try:
+        digest = manifest['config']['digest']
+        config = get(f'http://{registry}/v2/{repo}/blobs/{digest}', '*/*')
+        return (config.get('config') or {}).get('Labels') or {}
+    except (TypeError, KeyError, ValueError):
+        return {}
+
+
 def docker_build(tag, dockerfile, context, build_args=None, label=''):
     print(f'  Building {label or tag}...')
     cmd = ['docker', 'build', '--progress=plain', '-t', tag, '-f', str(dockerfile)]
@@ -158,6 +179,13 @@ def main():
     p.add_argument('site', help='Site folder or site yaml path')
     p.add_argument('--tag', required=True,
                    help='Image tag (e.g. latest, test1, v1.2.3, any string)')
+    p.add_argument('--profile', required=True, choices=['release', 'dev'],
+                   help='cargo profile for the nico image. release = the shipped build '
+                        '(cargo build --release --workspace, every executable, sccache; '
+                        'slow, optimized). dev = the Tilt build (debug profile, incremental, '
+                        'only the packages the runtime image copies, no sccache; a one-crate '
+                        'change rebuilds in a few minutes, code runs unoptimized). Recorded '
+                        'on the image as label io.nico-dev.profile.')
     p.add_argument('--push-only', action='store_true',
                    help='Push already-built images, skip build')
     p.add_argument('--skip-rest', action='store_true',
@@ -223,6 +251,9 @@ def main():
     print(f'  checkout : {branch} @ {sha}{dirty}')
     print(f'  registry : {push_reg}  (VM pulls from {reg_host}:{reg_port})')
     print(f'  tag      : {args.tag}')
+    print(f'  profile  : {args.profile}'
+          + ('  (debug build, incremental; the shipped build is --profile release)'
+             if args.profile == 'dev' else '  (the shipped build; --profile dev rebuilds faster)'))
     if dirty:
         print('  ⚠ repo has uncommitted changes — they WILL be baked into the image')
 
@@ -245,15 +276,19 @@ def main():
             except ValueError:
                 pass
         if args.tag in existing:
+            labels = registry_image_labels(push_reg, 'nico', args.tag)
+            built = (f"built with profile {labels['io.nico-dev.profile']}"
+                     f" from {labels.get('io.nico-dev.version', '?')}"
+                     if 'io.nico-dev.profile' in labels else 'built before profiles were recorded')
             if not args.overwrite_tag:
-                print(f'\nError: nico:{args.tag} already exists in {push_reg}.\n'
+                print(f'\nError: nico:{args.tag} already exists in {push_reg} ({built}).\n'
                       f'  A rebuild under the same tag is invisible to the cluster: '
                       f'the pod template does not change, so nothing rolls out,\n'
                       f'  and the node keeps the cached image. Use a new tag '
                       f'(e.g. --tag {args.tag}-2), or --overwrite-tag if you '
                       f'really mean it.', file=sys.stderr)
                 sys.exit(1)
-            print(f'  ⚠ overwriting existing tag {args.tag} — the cluster will not '
+            print(f'  ⚠ overwriting existing tag {args.tag} ({built}) — the cluster will not '
                   f'pull it unless the pod template changes or pull policy is Always')
 
     this_dir     = Path(__file__).parent / 'nico-dev-docker'
@@ -336,8 +371,10 @@ def main():
                     # names the persistent cargo target cache for THIS checkout
                     # (Dockerfile.nico-dev header, item 4)
                     'CHECKOUT_ID':               checkout_id(repo_path),
+                    # cargo profile (see --profile); also an image label
+                    'PROFILE':                   args.profile,
                 },
-                label=f'nico:{args.tag} ({DOCKER_ARCH} dev)',
+                label=f'nico:{args.tag} ({DOCKER_ARCH}, profile {args.profile})',
             )
         finally:
             for name in copies:
