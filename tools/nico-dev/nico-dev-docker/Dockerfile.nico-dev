@@ -3,8 +3,8 @@
 #
 # Based on dev/docker/Dockerfile.release-container-aarch64 with:
 #   1. No CI quality gates (no cargo make, no clippy/lints/license checks)
-#   2. Plain cargo build --release, excludes bmc-mock (broken Cargo.toml);
-#      parallelism from CARGO_BUILD_JOBS (build-dev-nico.py sizes it from the
+#   2. Plain cargo build of the shipped package set (PROFILE release or dev,
+#      see below), parallelism from CARGO_BUILD_JOBS (build-dev-nico.py sizes it from the
 #      docker daemon's CPUs and memory; default 2 = the old fixed value that
 #      kept a 16 GB Mac's colima VM from running out of memory)
 #   3. Separate sccache cache ID (sccache-aarch64-dev) from production
@@ -35,15 +35,21 @@ FROM $CONTAINER_BUILD_AARCH64 as builder
 ARG VERSION
 ENV VERSION $VERSION
 # Cargo profile, passed by build-dev-nico.py (--profile, mandatory):
-#   release = the shipped build: `cargo build --release --workspace`, sccache,
-#             every executable in the workspace copied out (what a release
-#             image is made of; slowest, optimized code)
+#   release = the shipped build: `cargo build --release` of the twelve packages
+#             Makefile.toml's build-release task names, with sccache (slowest,
+#             optimized code)
 #   dev     = the Tilt build (dev/deployment/devspace/Dockerfile.core-artifacts):
-#             debug profile with incremental compilation, only the packages
-#             whose binaries the runtime stage copies, no sccache (it cannot
-#             cache incremental output). A one-crate change recompiles that
-#             crate and relinks; the code runs unoptimized, which the
-#             simulators do not notice.
+#             debug profile with incremental compilation, the same twelve
+#             packages, no sccache (it cannot cache incremental output). A
+#             one-crate change recompiles that crate and relinks; the code
+#             runs unoptimized, which the simulators do not notice.
+# Both profiles build the SAME package list, never --workspace: a workspace
+# build also compiles the test crates, and cargo unifies features across
+# everything built together, so carbide-test-harness's dependency on
+# `state-controller` with `test-support` turned the controllers' test-only
+# `test_assert!` into real panics inside the production binaries
+# (20261007-#3; found when nico-api crashed on "BUG: Not all objects have
+# been deleted from the database after cleanup" instead of logging it).
 ARG PROFILE
 # cargo --jobs: passed by build-dev-nico.py from the docker daemon's
 # resources (min(CPUs, GB/3), never below 2). 2 is the old fixed value.
@@ -81,7 +87,11 @@ RUN --mount=type=cache,id=sccache-aarch64-dev,target=/sccache \
   case "${PROFILE}" in \
     release) \
       export SCCACHE_DIR=/sccache RUSTC_WRAPPER=sccache CARGO_PROFILE_RELEASE_DEBUG=false && \
-      cargo build --release --workspace --exclude bmc-mock --jobs "${CARGO_BUILD_JOBS}" && \
+      cargo build --release --jobs "${CARGO_BUILD_JOBS}" \
+        -p carbide-api -p carbide-pxe -p carbide-dns -p nico-admin-cli \
+        -p carbide-dsx-exchange-consumer -p carbide-agent -p carbide-dhcp-server \
+        -p carbide-health -p carbide-log-parser -p carbide-ssh-console \
+        -p carbide-bmc-proxy -p carbide-dhcp && \
       out=/target/release ;; \
     dev) \
       cargo build --jobs "${CARGO_BUILD_JOBS}" \
