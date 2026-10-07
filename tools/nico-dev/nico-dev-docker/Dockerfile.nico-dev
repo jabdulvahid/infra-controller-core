@@ -34,6 +34,17 @@ ARG GNU_TRIPLET=aarch64-linux-gnu
 FROM $CONTAINER_BUILD_AARCH64 as builder
 ARG VERSION
 ENV VERSION $VERSION
+# Cargo profile, passed by build-dev-nico.py (--profile, mandatory):
+#   release = the shipped build: `cargo build --release --workspace`, sccache,
+#             every executable in the workspace copied out (what a release
+#             image is made of; slowest, optimized code)
+#   dev     = the Tilt build (dev/deployment/devspace/Dockerfile.core-artifacts):
+#             debug profile with incremental compilation, only the packages
+#             whose binaries the runtime stage copies, no sccache (it cannot
+#             cache incremental output). A one-crate change recompiles that
+#             crate and relinks; the code runs unoptimized, which the
+#             simulators do not notice.
+ARG PROFILE
 # cargo --jobs: passed by build-dev-nico.py from the docker daemon's
 # resources (min(CPUs, GB/3), never below 2). 2 is the old fixed value.
 ARG CARGO_BUILD_JOBS=2
@@ -51,28 +62,45 @@ RUN awk 'BEGIN{n=0} /^\[dev-dependencies\]$/{n++; if(n==2){exit}} {print}' \
     crates/bmc-mock/Cargo.toml > /tmp/bmc-mock-fixed.toml && \
     mv /tmp/bmc-mock-fixed.toml crates/bmc-mock/Cargo.toml
 
-# Dev build: plain cargo build, no CI gates, sccache for speed.
-# Cache ID is separate from the production aarch64 cache (sccache-aarch64)
-# to avoid cross-contamination between dev and prod build artifacts.
+# No CI gates in either profile. The sccache cache ID is separate from the
+# production aarch64 cache (sccache-aarch64) to avoid cross-contamination.
 # The cargo target directory is a cache mount (persists across builds, is
 # never part of the image); the binaries are copied out of it into the
 # image layer the runtime stage reads from.
+# The dev profile's package list is the set behind the binaries the runtime
+# stage copies, plus carbide-dhcp for the kea hook library (its cdylib).
+# Keep it in step with the COPY list below; a missing binary fails the COPY.
 RUN --mount=type=cache,id=sccache-aarch64-dev,target=/sccache \
     --mount=type=cache,id=nico-dev-target-${CHECKOUT_ID},target=/target \
     --mount=type=cache,id=nico-dev-cargo-registry,target=/usr/local/cargo/registry \
   export DATABASE_URL="postgresql://root@%2Fvar%2Frun%2Fpostgresql/root" && \
-  export SCCACHE_DIR=/sccache && \
-  export RUSTC_WRAPPER=sccache && \
-  export CARGO_PROFILE_RELEASE_DEBUG=false && \
   export CARGO_TARGET_DIR=/target && \
   /etc/init.d/postgresql start && \
   sudo -u postgres psql -c "ALTER USER root WITH SUPERUSER;" && \
   createdb root && \
-  cargo build --release --workspace --exclude bmc-mock --jobs "${CARGO_BUILD_JOBS}" && \
+  case "${PROFILE}" in \
+    release) \
+      export SCCACHE_DIR=/sccache RUSTC_WRAPPER=sccache CARGO_PROFILE_RELEASE_DEBUG=false && \
+      cargo build --release --workspace --exclude bmc-mock --jobs "${CARGO_BUILD_JOBS}" && \
+      out=/target/release ;; \
+    dev) \
+      cargo build --jobs "${CARGO_BUILD_JOBS}" \
+        -p carbide-api -p carbide-pxe -p carbide-dns -p nico-admin-cli \
+        -p carbide-dsx-exchange-consumer -p carbide-agent -p carbide-dhcp-server \
+        -p carbide-health -p carbide-log-parser -p carbide-ssh-console \
+        -p carbide-bmc-proxy -p carbide-dhcp && \
+      out=/target/debug ;; \
+    *) echo "PROFILE must be release or dev, got '${PROFILE}' (build-dev-nico.py --profile)" >&2; exit 1 ;; \
+  esac && \
   mkdir -p /carbide/target/bin && \
-  find /target/release -maxdepth 1 -type f -executable -exec cp -t /carbide/target/bin {} +
+  find "$out" -maxdepth 1 -type f -executable -exec cp -t /carbide/target/bin {} +
 
 FROM $CONTAINER_RUNTIME_AARCH64
+# Recorded so build-dev-nico.py can tell, from the registry alone, which
+# profile and commit an existing tag was built from (same-tag check).
+ARG PROFILE
+ARG VERSION
+LABEL io.nico-dev.profile="${PROFILE}" io.nico-dev.version="${VERSION}"
 RUN mkdir -p /opt/carbide/migrations && \
     mkdir -p /opt/carbide/pxe/templates && \
     mkdir -p /opt/carbide/scout-firmware-scripts && \

@@ -318,7 +318,7 @@ def build_steps(args):
 
         ('build', 'Host', 'Build nico images → local registry',
          [[sys.executable, NICO_DEV / 'build-dev-nico.py',
-           site_mac, '--tag', args.tag]],
+           site_mac, '--tag', args.tag, '--profile', args.build_profile]],
          'Needs the docker daemon and DISK: the builder cache grows fast —\n'
          '`docker builder prune -af`. First build 20-40 min on a modern 8-core\n'
          'host, 2-3 h on a 4-core host of 2012 vintage; later 2-5 min. A long\n'
@@ -472,6 +472,10 @@ def main():
     p.add_argument('--tag', default=None,
                    help='source-build image tag (default <branch>-<short sha> of the repo checkout, '
                         '-dirty with uncommitted changes; mutually exclusive with --ngc-tag)')
+    p.add_argument('--build-profile', choices=['release', 'dev'], default=None,
+                   help='cargo profile for the source build, REQUIRED unless --ngc-tag: release = '
+                        'the shipped build (slow, optimized); dev = the Tilt build (debug, '
+                        'incremental, minutes per change) (config: build_profile: release|dev)')
     p.add_argument('--ngc-tag', default=None, metavar='TAG',
                    help='deploy this pre-built NGC image tag instead of '
                         'building from source (replaces the build+nico '
@@ -557,6 +561,11 @@ def main():
     if args.tag and args.ngc_tag:
         raise SystemExit('Error: both deploy modes set — --tag (source '
                          'build) and --ngc-tag (pre-built). Choose one.')
+    if not args.ngc_tag and not args.build_profile:
+        raise SystemExit('Error: a source build needs its cargo profile. Set '
+                         '`build_profile: release` (the shipped build, slow, optimized) or '
+                         '`build_profile: dev` (the Tilt build: debug, incremental, minutes '
+                         'per change) in the config, or pass --build-profile.')
     # NGC image model: ONE base registry holds every image at one tag; only
     # the core image has a non-conventional name there. Accept the legacy
     # full path (nico_image / --ngc-image / $NICO_NGC_IMAGE) by splitting it.

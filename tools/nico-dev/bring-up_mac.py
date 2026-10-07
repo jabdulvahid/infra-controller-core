@@ -310,7 +310,7 @@ def build_steps(args):
 
         ('build', 'Mac', 'Build nico images → local registry',
          [[sys.executable, NICO_DEV / 'build-dev-nico.py',
-           site_mac, '--tag', args.tag]],
+           site_mac, '--tag', args.tag, '--profile', 'release']],
          'Needs colima running (`colima start --cpu 4 --memory 8`) and DISK:\n'
          'the builder cache grows ~100GB/week — `docker builder prune -af`\n'
          '(20260827-#1). First build 20-40 min, later 2-5 min. how-to §6.'),
