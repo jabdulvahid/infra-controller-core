@@ -374,7 +374,7 @@ underlay: 11        # first octets of the fabric prefixes: pick two your host an
 overlay: 12
 
 # subnet: 192.168.77  # only if 192.168.64.0/24 is taken on your host
-# tag: feature1-abc   # the label for the images you build; default <branch>-<short sha> of the checkout
+# tag: feature1-abc   # the label for the images you build; default `git describe` of the checkout (= the NICo version string)
 ```
 
 What the fields mean:
@@ -415,11 +415,13 @@ What the fields mean:
   tools were grafted into, which is the worktree from Step 2. Name another
   folder or worktree inside the share to build and deploy from that one
   instead.
-- `tag`: a label for the images you build. Without it, bring-up derives
-  `<branch>-<short sha>` from the checkout, `-dirty` with uncommitted
-  changes, so a new commit is a new tag by itself. Set it to rebuild the
-  same commit under another name; a deployed tag is never rebuilt or
-  redeployed.
+- `tag`: a label for the images you build. Without it, bring-up uses the
+  checkout's `git describe --tags --always --dirty`, for example
+  `v2.4.0-pr-102-g8c8c94d9f`, which is also the string NICo reports as its
+  version in the admin UI, so the registry tag and the running version
+  always agree; `-dirty` marks uncommitted changes, and a new commit is a
+  new tag by itself. Set it to rebuild the same commit under another name;
+  a deployed tag is never rebuilt or redeployed.
 
 ## Step 4 - Dry run
 
@@ -784,8 +786,8 @@ The source-build cycle: change code in the worktree, build images, roll the
 cluster onto them. On the host:
 
 ```bash
-build-dev-nico.py    <site> --tag t2 --profile dev   # images for the host arch, pushed to the local registry
-redeploy-dev-nico.py <site> --tag t2                 # helm upgrade of the nico release only
+build-dev-nico.py    <site> --profile dev   # images for the host arch, pushed to the local registry; tag = git describe
+redeploy-dev-nico.py <site>                 # helm upgrade of the nico release only, to that same tag
 kubectl -n nico-system get pods -w
 ```
 
@@ -818,9 +820,11 @@ Six rules:
   `crates/` changed means the tools are older than that fix.
 - **Use a new tag every time.** Both scripts refuse to rebuild or redeploy a
   tag that is already deployed. If they did not, the cluster would silently
-  keep running the old image under the same name. Without `--tag`, bring-up
-  derives `<branch>-<short sha>` from the checkout, so a new commit is a new
-  tag by itself; the explicit `--tag` is for rebuilding the same commit.
+  keep running the old image under the same name. Without `--tag`, all three
+  scripts and the runner use the checkout's `git describe --tags --always
+  --dirty`, the same string NICo reports as its version, so a new commit is
+  a new tag by itself and `machine show`, the admin UI and the registry name
+  the same build; the explicit `--tag` is for rebuilding the same commit.
 - **Never go backwards.** Each deploy advances the database's migration
   ledger, and an older binary refuses to run against a newer ledger. To
   revert, go forward: restore the code, build a fresh tag from the current

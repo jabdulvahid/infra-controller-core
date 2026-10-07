@@ -388,20 +388,21 @@ def apply_ngc_mode(steps, args, site_mac):
 
 
 def default_tag(repo_dir):
-    """Image tag for a source build when --tag is not given: <branch>-<short sha>
-    of the checkout the site is built from (plus -dirty with uncommitted
-    changes), so a rebuild on a new commit gets a new tag by itself. Falls back
-    to main-YYYYMMDD when the checkout is not a git tree."""
+    """Image tag for a source build when --tag is not given: the checkout's
+    `git describe --tags --always --dirty`, e.g. v2.4.0-pr-102-g8c8c94d9f, which
+    is also the string the binaries report as the NICo version (build-dev-nico.py
+    passes the same describe as VERSION), so the registry tag and the admin UI's
+    version agree. A new commit is a new tag by itself; `-dirty` marks
+    uncommitted changes. Falls back to main-YYYYMMDD when the checkout is not a
+    git tree. build-dev-nico.py derives the same default when run by hand."""
     def git(*a):
         r = subprocess.run(['git', '-C', str(repo_dir), *a], capture_output=True, text=True)
         return r.stdout.strip() if r.returncode == 0 else ''
-    sha = git('rev-parse', '--short=9', 'HEAD')
-    if not sha:
+    described = git('describe', '--tags', '--always', '--dirty')
+    if not described:
         return 'main-' + datetime.date.today().strftime('%Y%m%d')
-    branch = git('rev-parse', '--abbrev-ref', 'HEAD') or 'detached'
-    dirty = '-dirty' if git('status', '--porcelain', '--untracked-files=no') else ''
-    tag = re.sub(r'[^a-z0-9_.-]+', '-', f'{branch}-{sha}{dirty}'.lower()).strip('-.')
-    return tag[:120]
+    # A docker tag allows [A-Za-z0-9_.-], up to 128 chars, not starting with . or -
+    return re.sub(r'[^A-Za-z0-9_.-]+', '-', described).strip('-.')[:128]
 
 
 def main():
@@ -470,8 +471,9 @@ def main():
                    help='nico-dev folder path relative to the share '
                         f'(default: {DEF_REL})')
     p.add_argument('--tag', default=None,
-                   help='source-build image tag (default <branch>-<short sha> of the repo checkout, '
-                        '-dirty with uncommitted changes; mutually exclusive with --ngc-tag)')
+                   help='source-build image tag (default: the checkout\'s `git describe --tags '
+                        '--always --dirty`, the same string NICo reports as its version; '
+                        'mutually exclusive with --ngc-tag)')
     p.add_argument('--build-profile', choices=['release', 'dev'], default=None,
                    help='cargo profile for the source build, REQUIRED unless --ngc-tag: release = '
                         'the shipped build (slow, optimized); dev = the Tilt build (debug, '

@@ -219,13 +219,15 @@ overlay: 12                       #   prefixes (<underlay>.133.1.0/27 holds the
 # minutes on a modern 8-core host, 2-3 hours on a 4-core host of 2012
 # vintage; minutes afterwards (the cargo target directory persists in a
 # docker cache, one per checkout, so a change recompiles only what it touched).
-# tag: main-20260830                # image label; default <branch>-<short sha>
-                                  #   of the repo: checkout (-dirty with
-                                  #   uncommitted changes), so a new commit is
-                                  #   a new tag by itself. Set it to rebuild
-                                  #   the same commit under another name. Use a
-                                    #   new label for every rebuild: a deployed
-                                    #   tag is never rebuilt or redeployed.
+# tag: main-20260830                # image label; default: the repo: checkout's
+                                  #   `git describe --tags --always --dirty`
+                                  #   (e.g. v2.4.0-pr-102-g8c8c94d9f), the same
+                                  #   string NICo reports as its version, so the
+                                  #   registry tag and the admin UI agree; a new
+                                  #   commit is a new tag by itself. Set it to
+                                  #   rebuild the same commit under another
+                                  #   name; a deployed tag is never rebuilt or
+                                  #   redeployed.
 
 # ── Runner behaviour (rarely changed) ──────────────────────────────────
 # step_delay: 10                  # settle pause in seconds between steps, so

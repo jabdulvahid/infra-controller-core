@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -247,8 +248,10 @@ def main():
         description='Redeploy Nico to a new image tag (helm upgrade only)'
     )
     p.add_argument('site', help='Site folder or site yaml path')
-    p.add_argument('--tag', required=True,
-                   help='Image tag to deploy (must already be in the registry)')
+    p.add_argument('--tag', default=None,
+                   help='Image tag to deploy (must already be in the registry). Default: the '
+                        'checkout\'s `git describe --tags --always --dirty`, the tag '
+                        'build-dev-nico.py gives the image it builds from that checkout.')
     p.add_argument('--force', action='store_true',
                    help='Proceed even if this tag is already the deployed one '
                         '(only useful with imagePullPolicy Always)')
@@ -274,6 +277,16 @@ def main():
               file=sys.stderr)
         print('  Check nico_mac_folder / nico_vm_folder in site yaml.', file=sys.stderr)
         sys.exit(1)
+
+    # Default tag = the checkout's git describe, the same derivation as
+    # build-dev-nico.py, so build and redeploy name the same image by default.
+    if not args.tag:
+        r = subprocess.run(['git', '-C', str(repo), 'describe', '--tags', '--always', '--dirty'],
+                           capture_output=True, text=True)
+        if r.returncode != 0 or not r.stdout.strip():
+            sys.exit(f'Error: --tag is required when {repo} is not a git tree (git describe failed)')
+        args.tag = re.sub(r'[^A-Za-z0-9_.-]+', '-', r.stdout.strip()).strip('-.')[:128]
+        print(f'  tag from git describe of {repo}: {args.tag}')
 
     helm_dir      = str(repo / 'helm')
     sitename      = cfg.get('nico-system', {}).get('helm-values', {}).get('sitename', 'dev')
