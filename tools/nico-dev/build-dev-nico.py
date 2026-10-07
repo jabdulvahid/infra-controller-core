@@ -22,6 +22,7 @@ Build sequence (native for the host arch):
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -177,8 +178,12 @@ HOST_OS = platform.system()
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('site', help='Site folder or site yaml path')
-    p.add_argument('--tag', required=True,
-                   help='Image tag (e.g. latest, test1, v1.2.3, any string)')
+    p.add_argument('--tag', default=None,
+                   help='Image tag. Default: the checkout\'s `git describe --tags --always '
+                        '--dirty` (e.g. v2.4.0-pr-102-g8c8c94d9f), the same string the '
+                        'binaries report as the NICo version, so the registry tag and the '
+                        'admin UI agree. Give one explicitly only to rebuild the same commit '
+                        'under another name; an existing tag is refused either way.')
     p.add_argument('--profile', required=True, choices=['release', 'dev'],
                    help='cargo profile for the nico image. release = the shipped build '
                         '(cargo build --release --workspace, every executable, sccache; '
@@ -227,7 +232,6 @@ def main():
     push_reg    = f'localhost:{reg_port}'
     build_ctr   = f'{push_reg}/carbide-build:{MACHINE}'
     runtime_ctr = f'{push_reg}/carbide-runtime:{MACHINE}'
-    nico_img    = f'{push_reg}/nico:{args.tag}'
 
     # Docker reachable? (colima not started is the usual cause on a Mac)
     if subprocess.run(['docker', 'info'], capture_output=True).returncode != 0:
@@ -244,13 +248,25 @@ def main():
     branch = git('branch', '--show-current') or '(detached HEAD)'
     sha    = git('rev-parse', '--short', 'HEAD')
     dirty  = ' +uncommitted-changes' if git('status', '--porcelain') else ''
+    # What `carbide-api version` reports as build_version; the production
+    # Makefile passes the same describe. Also the default image tag, so the
+    # registry tag and the NICo version string are one and the same.
+    described = git('describe', '--tags', '--always', '--dirty')
+    if not args.tag:
+        if not described:
+            sys.exit('Error: --tag is required when the checkout is not a git tree '
+                     '(git describe failed)')
+        args.tag = re.sub(r'[^A-Za-z0-9_.-]+', '-', described).strip('-.')[:128]
+    nico_img = f'{push_reg}/nico:{args.tag}'
 
     print(f'nico-dev — Build Nico (linux/{DOCKER_ARCH}, on this {HOST_OS} host)')
     print(f'  site     : {site_yaml}')
     print(f'  repo     : {repo_path}')
     print(f'  checkout : {branch} @ {sha}{dirty}')
     print(f'  registry : {push_reg}  (VM pulls from {reg_host}:{reg_port})')
-    print(f'  tag      : {args.tag}')
+    print(f'  tag      : {args.tag}' + ('  (from git describe; = the NICo version string)'
+                                       if args.tag == re.sub(r'[^A-Za-z0-9_.-]+', '-', described).strip('-.')[:128]
+                                       else ''))
     print(f'  profile  : {args.profile}'
           + ('  (debug build, incremental; the shipped build is --profile release)'
              if args.profile == 'dev' else '  (the shipped build; --profile dev rebuilds faster)'))
@@ -362,8 +378,7 @@ def main():
                     # what `carbide-api version` reports as build_version —
                     # the production Makefile passes the same git describe;
                     # without it the dev image says build_version= (blank)
-                    'VERSION': git('describe', '--tags', '--always', '--dirty')
-                               or f'dev-{args.tag}',
+                    'VERSION': described or f'dev-{args.tag}',
                     # kea hook install path: /usr/lib/<triplet>/kea/hooks
                     'GNU_TRIPLET':               f'{MACHINE}-linux-gnu',
                     # cargo --jobs from the daemon's CPUs/memory (see cargo_jobs)
