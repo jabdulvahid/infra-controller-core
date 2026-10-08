@@ -798,6 +798,7 @@ class ApiLog:
     # `Some("GB200 NVL")`, or a bare word
     KV_RE = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\[[^\]]*\]|Some\("(?:[^"\\]|\\.)*"\)|\S+)')
     FILE_RE = re.compile(r'^#api (\S+) (\S+) (.*?)(?: \| (.*))?$')
+    INNER_RE = re.compile(r'\b(\w+): ("(?:[^"\\]|\\.)*"|[\w.]+)')
     # message prefix → how the decision reads on screen; {x} are logfmt fields
     DECISIONS = [
         ('Starting firmware upload', 'UPGRADE {firmware_type}', 'wip'),
@@ -810,6 +811,14 @@ class ApiLog:
         ('Firmware versions satisfy preingestion requirements', 'complete (versions satisfy)', 'ok'),
         ('Fresh exploration report received', 'fresh report after BMC reset; checks start', 'plain'),
         ('No matching firmware info found', 'complete: no definition matched', 'hdr'),
+        # the recheck between components and the activation of an upgrade
+        ('Installing firmware', 'UPGRADE {fw_type} to {version} (recheck)', 'wip'),
+        ('Firmware upgrade task complete; host is off, powering on', 'activating: task done, host off, powering on', 'wip'),
+        ('Firmware upgrade task complete; initiating required BMC reboot', 'activating: task done, BMC reboot', 'wip'),
+        ('Firmware upgrade task complete; initiating required reboot', 'activating: task done, host reboot (was {power_state})', 'wip'),
+        ('Firmware upgrade task complete but reported version has not updated', 'waiting: {upgrade_type} still {current_version}, want {final_version}', 'plain'),
+        ('Firmware upgrade now reports the new version', 'activated: now {current_version}', 'ok'),
+        ('No further firmware updates needed', 'complete: no further updates needed', 'ok'),
     ]
 
     def __init__(self, kubeconfig, namespace='nico-system', path=None):
@@ -847,6 +856,10 @@ class ApiLog:
             if v.startswith('Some(') and v.endswith(')'):
                 v = v[5:-1]
             out[k] = v.strip('"')
+        # fields inside a Debug-printed struct, `to_install=Thing { fw_type: Uefi,
+        # version: "2.0" }`, are reachable by their inner names too
+        for k, v in ApiLog.INNER_RE.findall(rest):
+            out.setdefault(k, v.strip('"'))
         return out
 
     @staticmethod
