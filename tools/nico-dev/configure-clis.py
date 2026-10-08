@@ -280,6 +280,16 @@ def gen_run_mat_sh(cfg, site_folder):
             bmc_net.address_exclude(
                 ipaddress.ip_network(f'{bmc_net.network_address + 1}/32')))
     ) if bmc_net else ''
+    # The MAT run monitor lives in this tools folder. Both the site folder and
+    # the tools are normally on the share, so a relative path resolves on the
+    # VM as well as on the Mac; the generated script falls back to a glob when
+    # these tools were run from a checkout outside the share (20261008-#1).
+    tools_dir = Path(__file__).resolve().parent
+    site_resolved = Path(site_folder).resolve()
+    share_root = site_resolved.parents[2] if len(site_resolved.parents) > 2 else site_resolved
+    tools_rel = ''
+    if tools_dir.is_relative_to(share_root):
+        tools_rel = os.path.relpath(tools_dir, site_resolved)
     return f'''\
 #!/usr/bin/env bash
 # Run MAT for this site — ON THE VM (it binds br-{dc_name}-internet, which only
@@ -312,6 +322,61 @@ BIN="/usr/local/bin/machine-a-tron"
 CERT_DIR="/etc/machine-a-tron/{dc_name}"
 CONF="$CERT_DIR/config.toml"
 
+# Launch control (20261008-#1): MAT prints a few lines at start and then only
+# writes its log, so it runs in the background and the MAT run monitor takes
+# the terminal. The run is watched from its first second (a monitor started
+# by hand later misses the early endpoint states) and leaving the monitor
+# with q does not stop MAT.
+#   run-mat.sh                 stage, start MAT, show the monitor
+#   run-mat.sh --no-monitor    stage, start MAT in the background, return
+#   run-mat.sh --status        is MAT running? pid and log paths
+#   run-mat.sh --stop          stop the running MAT (SIGINT, what Ctrl-C sent)
+# Any other arguments go to machine-a-tron unchanged.
+PIDFILE="/var/run/machine-a-tron-{dc_name}.pid"
+MAT_LOG="/var/log/machine-a-tron-{dc_name}.log"     # MAT's own log (log_file)
+MAT_OUT="/var/log/machine-a-tron-{dc_name}.out"     # MAT's stdout and stderr
+MONITOR_REL="{tools_rel}"    # tools folder relative to the site, when both are on the share
+MONITOR=""
+[[ -n "$MONITOR_REL" ]] && MONITOR="$SITE/$MONITOR_REL/run-monitor-mat.sh"
+[[ -x "$MONITOR" ]] || MONITOR="$(ls -d "$SITE"/../../../*/tools/nico-dev/run-monitor-mat.sh 2>/dev/null | head -1)"
+MODE=start
+case "${{1:-}}" in
+    --status) MODE=status; shift ;;
+    --stop) MODE=stop; shift ;;
+    --no-monitor) MODE=background; shift ;;
+esac
+# nohup execs the binary, so the running process's command line starts with
+# $BIN; the sudo/env wrapper lines do not and are not matched.
+mat_pid() {{ pgrep -f "^$BIN " 2>/dev/null | head -1 || true; }}
+if [[ "$MODE" == status ]]; then
+    pid=$(mat_pid)
+    if [[ -n "$pid" ]]; then
+        echo "machine-a-tron is running (pid $pid); MAT log $MAT_LOG, stdout $MAT_OUT"
+    else
+        echo "machine-a-tron is not running"
+    fi
+    exit 0
+fi
+if [[ "$MODE" == stop ]]; then
+    pid=$(mat_pid)
+    if [[ -z "$pid" ]]; then echo "machine-a-tron is not running"; exit 0; fi
+    echo "Stopping machine-a-tron (pid $pid, SIGINT, sudo)..."
+    sudo kill -INT "$pid"
+    for _ in $(seq 1 20); do ps -p "$pid" >/dev/null 2>&1 || break; sleep 0.5; done
+    if ps -p "$pid" >/dev/null 2>&1; then
+        echo "still running after 10 s; try: sudo kill -TERM $pid" >&2
+        exit 1
+    fi
+    sudo rm -f "$PIDFILE"
+    echo "stopped"
+    exit 0
+fi
+pid=$(mat_pid)
+if [[ -n "$pid" ]]; then
+    echo "ERROR: machine-a-tron is already running (pid $pid); stop it first: $0 --stop" >&2
+    exit 1
+fi
+
 if [[ ! -f "$MAT_BIN" ]]; then
     echo "ERROR: $MAT_BIN not found — run build-nico-clis.py on the host first." >&2
     exit 1
@@ -338,7 +403,6 @@ sudo chmod 600 "$CERT_DIR"/mat-client-key.pem
 sudo cp "$MAT_CONFIG" "$CONF"
 # The log path is fixed per dc; rewritten in the STAGED copy only, the
 # source toml is untouched.
-MAT_LOG="/var/log/machine-a-tron-{dc_name}.log"
 sudo sed -i '/^log_file *=/d' "$CONF"
 sudo sed -i '1i log_file = "'"$MAT_LOG"'"' "$CONF"
 echo "MAT log: $MAT_LOG"
@@ -381,12 +445,33 @@ done
 
 # MAT runs as root (nico-sim-validated): it binds port 443 for the BMC mocks
 # AND creates IP aliases on br-{dc_name}-internet (CAP_NET_ADMIN). Vars go
-# through 'env' so sudoers setenv policy cannot silently drop them.
+# through 'env' so sudoers setenv policy cannot silently drop them. It is
+# started in the background: nohup execs the binary, so $! inside the root
+# shell is machine-a-tron's own pid.
+echo "Starting machine-a-tron in the background (sudo); stdout → $MAT_OUT"
 sudo env FORGE_ROOT_CA_PATH="$CERT_DIR/mat-ca.pem" \\
          CLIENT_CERT_PATH="$CERT_DIR/mat-client.pem" \\
          CLIENT_KEY_PATH="$CERT_DIR/mat-client-key.pem" \\
          REPO_ROOT="$CERT_DIR/repo-root" \\
-         "$BIN" "$CONF" "$@"
+         MAT_OUT="$MAT_OUT" PIDFILE="$PIDFILE" \\
+         sh -c 'nohup "$0" "$@" >>"$MAT_OUT" 2>&1 & echo $! > "$PIDFILE"' "$BIN" "$CONF" "$@"
+sleep 3
+pid=$(cat "$PIDFILE" 2>/dev/null || true)
+if [[ -z "$pid" ]] || ! ps -p "$pid" >/dev/null 2>&1; then
+    echo "ERROR: machine-a-tron exited right after start; the end of its output:" >&2
+    sudo tail -n 20 "$MAT_OUT" >&2 || true
+    exit 1
+fi
+echo "machine-a-tron running (pid $pid); MAT log $MAT_LOG"
+echo "  stop it:         $0 --stop"
+echo "  watch it again:  $MONITOR $SITE"
+[[ "$MODE" == background ]] && exit 0
+if [[ ! -x "$MONITOR" ]]; then
+    echo "note: run-monitor-mat.sh not found next to the site (tools not on the share?); MAT keeps running" >&2
+    exit 0
+fi
+"$MONITOR" "$SITE" || true
+echo "Monitor closed; machine-a-tron keeps running (pid $pid). Stop it with: $0 --stop"
 '''
 
 
