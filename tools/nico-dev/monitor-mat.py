@@ -67,7 +67,10 @@ Tab/Shift-Tab, n/p to step; ↑/↓ (j/k), PgUp/PgDn (Space), Home/End to scroll
 ? or h opens a help page listing the pages, keys and columns; r refreshes now;
 q quits. With several --mat-log files the MAT page opens on the most recently
 written one; [ and ] step through the others and a shows them all (--all-logs
-opens on all). Plain-text mode (--once, --no-tui) prints every section.
+opens on all). Plain-text mode (--once, --no-tui) prints every section. nico-api's
+pre-ingestion firmware decisions (checked, upgraded, satisfied, not checked,
+complete, and why) are read from the pod log with kubectl each refresh and
+shown under each endpoint on pages 1 and 7; --no-api-log turns that off.
 
 Milestones, from docs/architecture/state_machines/managedhost.md: a managed
 host walks Created → DpuDiscovering → DPUInitializing → HostInitializing →
@@ -434,6 +437,7 @@ class MatLog:
 # curses view can colour them (k9s-style: sections blue, title teal, column
 # headers dim, states by meaning) while plain text just joins the segments.
 TITLE, SECTION, HDR, OK, WIP, BAD, NUM, PLAIN = 'title', 'section', 'hdr', 'ok', 'wip', 'bad', 'num', ''
+STYLE_BY_NAME = {'plain': PLAIN, 'hdr': HDR, 'ok': OK, 'wip': WIP, 'bad': BAD, 'num': NUM}
 # sections, their toggle key, and whether they show by default
 # Page 0 shows every section expanded except MAT, which has its own page (5):
 # it is the longest table and the one that pushed the others off the screen.
@@ -552,6 +556,13 @@ def sec_endpoints(server, width):
                   (f'{short(pre, 14):<14}', state_style(pre)),
                   (f' {short(col(r, "machineid", "machine id", "machine"), 44):<44} ', PLAIN),
                   (short(err, max(10, width - 96)), BAD if err else PLAIN)])
+        # the latest firmware decision nico-api logged for this BMC (current run)
+        last = APILOG.last_for(col(r, 'address'), run_start()) if APILOG else None
+        if last:
+            text, style = APILOG.decision(last[2], last[3]) or (last[2], 'plain')
+            L.append([(f'  {"":<14} firmware check {last[0][11:19]}: ', HDR), (short(text, max(20, width - 42)), STYLE_BY_NAME[style])])
+    if APILOG and APILOG.error:
+        L.append([(f'  ! nico-api log: {APILOG.error}', BAD)])
     return L
 
 
@@ -769,7 +780,168 @@ class Transitions:
                 self.path = None
 
 
+class ApiLog:
+    """nico-api's pre-ingestion firmware decisions, read from the pod log with
+    kubectl every refresh and kept per BMC address, so the reason a host was
+    upgraded or let through is on the endpoints and timeline pages instead of
+    in a grep (20261008-#2). Only the decision lines are kept (the "Checking",
+    "upload", "satisfies", "no definition", "not checked" and "complete" lines
+    of check_firmware_versions_below_preingestion, plus the "Fresh exploration
+    report" line that starts the check); they are appended to the history
+    file as `#api` lines so a restarted monitor and a later reader have them.
+    Older nico-api builds log some of these at debug only; what is not in the
+    pod log cannot be shown."""
+
+    LINE_RE = re.compile(r'^(\S+Z)\s+level=\w+\s+.*?msg="((?:[^"\\]|\\.)*)"(.*)$')
+    ADDR_RE = re.compile(r'\bbmc_ip_address=(\S+)')
+    # a logfmt value: quoted, a Debug list `["Bmc 2.0"]`, a Debug option
+    # `Some("GB200 NVL")`, or a bare word
+    KV_RE = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\[[^\]]*\]|Some\("(?:[^"\\]|\\.)*"\)|\S+)')
+    FILE_RE = re.compile(r'^#api (\S+) (\S+) (.*?)(?: \| (.*))?$')
+    # message prefix → how the decision reads on screen; {x} are logfmt fields
+    DECISIONS = [
+        ('Starting firmware upload', 'UPGRADE {firmware_type}', 'wip'),
+        ('Checking firmware version', 'check {firmware_type} {inventory_id} {current} vs min {min_preingestion}', 'plain'),
+        ('Firmware version satisfies', 'ok {firmware_type}', 'ok'),
+        ('No host firmware definition matches', 'complete: no definition for vendor={vendor} model={model}', 'hdr'),
+        ('No inventory entry in the exploration report matches', 'NOT CHECKED {firmware_type}: no inventory entry', 'bad'),
+        ('The matching inventory entry reports no version', 'NOT CHECKED {firmware_type}: {inventory_id} has no version', 'bad'),
+        ('No listed component is below', 'complete: satisfied={satisfied} not_checked={not_checked}', 'ok'),
+        ('Firmware versions satisfy preingestion requirements', 'complete (versions satisfy)', 'ok'),
+        ('Fresh exploration report received', 'fresh report after BMC reset; checks start', 'plain'),
+        ('No matching firmware info found', 'complete: no definition matched', 'hdr'),
+    ]
+
+    def __init__(self, kubeconfig, namespace='nico-system', path=None):
+        self.kubeconfig, self.namespace, self.path = kubeconfig, namespace, path
+        self.events = []          # (ts, address, msg, fields) in log order
+        self.by_addr = {}         # address → [events]
+        self.seen = set()         # (ts, address, msg) already recorded
+        self.since = None         # timestamp of the newest line read, for --since-time
+        self.error = None
+        self.polls = 0
+        if path:
+            self._load(path)
+
+    def _load(self, path):
+        try:
+            with open(path) as f:
+                for line in f:
+                    m = self.FILE_RE.match(line.rstrip('\n'))
+                    if m:
+                        ts, addr, msg, fields = m.groups()
+                        self._add(ts, addr, msg, self._kv(fields or '{}'), write=False)
+        except OSError:
+            return
+
+    @staticmethod
+    def _fields(rest):
+        """The logfmt fields after msg, minus the noise, with quoting undone:
+        `current="\\"1.0\\"" firmware_type=Uefi location=...` → {'current': '1.0', 'firmware_type': 'Uefi'}."""
+        out = {}
+        for k, v in ApiLog.KV_RE.findall(rest):
+            if k in ('location', 'component', 'level', 'bmc_ip_address'):
+                continue
+            if v.startswith('"') and v.endswith('"'):
+                v = v[1:-1].replace('\\"', '"')
+            if v.startswith('Some(') and v.endswith(')'):
+                v = v[5:-1]
+            out[k] = v.strip('"')
+        return out
+
+    @staticmethod
+    def _kv(fields):
+        """Fields as a dict, from a dict, the JSON the history file holds, or a raw logfmt tail."""
+        if isinstance(fields, dict):
+            return fields
+        if fields.startswith('{'):
+            try:
+                return json.loads(fields)
+            except ValueError:
+                return {}
+        return ApiLog._fields(fields)
+
+    @classmethod
+    def decision(cls, msg, fields):
+        """(text, style name) for a decision line; None for a line that is not one."""
+        for prefix, template, style in cls.DECISIONS:
+            if msg.startswith(prefix):
+                kv = cls._kv(fields)
+                text = template.format_map({k: kv.get(k, '') for k in re.findall(r'\{(\w+)\}', template)})
+                text = re.sub(r' {2,}', ' ', text).strip()
+                # a completion that skipped a listed component is the case to notice
+                if prefix.startswith('No listed component') and kv.get('not_checked', '[]') not in ('[]', ''):
+                    style = 'bad'
+                return text, style
+        return None
+
+    def _add(self, ts, addr, msg, fields, write=True):
+        key = (ts, addr, msg)
+        if key in self.seen:
+            return
+        self.seen.add(key)
+        ev = (ts, addr, msg, fields)
+        self.events.append(ev)
+        self.by_addr.setdefault(addr, []).append(ev)
+        if write and self.path:
+            try:
+                with open(self.path, 'a') as f:
+                    f.write(f'#api {ts} {addr} {msg}' + (f' | {json.dumps(fields)}' if fields else '') + '\n')
+            except OSError as e:
+                self.error = f'{self.path}: {e.strerror}'
+                self.path = None
+
+    def refresh(self):
+        args = ['kubectl']
+        if self.kubeconfig:
+            args += ['--kubeconfig', self.kubeconfig]
+        args += ['-n', self.namespace, 'logs', 'deploy/nico-api', '--timestamps', '--all-containers=false']
+        # first poll: the run so far; later polls: since the newest line seen
+        # (inclusive, the seen-set drops the repeat)
+        args += ['--since-time', self.since] if self.since else ['--since', '3h']
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=60)
+        except FileNotFoundError:
+            self.error = 'kubectl: not found'
+            return
+        except subprocess.TimeoutExpired:
+            self.error = 'kubectl logs: timed out'
+            return
+        if r.returncode != 0:
+            self.error = (r.stderr.strip().splitlines() or ['kubectl logs failed'])[-1][:160]
+            return
+        self.error = None
+        self.polls += 1
+        newest = self.since
+        for line in r.stdout.splitlines():
+            if 'crates/preingestion-manager/' not in line:
+                continue
+            m = self.LINE_RE.match(line)
+            if not m:
+                continue
+            ts, msg, rest = m.groups()
+            if newest is None or ts > newest:
+                newest = ts
+            if self.decision(msg, rest) is None:
+                continue
+            a = self.ADDR_RE.search(rest)
+            if not a:
+                continue
+            self._add(ts, a.group(1).rstrip(':'), msg, self._fields(rest))
+        self.since = newest
+
+    def for_addr(self, addr, after=None):
+        """This address's decision lines, optionally only those at or after a time
+        (the last fleet-reset marker, so a previous run's lines stay out)."""
+        return [e for e in self.by_addr.get(addr, []) if after is None or e[0] >= after]
+
+    def last_for(self, addr, after=None):
+        evs = self.for_addr(addr, after)
+        return evs[-1] if evs else None
+
+
 HISTORY = Transitions()
+APILOG = None   # ApiLog when the nico-api log is watched (default when kubectl and a kubeconfig are at hand)
 FILTER = ''   # substring on kind or id that pages 6 and 7 restrict themselves to ('/' in the TUI, --filter)
 LABELS = {}   # machine id → (host|dpu, BMC address): what a person remembers instead of the 60-char id
 HOST_SERIALS = {}   # host machine id → product serial, from `machine show <id>` (fetch_server)
@@ -872,6 +1044,13 @@ def matches(kind, ident):
 
 def filtered_events():
     return [e for e in HISTORY.events if matches(e[1], e[2])]
+
+
+def run_start():
+    """Time of the last fleet-reset marker, so per-run views leave the previous
+    run out; None when no reset has been recorded."""
+    resets = [e[0] for e in HISTORY.events if e[1] == 'reset']
+    return resets[-1] if resets else None
 
 
 def filter_note():
@@ -1088,6 +1267,11 @@ def sec_timeline(width):
         header = [(f'  {kind} {label(kind, ident, 72)}', HDR), (f'   {len(steps)} state(s) observed, now: ', PLAIN),
                   (short(steps[-1][1], 40), state_style(steps[-1][1]))]
         timeline_block(L, header, steps, width, now_ts, kind=kind)
+        # nico-api's firmware decisions for this BMC, from the pod log, in order
+        if kind == 'endpoint' and APILOG:
+            for ts, _, msg, fields in APILOG.for_addr(ident, run_start()):
+                text, style = APILOG.decision(msg, fields) or (msg, 'plain')
+                L.append([(f'    {ts[11:19]}  ', PLAIN), ('nico-api: ', HDR), (short(text, max(30, width - 30)), STYLE_BY_NAME[style])])
 
     if not shown:
         L.append([('  (nothing yet)' if not (MACHINE_HISTORY or HISTORY.events) else f'  (nothing matches "{FILTER}")', HDR)])
@@ -1162,13 +1346,13 @@ def render(server, logs, admin_cli, interval, width=120, dpf=None, show=None, pa
 HELP = [
     ('PAGES', [
         ('0', 'overview: every section expanded except MAT, which is collapsed to a count line'),
-        ('1', 'endpoints — the site explorer\'s BMC endpoints, pre-ingestion state, the machine each became'),
+        ('1', 'endpoints — the site explorer\'s BMC endpoints, pre-ingestion state, the machine each became; under each BMC, the latest firmware decision nico-api logged for it (from the pod log via kubectl)'),
         ('2', 'machines — every machine as NICo reports it, its lifecycle milestone and milestones to go; ids tagged [host <BMC address>] / [dpu <BMC address>]'),
         ('3', 'DPUs (NICo) — dpu status and dpf show: health, firmware version status, DPF enablement'),
         ('4', 'DPF (kubectl) — DPUNodes, DPUDevices, every DPU resource\'s phase on the simulator\'s happy path'),
         ('5', 'MAT — MAT\'s own view from its log: FSM state, API state it last saw, booted OS, last timer'),
         ('6', 'history — every state change seen since the monitor started (machines, endpoints, DPUs, DPF phases), with the poll time; also appended to the history file for reading after the run'),
-        ('7', 'timeline — per object, its states in order and how long it held each: machines (hosts and DPUs) from NICo\'s own state history (machine show -c 250: complete, exact times, per run), endpoints and DPF phases from the poll diary since the last fleet reset. The current state shows its expected hold (GB200 profile x acceleration_factor from mat-config.toml, plus NICo\'s 30 s passes) and is coloured on time / over / well over'),
+        ('7', 'timeline — per object, its states in order and how long it held each: machines (hosts and DPUs) from NICo\'s own state history (machine show -c 250: complete, exact times, per run), endpoints and DPF phases from the poll diary since the last fleet reset. The current state shows its expected hold (GB200 profile x acceleration_factor from mat-config.toml, plus NICo\'s 30 s passes) and is coloured on time / over / well over. Under each endpoint, nico-api\'s firmware decisions for that BMC in order (check, upgrade, satisfied, not checked, complete), read from the pod log'),
         ('? h', 'this help; any page key, ?, h or 0 returns'),
     ]),
     ('MOVING', [
@@ -1220,6 +1404,8 @@ def run_plain(admin_cli, logs, interval, once, dpf_cfg=None):
         for log in logs:
             log.refresh()
         HISTORY.observe(server, dpf)
+        if APILOG:
+            APILOG.refresh()
         print(plain(render(server, logs, admin_cli, interval, dpf=dpf, show={n for n, _, _ in SECTIONS})))   # plain text: everything
         if once:
             return
@@ -1252,6 +1438,8 @@ def run_tui(admin_cli, logs, interval, dpf_cfg=None, default_log=None):
             for log in logs:
                 log.refresh()
             HISTORY.observe(server, dpf)
+            if APILOG:
+                APILOG.refresh()
             with lock:
                 data.update(server=server, dpf=dpf, at=time.time(), busy=False)
             wake.wait(interval)
@@ -1423,8 +1611,11 @@ def main():
     p.add_argument('--kubeconfig', default=None, help='for the DPF section (default: *.kubeconfig.yaml next to the admin CLI wrapper)')
     p.add_argument('--dpf-namespace', default='dpf-operator-system')
     p.add_argument('--no-dpf', action='store_true', help='skip the DPF (kubectl) section')
+    p.add_argument('--no-api-log', action='store_true',
+                   help='do not read nico-api\'s pre-ingestion firmware decisions from the pod log (kubectl logs deploy/nico-api)')
+    p.add_argument('--api-namespace', default='nico-system', help='namespace of the nico-api Deployment (default nico-system)')
     a = p.parse_args()
-    global HISTORY, FILTER, SITE_DIR
+    global HISTORY, APILOG, FILTER, SITE_DIR
     SITE_DIR = os.path.dirname(os.path.abspath(a.admin_cli))
     load_mat_timing(SITE_DIR)
     FILTER = a.filter.strip()
@@ -1444,14 +1635,13 @@ def main():
     logs = [MatLog(f) for f in mat_logs]
     plain_logs = logs if (a.all_logs or newest is None) else [logs[newest]]
     default_log = None if a.all_logs else newest
-    dpf_cfg = None
-    if not a.no_dpf:
-        kc = a.kubeconfig
-        if not kc:
-            site_dir = os.path.dirname(os.path.abspath(a.admin_cli))
-            found = sorted(f for f in os.listdir(site_dir) if f.endswith('.kubeconfig.yaml')) if os.path.isdir(site_dir) else []
-            kc = os.path.join(site_dir, found[0]) if found else None
-        dpf_cfg = (kc, a.dpf_namespace)
+    kc = a.kubeconfig
+    if not kc:
+        found = sorted(f for f in os.listdir(SITE_DIR) if f.endswith('.kubeconfig.yaml')) if os.path.isdir(SITE_DIR) else []
+        kc = os.path.join(SITE_DIR, found[0]) if found else None
+    dpf_cfg = (kc, a.dpf_namespace) if not a.no_dpf else None
+    if not a.no_api_log:
+        APILOG = ApiLog(kc, a.api_namespace, HISTORY.path if not a.no_history else None)
     if a.once or a.no_tui or not sys.stdout.isatty():
         try:
             run_plain(a.admin_cli, plain_logs, a.interval, a.once, dpf_cfg)
