@@ -646,11 +646,14 @@ ssh nico@192.168.64.126 '~/mac/sites/dc1/feature1/run-mat.sh'
 
 `run-mat.sh` prints the `BUILD_INFO` line, copies the binary, the
 certificates and the configuration to local disk on the VM, installs the
-binary, stages everything under `/etc/machine-a-tron/dc1/`, and launches
-MAT under `sudo`. The log is `/var/log/machine-a-tron-dc1.log` on the VM.
-You should see machines appear with `run-admin-cli.sh machine show` (no
-argument lists them all). For a live overview of the whole run, in a second
-VM terminal:
+binary, stages everything under `/etc/machine-a-tron/dc1/`, and starts MAT
+under `sudo` in the background; the terminal then shows the MAT run monitor,
+so the run is watched from its first second. Leaving the monitor with `q`
+does not stop MAT: `run-mat.sh --status` says whether it runs, `run-mat.sh
+--stop` stops it, and `run-mat.sh --no-monitor` starts it without the
+monitor. The log is `/var/log/machine-a-tron-dc1.log` on the VM. You should
+see machines appear with `run-admin-cli.sh machine show` (no argument lists
+them all). To bring the monitor back, or to watch from a second VM terminal:
 
 ```bash
 ~/mac/infra-controller/tools/nico-dev/run-monitor-mat.sh ~/mac/sites/dc1/feature1

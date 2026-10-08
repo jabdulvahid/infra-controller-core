@@ -82,9 +82,7 @@ step and before starting MAT; the run script copies it to the VM at start.
 ## 4. Start MAT, on the VM
 
 MAT runs on the VM only. It puts the addresses of its mock BMCs on the fabric
-bridge inside the VM, and the NICo site explorer connects to them there. Open
-a terminal for MAT and leave it open; MAT runs in the foreground and logs to
-that terminal.
+bridge inside the VM, and the NICo site explorer connects to them there.
 
 ```bash
 ssh nico@192.168.64.126
@@ -94,11 +92,21 @@ ssh nico@192.168.64.126
 The script copies the binary, the certificates and the configuration from
 the share to local disk, installs the binary, stages everything under
 `/etc/machine-a-tron/dc1/`, adds the API hostname to the VM's `/etc/hosts`
-and launches MAT under `sudo`. It asks for your password once.
+and starts MAT under `sudo` in the background. It asks for your password
+once. MAT prints a few lines at start and then only writes its log, so the
+terminal goes to the MAT run monitor (section 5), which watches the run from
+its first second. Leaving the monitor with `q` does not stop MAT:
 
-You know it is running when the log shows the BMCs coming up and, a little
-later, DHCP requests being answered. The same log is written to
-`/var/log/machine-a-tron-dc1.log`.
+```bash
+~/mac/sites/dc1/dev1/run-mat.sh --status       # running? pid and log paths
+~/mac/sites/dc1/dev1/run-mat.sh --stop         # stop it (SIGINT, as Ctrl-C did)
+~/mac/sites/dc1/dev1/run-mat.sh --no-monitor   # start it and return, no monitor
+```
+
+A second `run-mat.sh` while MAT runs refuses and names the pid. MAT's log is
+`/var/log/machine-a-tron-dc1.log`; what it printed to the terminal goes to
+`/var/log/machine-a-tron-dc1.out`. You know it is running when the log shows
+the BMCs coming up and, a little later, DHCP requests being answered.
 
 ## 5. Watch the fleet appear, from a second terminal on the VM
 
