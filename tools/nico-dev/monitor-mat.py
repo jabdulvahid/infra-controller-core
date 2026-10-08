@@ -328,6 +328,12 @@ def fetch_server(admin_cli):
                 m = re.search(r'^PRODUCT SERIAL\s*:\s*(\S+)', detail or '', re.M)
                 if m:
                     HOST_SERIALS[mid] = m.group(1)
+                # INTERFACES: ... Addresses : a,b — a DPU's oob_net0 address is one of them
+                addrs = {a.strip().split('/')[0]
+                         for line in re.findall(r'^\s*Addresses\s*:\s*(.+)$', detail or '', re.M)
+                         for a in line.split(',') if a.strip()}
+                if addrs:
+                    MACHINE_ADDRS[mid] = addrs
                 rows = parse_state_history(detail or '')
                 if rows or entry is None:
                     MACHINE_HISTORY[mid] = {'version': version, 'rows': rows, 'gone': False,
@@ -545,22 +551,22 @@ def mat_build_info(admin_cli):
 
 def sec_endpoints(server, width):
     L = [[('ENDPOINTS (site explorer)', SECTION)],
-         [(f'  {"address":<14} {"kind":<5} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)]]
+         [(f'  {"address":<14} {"kind":<8} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)]]
     eps = server.get('endpoints', [])
     if not eps:
         L.append([('  (none yet)', HDR)])
     for r in eps:
         pre = col(r, 'pre-ingestion state', 'preingestionstate')
         err = col(r, 'last exploration error', 'lastexplorationerror')
-        L.append([(f'  {short(col(r, "address"), 14):<14} {ENDPOINT_KIND.get(col(r, "address"), ""):<5} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
+        L.append([(f'  {short(col(r, "address"), 14):<14} {ENDPOINT_KIND.get(col(r, "address"), ""):<8} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
                   (f'{short(pre, 14):<14}', state_style(pre)),
                   (f' {short(col(r, "machineid", "machine id", "machine"), 44):<44} ', PLAIN),
-                  (short(err, max(10, width - 102)), BAD if err else PLAIN)])
+                  (short(err, max(10, width - 105)), BAD if err else PLAIN)])
         # the latest firmware decision nico-api logged for this BMC (current run)
         last = APILOG.last_for(col(r, 'address'), run_start()) if APILOG else None
         if last:
             text, style = APILOG.decision(last[2], last[3]) or (last[2], 'plain')
-            L.append([(f'  {"":<20} firmware check {last[0][11:19]}: ', HDR), (short(text, max(20, width - 48)), STYLE_BY_NAME[style])])
+            L.append([(f'  {"":<23} firmware check {last[0][11:19]}: ', HDR), (short(text, max(20, width - 51)), STYLE_BY_NAME[style])])
     if APILOG and APILOG.error:
         L.append([(f'  ! nico-api log: {APILOG.error}', BAD)])
     return L
@@ -959,6 +965,7 @@ FILTER = ''   # substring on kind or id that pages 6 and 7 restrict themselves t
 LABELS = {}   # machine id → (host|dpu, BMC address): what a person remembers instead of the 60-char id
 ENDPOINT_KIND = {}   # BMC address → host|dpu, from the endpoint report (a DPU BMC carries a MachineId as soon as it is explored)
 HOST_SERIALS = {}   # host machine id → product serial, from `machine show <id>` (fetch_server)
+MACHINE_ADDRS = {}  # machine id → its interfaces' IP addresses, from `machine show <id>` (a DPU's oob_net0 among them)
 # machine id → {'version', 'rows': [(timestamp, compact state, raw json)], 'state', 'type', 'gone'}:
 # NICo's own state history per machine, refreshed when its State Version changes.
 # Unlike the poll diary it is complete, exactly timed, and starts with the
@@ -1046,6 +1053,14 @@ def update_labels(server):
     for mid, (kind, addr) in list(LABELS.items()):
         if kind_of(mid, kind) != kind:
             LABELS[mid] = (kind_of(mid, kind), addr)
+    # A DPU's own oob_net0 address (underlay, leased while its host boots) is
+    # probed by the explorer like a BMC and answers 404; name it for what it is.
+    for mid, addrs in MACHINE_ADDRS.items():
+        if kind_of(mid, '') == 'dpu':
+            bmc = LABELS.get(mid, ('', ''))[1]
+            for a in addrs:
+                if a != bmc:
+                    ENDPOINT_KIND[a] = 'dpu-oob'
 
 
 def label(kind, ident, width=44):
