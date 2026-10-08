@@ -641,7 +641,7 @@ still to go, DPUs, DPF phases and MAT's own view, one page per section
 (digits or ←→ switch pages, `?` for help), refreshing every 10 s. The header
 says whether a MAT process is running, and the MAT page shows how long ago
 the log was last written, so a MAT that died or was stopped does not look
-like a quiet one. Page 7 is the timeline: per object, its states in order
+like a quiet one. The endpoints page also shows, under each BMC, the latest firmware decision nico-api logged for it, and the timeline lists those decisions in order under each endpoint; the monitor reads them from the nico-api pod log with kubectl every refresh and appends them to the history file, so the reason a host was upgraded or let through is on screen instead of in a grep (`--no-api-log` turns this off). Page 7 is the timeline: per object, its states in order
 with how long each was held. For machines, hosts and DPUs alike, it reads
 NICo's own state history (`machine show <id> -c 250`), which is complete,
 exactly timed and starts with the machine, so a run that began before the
