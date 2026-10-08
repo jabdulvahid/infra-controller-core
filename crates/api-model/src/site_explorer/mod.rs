@@ -435,28 +435,37 @@ impl ExploredEndpoint {
         )
     }
 
+    /// find_inventory locates the first firmware inventory entry whose id
+    /// matches the component's `current_version_reported_as`. The entry may
+    /// carry no version: a BMC can list a component and report nothing for
+    /// it, and callers that decide on the version need to tell that apart
+    /// from "no such entry".
+    pub fn find_inventory(
+        &self,
+        fw_info: &Firmware,
+        firmware_type: FirmwareComponentType,
+    ) -> Option<&Inventory> {
+        self.report
+            .service
+            .iter()
+            .flat_map(|service| service.inventories.iter())
+            .find(|inventory| fw_info.matching_version_id(&inventory.id, firmware_type))
+    }
+
     /// find_version will locate a version number within an ExploredEndpoint
     pub fn find_version(
         &self,
         fw_info: &Firmware,
         firmware_type: FirmwareComponentType,
     ) -> Option<&String> {
-        for service in self.report.service.iter() {
-            if let Some(matching_inventory) = service
-                .inventories
-                .iter()
-                .find(|&x| fw_info.matching_version_id(&x.id, firmware_type))
-            {
-                tracing::debug!(
-                    bmc_ip_address = %self.address,
-                    firmware_type = ?firmware_type,
-                    version = ?matching_inventory.version,
-                    "Found matching firmware version",
-                );
-                return matching_inventory.version.as_ref();
-            };
-        }
-        None
+        let matching_inventory = self.find_inventory(fw_info, firmware_type)?;
+        tracing::debug!(
+            bmc_ip_address = %self.address,
+            firmware_type = ?firmware_type,
+            version = ?matching_inventory.version,
+            "Found matching firmware version",
+        );
+        matching_inventory.version.as_ref()
     }
 
     pub fn find_all_versions(
@@ -4007,6 +4016,32 @@ mod tests {
                     ("Other_Component", Some("7.8.9")),
                 ] => Fails,
             }
+        );
+    }
+
+    /// `find_inventory` tells a listed entry without a version apart from no
+    /// entry at all, which `find_version` folds into one `None`.
+    #[test]
+    fn find_inventory_keeps_an_entry_that_reports_no_version() {
+        let fw_info = create_test_firmware(FirmwareComponentType::Bmc, r"^BMC_Firmware$");
+        let endpoint =
+            create_test_endpoint(vec![("BMC_Firmware", None), ("DPU_UEFI", Some("4.5.6"))]);
+
+        let inventory = endpoint
+            .find_inventory(&fw_info, FirmwareComponentType::Bmc)
+            .expect("the entry matches even without a version");
+        assert_eq!(inventory.id, "BMC_Firmware");
+        assert_eq!(inventory.version, None);
+        assert_eq!(
+            endpoint.find_version(&fw_info, FirmwareComponentType::Bmc),
+            None
+        );
+
+        let absent = create_test_endpoint(vec![("DPU_UEFI", Some("4.5.6"))]);
+        assert!(
+            absent
+                .find_inventory(&fw_info, FirmwareComponentType::Bmc)
+                .is_none()
         );
     }
 
