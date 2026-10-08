@@ -1033,11 +1033,12 @@ def update_labels(server):
             LABELS[mid] = (kind_of(mid, 'dpu'), addr)
         # The report fills MachineId for a DPU BMC from the moment it is
         # explored and leaves it empty for a host BMC, so the kind is known
-        # long before any machine exists. An unexplored endpoint (no vendor
-        # yet) keeps whatever was known.
+        # long before any machine exists. Only a vendor proves a real report:
+        # an endpoint that never answered (DPU underlay addresses probed while
+        # a host boots show Type Unknown and no vendor) stays untagged.
         if mid:
             ENDPOINT_KIND[addr] = 'dpu'
-        elif col(r, 'vendor') or col(r, 'type'):
+        elif col(r, 'vendor'):
             ENDPOINT_KIND.setdefault(addr, 'host')
     for mid, serial in server.get('host_serials', {}).items():
         if serial in by_serial:
