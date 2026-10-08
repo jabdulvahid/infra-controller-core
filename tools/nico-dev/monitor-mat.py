@@ -545,22 +545,22 @@ def mat_build_info(admin_cli):
 
 def sec_endpoints(server, width):
     L = [[('ENDPOINTS (site explorer)', SECTION)],
-         [(f'  {"address":<14} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)]]
+         [(f'  {"address":<14} {"kind":<5} {"type":<5} {"vendor":<8} {"pre-ingestion":<14} {"machine":<44} last error', HDR)]]
     eps = server.get('endpoints', [])
     if not eps:
         L.append([('  (none yet)', HDR)])
     for r in eps:
         pre = col(r, 'pre-ingestion state', 'preingestionstate')
         err = col(r, 'last exploration error', 'lastexplorationerror')
-        L.append([(f'  {short(col(r, "address"), 14):<14} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
+        L.append([(f'  {short(col(r, "address"), 14):<14} {ENDPOINT_KIND.get(col(r, "address"), ""):<5} {short(col(r, "type"), 5):<5} {short(col(r, "vendor"), 8):<8} ', PLAIN),
                   (f'{short(pre, 14):<14}', state_style(pre)),
                   (f' {short(col(r, "machineid", "machine id", "machine"), 44):<44} ', PLAIN),
-                  (short(err, max(10, width - 96)), BAD if err else PLAIN)])
+                  (short(err, max(10, width - 102)), BAD if err else PLAIN)])
         # the latest firmware decision nico-api logged for this BMC (current run)
         last = APILOG.last_for(col(r, 'address'), run_start()) if APILOG else None
         if last:
             text, style = APILOG.decision(last[2], last[3]) or (last[2], 'plain')
-            L.append([(f'  {"":<14} firmware check {last[0][11:19]}: ', HDR), (short(text, max(20, width - 42)), STYLE_BY_NAME[style])])
+            L.append([(f'  {"":<20} firmware check {last[0][11:19]}: ', HDR), (short(text, max(20, width - 48)), STYLE_BY_NAME[style])])
     if APILOG and APILOG.error:
         L.append([(f'  ! nico-api log: {APILOG.error}', BAD)])
     return L
@@ -944,6 +944,7 @@ HISTORY = Transitions()
 APILOG = None   # ApiLog when the nico-api log is watched (default when kubectl and a kubeconfig are at hand)
 FILTER = ''   # substring on kind or id that pages 6 and 7 restrict themselves to ('/' in the TUI, --filter)
 LABELS = {}   # machine id → (host|dpu, BMC address): what a person remembers instead of the 60-char id
+ENDPOINT_KIND = {}   # BMC address → host|dpu, from the endpoint report (a DPU BMC carries a MachineId as soon as it is explored)
 HOST_SERIALS = {}   # host machine id → product serial, from `machine show <id>` (fetch_server)
 # machine id → {'version', 'rows': [(timestamp, compact state, raw json)], 'state', 'type', 'gone'}:
 # NICo's own state history per machine, refreshed when its State Version changes.
@@ -1017,6 +1018,14 @@ def update_labels(server):
         mid = col(r, 'machineid', 'machine id', 'machine')
         if mid:
             LABELS[mid] = (kind_of(mid, 'dpu'), addr)
+        # The report fills MachineId for a DPU BMC from the moment it is
+        # explored and leaves it empty for a host BMC, so the kind is known
+        # long before any machine exists. An unexplored endpoint (no vendor
+        # yet) keeps whatever was known.
+        if mid:
+            ENDPOINT_KIND[addr] = 'dpu'
+        elif col(r, 'vendor') or col(r, 'type'):
+            ENDPOINT_KIND.setdefault(addr, 'host')
     for mid, serial in server.get('host_serials', {}).items():
         if serial in by_serial:
             LABELS[mid] = (kind_of(mid, 'host'), by_serial[serial])
@@ -1026,7 +1035,10 @@ def update_labels(server):
 
 
 def label(kind, ident, width=44):
-    """`<id> [host 11.140.2.6]` for a machine id with a known endpoint, else the id."""
+    """`<id> [host 11.140.2.6]` for a machine id with a known endpoint,
+    `11.140.2.6 [host]` for an endpoint whose kind is known, else the id."""
+    if kind == 'endpoint' and ident in ENDPOINT_KIND:
+        return short(ident, width) + f' [{ENDPOINT_KIND[ident]}]'
     tag = LABELS.get(ident) if kind == 'machine' else None
     if not tag:
         return short(ident, width)
@@ -1039,7 +1051,8 @@ def matches(kind, ident):
         return True
     f = FILTER.lower()
     tag = LABELS.get(ident, ('', ''))
-    return f in kind.lower() or f in ident.lower() or f in tag[0] or f in tag[1]
+    ep_kind = ENDPOINT_KIND.get(ident, '') if kind == 'endpoint' else ''
+    return f in kind.lower() or f in ident.lower() or f in tag[0] or f in tag[1] or (bool(ep_kind) and f in ep_kind)
 
 
 def filtered_events():
