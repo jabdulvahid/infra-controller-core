@@ -54,7 +54,9 @@ podman run -d --name "$NAME" --privileged --network host --pid host \
 # nvued dead (seen on the first child boot). If supervisord gave up on nvued
 # (FATAL after early exits), ask it to try again.
 for attempt in $(seq 1 180); do
-    state=$(podman exec "$NAME" supervisorctl status nvued 2>/dev/null | awk '{print $2}')
+    # supervisorctl status exits non-zero for any state but RUNNING; with
+    # pipefail that would abort the script, so the status is data here.
+    state=$(podman exec "$NAME" supervisorctl status nvued 2>/dev/null | awk '{print $2}' || true)
     if [[ "$state" == RUNNING ]] && podman exec "$NAME" curl -fsS --max-time 3 \
         --unix-socket /run/nvue/nvue.sock http://localhost/nvue_v1/system >/dev/null 2>&1; then
         break
