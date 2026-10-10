@@ -81,7 +81,15 @@ are seeded at build time.
 To verify on the first child boot, in this order:
 
 1. Done: the host paths HBN expects (see above).
-2. NVUE REST on `:8765` after the bootstrap YAML's `listening-address 0.0.0.0`
+2. Done: NVUE REST on `:8765` answers as `carbide` after the bootstrap
+   YAML applies (`HBN ready` on the first child boot; `useradd -G sudo,nvapply`
+   path). Item 4 is moot in `nvue-rest` mode: the agent's health check there
+   is `health/nvue.rs` (NVUE `system_info` plus established BGP sessions on
+   the uplinks in the uplinks VRF, `min_dpu_functioning_links` of them, default
+   2), not supervisord states. `nl2doca` is left as supervisord runs it;
+   `nv config apply` restarts it through `nl2doca-reload` anyway. With one
+   uplink per Enclosure DPU the site's `min_dpu_functioning_links` must be 1.
+2. (original) NVUE REST on `:8765` after the bootstrap YAML's `listening-address 0.0.0.0`
    is applied, and which group the `carbide` user needs for NVUE
    authorization (`nvapply` is the documented HBN group; confirm).
 3. Whether HBN with host networking accepts `p0_if`/`pf0hpf_if` as `swp`
