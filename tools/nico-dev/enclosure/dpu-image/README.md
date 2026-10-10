@@ -36,6 +36,20 @@ bash build.sh --out /var/lib/libvirt/images/enclosure-dpu.qcow2
 flattens the store's layered disk with `qemu-img convert` into a standalone
 QCOW2 for libvirt. Override the HBN image with `HBN_IMAGE=...@sha256:...`.
 
+## First boot for verification
+
+```bash
+bash boot-test.sh                     # domain dpu-test1 from the flattened image, all NICs on libvirt's default network
+bash boot-test.sh --name dpu-test1 --destroy
+```
+
+`boot-test.sh` stands in for the Enclosure tool: it writes the cloud-init
+seed (`dpu.env` from the example's MACs, the `vm` login), an overlay disk over
+the golden image under `/var/lib/libvirt/images/enclosure/<name>/`, and the
+libvirt domain with the BlueField SMBIOS identity. It prints the commands for
+the verify list below. The agent and DHCP-server units fail until arm64
+images exist; HBN and the interface identity do not depend on them.
+
 ## Boot-time inputs
 
 The Enclosure tool generates a cloud-init seed per DPU with:
