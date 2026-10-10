@@ -35,15 +35,19 @@ printf '%s\n' "$HBN_IMAGE" > "$LIB/hbn-image"
 
 # DPU-OS host paths for HBN (what the agent writes into and the container
 # mounts), seeded from the image so a bind mount never hides the container's
-# defaults (ifupdown2.conf, nl2docad.conf, frr daemons, supervisor programs,
-# the log tree supervisord writes into). The agent's default HBN root is
-# /var/lib/hbn. Seed before creating any subdirectory: hbn-start's runtime
-# fallback only seeds an empty directory.
+# defaults. The image's /hbn_files/<path> holds the host-side defaults HBN's
+# own deployment copies out (nl2docad.conf lives only there), layered over
+# the container's /<path> (ifupdown2.conf, supervisor programs, the log tree
+# supervisord writes into). The agent's default HBN root is /var/lib/hbn.
+# Seed before creating any subdirectory: hbn-start's runtime fallback only
+# seeds an empty directory.
 seed_tree() { # $1 = path inside the image, $2 = host path
     install -d -m 0755 "$2"
-    if podman run --rm --entrypoint sh "$HBN_IMAGE" -c "test -d '$1'"; then
-        podman run --rm --entrypoint tar "$HBN_IMAGE" -C "$1" -cf - . | tar -C "$2" -xf -
-    fi
+    for src in "$1" "/hbn_files$1"; do
+        if podman run --rm --entrypoint sh "$HBN_IMAGE" -c "test -d '$src'"; then
+            podman run --rm --entrypoint tar "$HBN_IMAGE" -C "$src" -cf - . | tar -C "$2" -xf -
+        fi
+    done
 }
 for p in etc/network etc/frr etc/supervisor/conf.d etc/cumulus var/support; do
     seed_tree "/$p" "/var/lib/hbn/$p"

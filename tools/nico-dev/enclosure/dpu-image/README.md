@@ -70,12 +70,17 @@ Verified 2026-10-10 on jaslinux: `library/dpu` builds under TCG (5h05m, one
 time), boots under vmctl in 1m28s and under plain libvirt from a flattened
 QCOW2.
 
+Verified 2026-10-10 on the first child boot (`boot-test.sh`): the cloud-init
+seed, the first-boot renames (`oob_net0`, `p0_if`, `pf0hpf_if`, the `pf0dpu1`
+veth pair), the SMBIOS serial, and the HBN host paths. The 3.4.0 image
+carries its host-side defaults under `/hbn_files/{etc/cumulus,etc/frr,etc/network,etc/supervisor/conf.d}`,
+which matches the four config mounts; `nl2docad.conf` exists only there, and
+supervisord needs the image's `/var/log/hbn` tree behind the log mount. Both
+are seeded at build time.
+
 To verify on the first child boot, in this order:
 
-1. The host paths the production `doca_hbn.yaml` mounts. The unit mounts
-   `/var/lib/hbn/{etc/network,etc/frr,etc/supervisor/conf.d,etc/cumulus,var/support}`
-   and `/var/log/doca/hbn`; compare with the DOCA container resource for
-   3.4.0 and adjust.
+1. Done: the host paths HBN expects (see above).
 2. NVUE REST on `:8765` after the bootstrap YAML's `listening-address 0.0.0.0`
    is applied, and which group the `carbide` user needs for NVUE
    authorization (`nvapply` is the documented HBN group; confirm).

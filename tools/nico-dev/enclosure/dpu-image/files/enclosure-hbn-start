@@ -15,14 +15,19 @@ HBN_ROOT=/var/lib/hbn
 NVUE_USERNAME=${NVUE_USERNAME:-carbide}
 : "${NVUE_PASSWORD:?NVUE_PASSWORD is required in /etc/enclosure/dpu.env}"
 
-# Seed each host path from the image on first use, so mounting an empty
-# directory does not hide the container's defaults (frr daemons file,
-# interfaces, supervisor programs). TO VERIFY against the 3.4.0 container
-# resource's doca_hbn.yaml mount list.
+# Fallback for an empty host path (provision.sh seeds them at build time):
+# the container's /<path> with the image's /hbn_files/<path> defaults layered
+# on top, which is what HBN's own deployment copies to the host. Verified
+# against the 3.4.0 image: /hbn_files holds etc/cumulus, etc/frr,
+# etc/network, etc/supervisor/conf.d.
 seed() { # $1 = path inside container, $2 = host path
     if [[ -z "$(ls -A "$2" 2>/dev/null)" ]]; then
         echo "seeding $2 from image $1"
-        podman run --rm --entrypoint tar "$IMAGE" -C "$1" -cf - . | tar -C "$2" -xf -
+        for src in "$1" "/hbn_files$1"; do
+            if podman run --rm --entrypoint sh "$IMAGE" -c "test -d '$src'"; then
+                podman run --rm --entrypoint tar "$IMAGE" -C "$src" -cf - . | tar -C "$2" -xf -
+            fi
+        done
     fi
 }
 seed /etc/frr "$HBN_ROOT/etc/frr"
