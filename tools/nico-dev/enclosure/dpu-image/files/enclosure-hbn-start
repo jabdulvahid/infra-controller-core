@@ -29,6 +29,9 @@ seed /etc/frr "$HBN_ROOT/etc/frr"
 seed /etc/network "$HBN_ROOT/etc/network"
 seed /etc/supervisor/conf.d "$HBN_ROOT/etc/supervisor/conf.d"
 seed /etc/cumulus "$HBN_ROOT/etc/cumulus"
+# supervisord exits when /var/log/hbn/supervisor is missing behind the mount
+# (seen on the first child boot); the image carries the log tree.
+seed /var/log/hbn /var/log/doca/hbn
 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
 podman run -d --name "$NAME" --privileged --network host --pid host \
