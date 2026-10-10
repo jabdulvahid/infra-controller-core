@@ -18,7 +18,9 @@ done
 link() { # $1 = mac, $2 = name, $3 = altname (optional)
     {
         printf '[Match]\nMACAddress=%s\n\n[Link]\nName=%s\n' "$1" "$2"
-        [[ -n "${3:-}" ]] && printf 'AlternativeName=%s\n' "$3"
+        # An if, not "&&": a failed test as the last command would make the
+        # function return 1 and set -e abort the script without a message.
+        if [[ -n "${3:-}" ]]; then printf 'AlternativeName=%s\n' "$3"; fi
     } > "/etc/systemd/network/10-enclosure-$2.link"
 }
 link "$DPU_OOB_MAC" oob_net0
@@ -54,6 +56,7 @@ Name=pf0dpu1_if
 EOF
 
 # vmctl's agent and DHCP units read /etc/vm/environment.
+install -d -m 0755 /etc/vm
 umask 077
 cat > /etc/vm/environment <<EOF
 DPU_FACTORY_MAC=$DPU_FACTORY_MAC
