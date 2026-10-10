@@ -65,7 +65,10 @@ install -m 0644 "$FILES/enclosure-nico-dhcp-server.service" /etc/systemd/system/
 systemctl disable vm-nico-dpu-agent.service vm-nico-dhcp-server.service 2>/dev/null || true
 
 # The shim is replaced by real HBN; keep the binary (harmless), never start it.
+# vmctl installed the unit under /etc/systemd/system, where mask wants to put
+# its symlink, so remove the file first.
 systemctl disable nico-hardware-shim.service 2>/dev/null || true
+rm -f /etc/systemd/system/nico-hardware-shim.service
 systemctl mask nico-hardware-shim.service
 
 systemctl daemon-reload
