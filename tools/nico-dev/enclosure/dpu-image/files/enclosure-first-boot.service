@@ -1,5 +1,9 @@
 [Unit]
 Description=Enclosure DPU first boot (interface names, agent environment)
+# dpu.env arrives through cloud-init's seed. Ubuntu's cloud-final.service is
+# ordered after multi-user.target, so a unit wanted by multi-user.target and
+# ordered after cloud-final is an ordering cycle and systemd drops it (seen on
+# the first child boot). cloud-init.target runs after both.
 After=cloud-final.service
 ConditionPathExists=/etc/enclosure/dpu.env
 ConditionPathExists=!/etc/enclosure/.first-boot-done
@@ -9,4 +13,4 @@ Type=oneshot
 ExecStart=/usr/local/lib/enclosure/first-boot
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=cloud-init.target
