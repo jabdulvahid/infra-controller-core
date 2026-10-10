@@ -1,0 +1,45 @@
+[Unit]
+Description=Enclosure DPU: real NICo forge DPU agent (container) against real HBN
+# vmctl's vm-nico-dpu-agent.service with nico-hardware-shim replaced by
+# enclosure-hbn.service; NVUE REST is HBN's own nvued on 127.0.0.1:8765.
+After=network-online.target enclosure-hbn.service enclosure-nico-dhcp-server.service
+Requires=enclosure-hbn.service enclosure-nico-dhcp-server.service
+
+[Service]
+EnvironmentFile=/etc/vm/environment
+Environment=IGNORE_MGMT_VRF=1
+Environment=NO_DPU_CONTAINERS=true
+Environment=RUST_LOG=info
+ExecStartPre=-/usr/bin/podman rm -f enclosure-nico-dpu-agent
+ExecStartPre=-/usr/bin/podman rm -f enclosure-nico-dpu-agent-init
+ExecStartPre=/usr/bin/podman run --name enclosure-nico-dpu-agent-init --rm --network host --privileged \
+  --env DPU_FACTORY_MAC --env RUST_LOG \
+  --volume /data:/data:Z \
+  --volume /sys:/sys \
+  --volume /dev:/dev \
+  --volume /run/udev:/run/udev \
+  --volume /proc/cpuinfo:/host-cpu-info:ro \
+  --volume /proc/meminfo:/host-mem-info:ro \
+  --volume /etc/resolv.conf:/host-resolv.conf:ro \
+  --volume /opt/forge:/opt/forge:Z \
+  --volume /opt/forge/forge_root.pem:/var/run/secrets/nico-bootstrap-ca/ca.pem:ro \
+  --volume /usr/local/bin/flint:/usr/local/bin/flint:ro \
+  ${NICO_DPU_AGENT_IMAGE} --config-path=/opt/forge/config.toml init-container \
+  --bootstrap-ca-source=mounted
+ExecStart=/usr/bin/podman run --name enclosure-nico-dpu-agent --network host \
+  --env DPU_FACTORY_MAC --env IGNORE_MGMT_VRF --env NO_DPU_CONTAINERS --env RUST_LOG \
+  --env NVUE_HTTPS_ADDRESS=127.0.0.1:8765 --env NVUE_USERNAME --env NVUE_PASSWORD \
+  --volume /opt/forge:/opt/forge:Z \
+  --volume /data:/data:Z,ro \
+  --volume /var/lib/hbn:/var/lib/hbn:Z \
+  --volume /usr/local/bin/flint:/usr/local/bin/flint:ro \
+  ${NICO_DPU_AGENT_IMAGE} --config-path=/opt/forge/config.toml run \
+  --dhcp-grpc-server=http://127.0.0.1:10079 \
+  --hbn-config-mode=nvue-rest \
+  --agent-platform-type=containerized --skip-upgrade-check
+ExecStop=-/usr/bin/podman stop -t 10 enclosure-nico-dpu-agent
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
