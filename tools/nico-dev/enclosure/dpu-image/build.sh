@@ -30,20 +30,21 @@ vm image list 2>/dev/null | grep -q 'library/dpu' || {
 echo "== vm image build -t $TAG $HERE"
 # vm image build takes the recipe directory; packer variables pass through PKR_VAR_*.
 if [[ -n "${HBN_IMAGE:-}" ]]; then export PKR_VAR_hbn_image="$HBN_IMAGE"; fi
-time vm image build -t "$TAG" "$HERE"
+log=$(mktemp)
+# The build prints the resulting image digest as its last line ("sha256:...").
+time vm image build -t "$TAG" "$HERE" | tee "$log"
+digest=$(grep -oE '^sha256:[0-9a-f]{64}' "$log" | tail -1 | cut -d: -f2)
+rm -f "$log"
+[[ -n "$digest" ]] || { echo "could not read the image digest from the build output; run: vm image list" >&2; exit 1; }
+disk="$HOME/.config/vm/images/$digest/disk.qcow2"
+[[ -f "$disk" ]] || { echo "store disk not found: $disk" >&2; exit 1; }
 
-# Locate the built image's disk in the store and flatten it.
-digest=$(vm image list 2>/dev/null | awk -v t="$TAG" '$0 ~ t {print $NF; exit}')
-disk=""
-for candidate in "$HOME/.config/vm/images/${digest#sha256:}/disk.qcow2" "$HOME/.config/vm/images/$digest/disk.qcow2"; do
-    [[ -f "$candidate" ]] && { disk="$candidate"; break; }
-done
-if [[ -z "$disk" ]]; then
-    echo "could not locate the store disk for $TAG (digest '$digest'); run: vm image list" >&2
-    echo "then: qemu-img convert -O qcow2 ~/.config/vm/images/<sha>/disk.qcow2 $OUT" >&2
-    exit 1
-fi
 echo "== flatten $disk -> $OUT"
-qemu-img convert -O qcow2 "$disk" "$OUT"
+sudo_if_needed=""
+if ! { [[ -w "$OUT" ]] || { [[ ! -e "$OUT" ]] && [[ -w "$(dirname "$OUT")" ]]; }; }; then sudo_if_needed=sudo; fi
+$sudo_if_needed qemu-img convert -O qcow2 "$disk" "$OUT"
+if [[ -n "$sudo_if_needed" ]] && id libvirt-qemu >/dev/null 2>&1; then
+    sudo chown libvirt-qemu:kvm "$OUT"
+fi
 qemu-img info "$OUT" | grep -E 'virtual size|backing' || true
 echo "done: $OUT"
