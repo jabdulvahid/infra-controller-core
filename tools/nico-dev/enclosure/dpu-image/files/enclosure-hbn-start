@@ -74,8 +74,10 @@ for attempt in $(seq 1 180); do
     sleep 2
 done
 
-# No offload hardware: a waiting nl2doca wrapper is not healthy hardware.
-podman exec "$NAME" supervisorctl stop nl2doca >/dev/null 2>&1 || true
+# nl2doca stays as supervisord runs it: `nv config apply` triggers
+# nl2doca-reload, which restarts it anyway (first child boot), the agent's
+# ContainerExec health check expects it RUNNING, and without hardware it only
+# logs that the ACL resync control path is missing.
 
 # NVUE REST authenticates against the container's Linux users. TO VERIFY: the
 # group NVUE requires for write access (HBN documents nvapply/nvshow; sudo is
