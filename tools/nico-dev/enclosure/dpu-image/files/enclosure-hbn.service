@@ -1,0 +1,18 @@
+[Unit]
+Description=Enclosure DPU: real HBN container (doca_hbn) on host networking
+# Interfaces are renamed by systemd-networkd .link files written at first boot;
+# HBN must see p0_if / pf0hpf_if / pf0dpu1_if under their final names.
+After=network-online.target systemd-networkd.service podman.socket
+Wants=network-online.target
+ConditionPathExists=/etc/enclosure/dpu.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/enclosure/dpu.env
+ExecStart=/usr/local/lib/enclosure/hbn-start
+ExecStop=-/usr/bin/podman stop -t 20 enclosure-hbn
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

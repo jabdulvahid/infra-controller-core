@@ -1,0 +1,89 @@
+#!/bin/bash
+# Start the real HBN container the way the DPU OS does: host networking,
+# privileged, the DPU-OS host paths under /var/lib/hbn mounted in. Then wait
+# for NVUE, stop the offload wrapper (no hardware), create the NVUE user the
+# NICo agent authenticates with, and apply the bootstrap configuration once.
+#
+# Environment (from /etc/enclosure/dpu.env): NVUE_USERNAME (default carbide),
+# NVUE_PASSWORD (required).
+set -euo pipefail
+
+LIB=/usr/local/lib/enclosure
+IMAGE=$(cat "$LIB/hbn-image")
+NAME=enclosure-hbn
+HBN_ROOT=/var/lib/hbn
+NVUE_USERNAME=${NVUE_USERNAME:-carbide}
+: "${NVUE_PASSWORD:?NVUE_PASSWORD is required in /etc/enclosure/dpu.env}"
+
+# Seed each host path from the image on first use, so mounting an empty
+# directory does not hide the container's defaults (frr daemons file,
+# interfaces, supervisor programs). TO VERIFY against the 3.4.0 container
+# resource's doca_hbn.yaml mount list.
+seed() { # $1 = path inside container, $2 = host path
+    if [[ -z "$(ls -A "$2" 2>/dev/null)" ]]; then
+        echo "seeding $2 from image $1"
+        podman run --rm --entrypoint tar "$IMAGE" -C "$1" -cf - . | tar -C "$2" -xf -
+    fi
+}
+seed /etc/frr "$HBN_ROOT/etc/frr"
+seed /etc/network "$HBN_ROOT/etc/network"
+seed /etc/supervisor/conf.d "$HBN_ROOT/etc/supervisor/conf.d"
+seed /etc/cumulus "$HBN_ROOT/etc/cumulus"
+
+podman rm -f "$NAME" >/dev/null 2>&1 || true
+podman run -d --name "$NAME" --privileged --network host --pid host \
+    --volume "$HBN_ROOT/etc/network:/etc/network" \
+    --volume "$HBN_ROOT/etc/frr:/etc/frr" \
+    --volume "$HBN_ROOT/etc/supervisor/conf.d:/etc/supervisor/conf.d" \
+    --volume "$HBN_ROOT/etc/cumulus:/etc/cumulus" \
+    --volume "$HBN_ROOT/var/support:/var/support" \
+    --volume /var/log/doca/hbn:/var/log/hbn \
+    --volume /dev:/dev \
+    "$IMAGE"
+
+# NVUE readiness: its unix socket answers /nvue_v1/system (as vmctl's slice
+# checked).
+for attempt in $(seq 1 180); do
+    if podman exec "$NAME" curl -fsS --max-time 3 --unix-socket /run/nvue/nvue.sock \
+        http://localhost/nvue_v1/system >/dev/null 2>&1; then
+        break
+    fi
+    if (( attempt == 180 )); then
+        echo "NVUE did not come up in $NAME" >&2
+        podman logs --tail 80 "$NAME" >&2 || true
+        exit 1
+    fi
+    sleep 2
+done
+
+# No offload hardware: a waiting nl2doca wrapper is not healthy hardware.
+podman exec "$NAME" supervisorctl stop nl2doca >/dev/null 2>&1 || true
+
+# NVUE REST authenticates against the container's Linux users. TO VERIFY: the
+# group NVUE requires for write access (HBN documents nvapply/nvshow; sudo is
+# the fallback).
+if ! podman exec "$NAME" id "$NVUE_USERNAME" >/dev/null 2>&1; then
+    podman exec "$NAME" sh -c "useradd -m -s /bin/bash -G sudo,nvapply '$NVUE_USERNAME' 2>/dev/null || useradd -m -s /bin/bash -G sudo '$NVUE_USERNAME'"
+fi
+podman exec "$NAME" sh -c "printf '%s:%s\n' '$NVUE_USERNAME' '$NVUE_PASSWORD' | chpasswd"
+
+# Bootstrap configuration once (REST listener + the agent's ports). The agent
+# owns the configuration from here on.
+MARK="$HBN_ROOT/var/support/.enclosure-bootstrap-applied"
+if [[ ! -e "$MARK" ]]; then
+    podman cp "$LIB/hbn-bootstrap.yaml" "$NAME:/tmp/enclosure-bootstrap.yaml"
+    podman exec "$NAME" nv config patch /tmp/enclosure-bootstrap.yaml
+    podman exec "$NAME" nv config apply --assume-yes
+    touch "$MARK"
+fi
+
+# REST listener up on :8765 (HTTPS, self-signed; the agent accepts that).
+for attempt in $(seq 1 60); do
+    if curl -ksS --max-time 3 -u "$NVUE_USERNAME:$NVUE_PASSWORD" https://127.0.0.1:8765/nvue_v1/system >/dev/null 2>&1; then
+        echo "HBN ready: NVUE REST on 127.0.0.1:8765 as $NVUE_USERNAME"
+        exit 0
+    fi
+    sleep 2
+done
+echo "NVUE REST on :8765 did not answer; check 'podman exec $NAME nv show system api'" >&2
+exit 1

@@ -1,0 +1,23 @@
+# HBN bootstrap configuration, applied once on the first container start.
+# Mirrors what NICo's DPF service definition hands HBN at install
+# (crates/api-core/src/dpf_services.rs, doca_hbn_startup_yaml): it turns on
+# NVUE's REST listener and declares the switch ports the DPU agent configures.
+# The agent's own configuration (nvue_startup_*.conf) also carries the
+# system/api block, so the listener survives its `nv config replace`.
+- header:
+    model: BLUEFIELD
+    nvue-api-version: nvue_v1
+    rev-id: 1.0
+    version: HBN 2.4.0
+- set:
+    system:
+      api:
+        listening-address:
+          0.0.0.0: {}
+    interface:
+      p0_if:
+        type: swp
+      pf0hpf_if:
+        type: swp
+      pf0dpu1_if:
+        type: swp

@@ -1,0 +1,12 @@
+[Unit]
+Description=Enclosure DPU first boot (interface names, agent environment)
+After=cloud-final.service
+ConditionPathExists=/etc/enclosure/dpu.env
+ConditionPathExists=!/etc/enclosure/.first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/enclosure/first-boot
+
+[Install]
+WantedBy=multi-user.target
