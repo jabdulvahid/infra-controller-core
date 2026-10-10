@@ -29,9 +29,14 @@ for daemon in usr.lib.frr.bgpd usr.lib.frr.staticd usr.lib.frr.bfdd usr.sbin.rsy
     fi
 done
 
-# Pull the HBN container now so a DPU boot needs no registry.
+# Pull the HBN container now so a DPU boot needs no registry, then derive
+# the Enclosure's HBN image from it (files/hbn-patch: NVUE accepts the SF
+# port names on virtio/veth netdevs). Everything downstream uses the derived
+# reference.
 podman pull "$HBN_IMAGE"
-printf '%s\n' "$HBN_IMAGE" > "$LIB/hbn-image"
+HBN_LOCAL=localhost/enclosure/doca_hbn:enclosure
+podman build --build-arg HBN_IMAGE="$HBN_IMAGE" -t "$HBN_LOCAL" "$FILES/hbn-patch"
+printf '%s\n' "$HBN_LOCAL" > "$LIB/hbn-image"
 
 # DPU-OS host paths for HBN (what the agent writes into and the container
 # mounts), seeded from the image so a bind mount never hides the container's
@@ -44,8 +49,8 @@ printf '%s\n' "$HBN_IMAGE" > "$LIB/hbn-image"
 seed_tree() { # $1 = path inside the image, $2 = host path
     install -d -m 0755 "$2"
     for src in "$1" "/hbn_files$1"; do
-        if podman run --rm --entrypoint sh "$HBN_IMAGE" -c "test -d '$src'"; then
-            podman run --rm --entrypoint tar "$HBN_IMAGE" -C "$src" -cf - . | tar -C "$2" -xf -
+        if podman run --rm --entrypoint sh "$HBN_LOCAL" -c "test -d '$src'"; then
+            podman run --rm --entrypoint tar "$HBN_LOCAL" -C "$src" -cf - . | tar -C "$2" -xf -
         fi
     done
 }
@@ -99,4 +104,4 @@ EOF
 
 apt-get clean
 rm -rf /var/lib/apt/lists/* "$FILES"
-echo "enclosure/dpu child layer provisioned (HBN $HBN_IMAGE)"
+echo "enclosure/dpu child layer provisioned (HBN $HBN_IMAGE as $HBN_LOCAL)"
