@@ -39,7 +39,11 @@ seed /etc/cumulus "$HBN_ROOT/etc/cumulus"
 seed /var/log/hbn /var/log/doca/hbn
 
 podman rm -f "$NAME" >/dev/null 2>&1 || true
-podman run -d --name "$NAME" --privileged --network host --pid host \
+# Own PID namespace on purpose: supervisord must be PID 1 inside, as on a
+# DPU. With --pid host, nvued --daemon forked after startup, supervisord saw
+# the parent exit 0 and respawned it, and orphaned nvued instances piled up
+# (seventeen on the first child boot).
+podman run -d --name "$NAME" --privileged --network host \
     --volume "$HBN_ROOT/etc/network:/etc/network" \
     --volume "$HBN_ROOT/etc/frr:/etc/frr" \
     --volume "$HBN_ROOT/etc/supervisor/conf.d:/etc/supervisor/conf.d" \
