@@ -90,8 +90,22 @@ Verify list, first child boot (2026-10-10):
    not supervisord states. `nl2doca` is left as supervisord runs it; `nv config
    apply` restarts it through `nl2doca-reload` anyway. With one uplink per
    Enclosure DPU the site's `min_dpu_functioning_links` must be 1.
-4. Open: whether HBN with host networking accepts `p0_if`/`pf0hpf_if` as `swp`
-   ports without an SF identity adapter (`nv show interface`). vmctl's
-   investigation needed an identity adapter for NVUE port listing.
-5. Open: `ovs-vswitchd.service` restart must succeed (the agent restarts it on
-   admin/tenant switches); the base image has Open vSwitch installed.
+4. Done, with one accommodation: NVUE classifies a link as `swp` only when
+   the kernel reports its parent device as an `mlx5_core.sf` subfunction
+   (`cue_netlink_v1/translated.py`, `_check_link_kind`); a virtio NIC or veth
+   matches no kind and every interface query is a 500. The HBN image used
+   here is derived at build time (`files/hbn-patch/`) so that the SF port
+   names also qualify. With that, `p0_if`, `pf0hpf_if` and `pf0dpu1_if` show
+   as `swp`, and ifupdown2 brings the first two up (MTU 9216, link-local).
+   Kernel-side alternative if other HBN components read `parentdev`: a DKMS
+   module re-parenting the netdevs under platform devices named
+   `mlx5_core.sf.N`.
+5. Done: `ovs-vswitchd.service` restarts cleanly.
+
+Also found on the way: HBN must run in its own PID namespace (with
+`--pid host`, `nvued --daemon` forks after startup and supervisord respawns
+it endlessly, orphans surviving `podman rm -f`), and Ubuntu's `rsyslogd`
+AppArmor profile denies supervisord's signals like the FRR ones.
+
+Next: arm64 `forge-dpu-agent` and `forge-dhcp-server` images, then the
+Enclosure tool (seed, domain, cables, bmc-mock) around `boot-test.sh`.

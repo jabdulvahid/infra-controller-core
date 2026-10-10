@@ -1,0 +1,7 @@
+# Enclosure HBN image: the pinned doca_hbn plus one software-DPU accommodation
+# (see nvue-swp-names.py). Built by provision.sh at image-build time as
+# localhost/enclosure/doca_hbn:enclosure; the base digest is passed in.
+ARG HBN_IMAGE
+FROM ${HBN_IMAGE}
+COPY nvue-swp-names.py /tmp/nvue-swp-names.py
+RUN python3 /tmp/nvue-swp-names.py && rm -f /tmp/nvue-swp-names.py
