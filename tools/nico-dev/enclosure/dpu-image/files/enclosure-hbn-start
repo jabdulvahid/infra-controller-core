@@ -44,13 +44,17 @@ podman run -d --name "$NAME" --privileged --network host --pid host \
     --volume /dev:/dev \
     "$IMAGE"
 
-# NVUE readiness: its unix socket answers /nvue_v1/system (as vmctl's slice
-# checked).
+# NVUE readiness: nvued RUNNING in supervisord and its unix socket answering
+# /nvue_v1/system. The socket alone is not enough: nginx answers it with
+# nvued dead (seen on the first child boot). If supervisord gave up on nvued
+# (FATAL after early exits), ask it to try again.
 for attempt in $(seq 1 180); do
-    if podman exec "$NAME" curl -fsS --max-time 3 --unix-socket /run/nvue/nvue.sock \
-        http://localhost/nvue_v1/system >/dev/null 2>&1; then
+    state=$(podman exec "$NAME" supervisorctl status nvued 2>/dev/null | awk '{print $2}')
+    if [[ "$state" == RUNNING ]] && podman exec "$NAME" curl -fsS --max-time 3 \
+        --unix-socket /run/nvue/nvue.sock http://localhost/nvue_v1/system >/dev/null 2>&1; then
         break
     fi
+    [[ "$state" == FATAL ]] && podman exec "$NAME" supervisorctl start nvued >/dev/null 2>&1 || true
     if (( attempt == 180 )); then
         echo "NVUE did not come up in $NAME" >&2
         podman logs --tail 80 "$NAME" >&2 || true

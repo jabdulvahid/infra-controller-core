@@ -18,32 +18,44 @@ apt-get install -y --no-install-recommends curl jq ethtool bridge-utils iproute2
 # the IPv6 equivalents, ebtables).
 install -m 0644 "$FILES/enclosure-hbn-modules.conf" /etc/modules-load.d/enclosure-hbn.conf
 
-# Ubuntu's bgpd/staticd/bfdd AppArmor profiles deny supervisor signals from
-# the container runtime; remove them in this disposable guest (same
+# Ubuntu's bgpd/staticd/bfdd/rsyslogd AppArmor profiles deny supervisor
+# signals from the container runtime (rsyslogd: PermissionError on shutdown,
+# seen on the first child boot); remove them in this disposable guest (same
 # accommodation vmctl's slice made; not a production policy).
-for daemon in usr.lib.frr.bgpd usr.lib.frr.staticd usr.lib.frr.bfdd; do
+for daemon in usr.lib.frr.bgpd usr.lib.frr.staticd usr.lib.frr.bfdd usr.sbin.rsyslogd; do
     if [[ -e "/etc/apparmor.d/$daemon" ]]; then
         apparmor_parser -R "/etc/apparmor.d/$daemon" 2>/dev/null || true
         rm -f "/etc/apparmor.d/$daemon"
     fi
 done
 
+# Pull the HBN container now so a DPU boot needs no registry.
+podman pull "$HBN_IMAGE"
+printf '%s\n' "$HBN_IMAGE" > "$LIB/hbn-image"
+
 # DPU-OS host paths for HBN (what the agent writes into and the container
-# mounts). The agent's default HBN root is /var/lib/hbn.
+# mounts), seeded from the image so a bind mount never hides the container's
+# defaults (ifupdown2.conf, nl2docad.conf, frr daemons, supervisor programs,
+# the log tree supervisord writes into). The agent's default HBN root is
+# /var/lib/hbn. Seed before creating any subdirectory: hbn-start's runtime
+# fallback only seeds an empty directory.
+seed_tree() { # $1 = path inside the image, $2 = host path
+    install -d -m 0755 "$2"
+    if podman run --rm --entrypoint sh "$HBN_IMAGE" -c "test -d '$1'"; then
+        podman run --rm --entrypoint tar "$HBN_IMAGE" -C "$1" -cf - . | tar -C "$2" -xf -
+    fi
+}
+for p in etc/network etc/frr etc/supervisor/conf.d etc/cumulus var/support; do
+    seed_tree "/$p" "/var/lib/hbn/$p"
+done
+seed_tree /var/log/hbn /var/log/doca/hbn
 install -d -m 0755 \
     /var/lib/hbn/etc/network/interfaces.d \
-    /var/lib/hbn/etc/frr \
-    /var/lib/hbn/etc/supervisor/conf.d \
     /var/lib/hbn/etc/cumulus/acl/policy.d \
     /var/lib/hbn/var/support/forge-dhcp/conf \
     /var/lib/hbn/var/support/forge-dhcp/logs \
     /var/lib/hbn/var/support/forge-dhcp/bin \
-    /var/log/doca/hbn \
     /opt/forge
-
-# Pull the HBN container now so a DPU boot needs no registry.
-podman pull "$HBN_IMAGE"
-printf '%s\n' "$HBN_IMAGE" > "$LIB/hbn-image"
 
 # HBN bootstrap startup YAML: enables NVUE's REST listener the way NICo's own
 # DPF service definition does (system api listening-address 0.0.0.0) and
