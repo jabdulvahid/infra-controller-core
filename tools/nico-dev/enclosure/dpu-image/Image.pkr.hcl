@@ -103,6 +103,12 @@ source "qemu" "dpu" {
 build {
   sources = ["source.qemu.dpu"]
 
+  # The file provisioner uploads a directory's contents only into an existing
+  # destination directory; create it first.
+  provisioner "shell" {
+    inline = ["mkdir -p /tmp/enclosure-files"]
+  }
+
   provisioner "file" {
     source      = "files/"
     destination = "/tmp/enclosure-files"
