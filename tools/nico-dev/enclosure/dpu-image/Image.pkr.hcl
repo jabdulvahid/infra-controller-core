@@ -110,7 +110,9 @@ build {
 
   provisioner "shell" {
     environment_vars = ["HBN_IMAGE=${var.hbn_image}"]
-    execute_command  = "chmod +x '{{ .Path }}'; sudo -E '{{ .Path }}'"
+    # {{ .Vars }} is where Packer injects environment_vars; without it HBN_IMAGE
+    # never reaches the script.
+    execute_command  = "chmod +x '{{ .Path }}'; {{ .Vars }} sudo -E '{{ .Path }}'"
     script           = "provision.sh"
   }
 }
