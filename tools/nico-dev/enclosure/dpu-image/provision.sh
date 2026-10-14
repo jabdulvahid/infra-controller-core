@@ -64,7 +64,8 @@ install -d -m 0755 \
     /var/lib/hbn/var/support/forge-dhcp/conf \
     /var/lib/hbn/var/support/forge-dhcp/logs \
     /var/lib/hbn/var/support/forge-dhcp/bin \
-    /opt/forge
+    /opt/forge \
+    /data
 
 # HBN bootstrap startup YAML: enables NVUE's REST listener the way NICo's own
 # DPF service definition does (system api listening-address 0.0.0.0) and
