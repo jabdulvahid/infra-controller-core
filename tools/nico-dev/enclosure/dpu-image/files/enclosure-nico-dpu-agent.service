@@ -12,7 +12,7 @@ Environment=NO_DPU_CONTAINERS=true
 Environment=RUST_LOG=info
 ExecStartPre=-/usr/bin/podman rm -f enclosure-nico-dpu-agent
 ExecStartPre=-/usr/bin/podman rm -f enclosure-nico-dpu-agent-init
-ExecStartPre=/usr/bin/podman run --name enclosure-nico-dpu-agent-init --rm --network host --privileged \
+ExecStartPre=/usr/bin/podman run --name enclosure-nico-dpu-agent-init --rm --network host --privileged --user 0 \
   --env DPU_FACTORY_MAC --env RUST_LOG \
   --volume /data:/data:Z \
   --volume /sys:/sys \
@@ -26,7 +26,7 @@ ExecStartPre=/usr/bin/podman run --name enclosure-nico-dpu-agent-init --rm --net
   --volume /usr/local/bin/flint:/usr/local/bin/flint:ro \
   ${NICO_DPU_AGENT_IMAGE} --config-path=/opt/forge/config.toml init-container \
   --bootstrap-ca-source=mounted
-ExecStart=/usr/bin/podman run --name enclosure-nico-dpu-agent --network host \
+ExecStart=/usr/bin/podman run --name enclosure-nico-dpu-agent --network host --privileged --user 0 \
   --env DPU_FACTORY_MAC --env IGNORE_MGMT_VRF --env NO_DPU_CONTAINERS --env RUST_LOG \
   --env NVUE_HTTPS_ADDRESS=127.0.0.1:8765 --env NVUE_USERNAME --env NVUE_PASSWORD \
   --volume /opt/forge:/opt/forge:Z \
