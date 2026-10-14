@@ -226,7 +226,7 @@ router bgp {lcp_asn}
 '''
 
 
-def frr_leaf_mat(cfg, lmat_lo, lmat_sp_ip, sp_lmat_ip, mat_gw):
+def frr_leaf_mat(cfg, lmat_lo, lmat_sp_ip, sp_lmat_ip, mat_gw, encl=None):
     pfx      = cfg['fabric']['prefixes']
     asn_base = cfg['fabric']['switch_asn_base']
     sp_asn   = asn_base + 1
@@ -234,6 +234,15 @@ def frr_leaf_mat(cfg, lmat_lo, lmat_sp_ip, sp_lmat_ip, mat_gw):
     mat_pfx  = pfx['mat_underlay']
     mat_net  = str(ipaddress.IPv4Network(mat_pfx, strict=False))
     mat_plen = ipaddress.IPv4Network(mat_pfx, strict=False).prefixlen
+    # Enclosure OOB port (eth3): gateway of the enclosure segment. Real DPU
+    # stand-ins take their underlay lease here, relayed by dhcrelay on this
+    # leaf (see gen_topo). Absent when the site defines no encl_oob prefix.
+    encl_if = ''
+    encl_net_stmt = ''
+    if encl:
+        encl_if = (f"!\n! eth3 connects to the enclosure bridge (DPU stand-in OOB)\n"
+                   f"interface eth3\n ip address {encl['gw']}/{encl['plen']}\n")
+        encl_net_stmt = f"  network {encl['net']}\n"
 
     return f'''\
 frr version 9.1
@@ -250,7 +259,7 @@ interface eth1
 ! eth2 connects to the internet bridge (MAT BMC mocks)
 interface eth2
  ip address {mat_gw}/{mat_plen}
-!
+{encl_if}!
 router bgp {lmat_asn}
  bgp router-id {lmat_lo}
  bgp bestpath as-path multipath-relax
@@ -261,7 +270,7 @@ router bgp {lmat_asn}
  address-family ipv4 unicast
   network {lmat_lo}/32
   network {mat_net}
-  neighbor {sp_lmat_ip} activate
+{encl_net_stmt}  neighbor {sp_lmat_ip} activate
  exit-address-family
  !
  address-family l2vpn evpn
@@ -326,7 +335,7 @@ router bgp {dpu_asn}
 
 # ── ContainerLab topology ─────────────────────────────────────────────────────
 
-def gen_topo(cfg, ips, dc):
+def gen_topo(cfg, ips, dc, encl=None):
     image    = 'frr-local:local'   # local apt-built FRR (native arch)
     mgmt_pfx = '172.20.30.0/24'   # separate from nico-sim to allow coexistence
 
@@ -380,6 +389,9 @@ def gen_topo(cfg, ips, dc):
         '      exec:',
         '        - sysctl -w net.ipv4.ip_forward=1',
         '        - sysctl -w net.ipv4.conf.all.forwarding=1',
+        # DHCP relay for the enclosure segment: giaddr is eth3's address, which
+        # is how Core picks the segment (prefix containment of the relay).
+        *([f"        - dhcrelay -4 -id eth3 -iu eth1 {encl['dhcp_vip']}"] if encl else []),
         '',
         '    dpu-1:',
         f'      mgmt-ipv4: 172.20.30.20',
@@ -403,6 +415,10 @@ def gen_topo(cfg, ips, dc):
         '      kind: bridge',
         '      # leaf-mat eth2 + host internet uplink',
         '',
+        *([f'    br-{dc}-encl:',
+           '      kind: bridge',
+           '      # leaf-mat eth3 + the site VM NIC that the hypervisor enclosure cable plugs into',
+           ''] if encl else []),
         '  links:',
         '    # super-spine ↔ spine-1',
         f'    - endpoints: ["super-spine:eth1", "spine-1:eth1"]',
@@ -418,6 +434,8 @@ def gen_topo(cfg, ips, dc):
         f'    - endpoints: ["leaf-mat:eth2", "br-{dc}-internet:eth-mat"]',
         '    # super-spine ↔ internet bridge (internet uplink to host NAT)',
         f'    - endpoints: ["super-spine:eth2", "br-{dc}-internet:eth-uplink"]',
+        *(['    # leaf-mat ↔ enclosure bridge (DPU stand-in OOB, relayed DHCP)',
+           f'    - endpoints: ["leaf-mat:eth3", "br-{dc}-encl:eth-encl"]'] if encl else []),
     ]
     return '\n'.join(lines) + '\n'
 
@@ -487,6 +505,18 @@ def main():
     mat_net = ipaddress.IPv4Network(pfx['mat_underlay'], strict=False)
     mat_gw  = str(list(mat_net.hosts())[0])
 
+    # Enclosure OOB segment (on leaf-mat:eth3), optional. The segment must also
+    # exist in nico-system.helm-values.networks so nico-dhcp can lease from it.
+    encl = None
+    if pfx.get('encl_oob'):
+        encl_net = ipaddress.IPv4Network(pfx['encl_oob'], strict=False)
+        encl = {
+            'net':      str(encl_net),
+            'plen':     encl_net.prefixlen,
+            'gw':       str(list(encl_net.hosts())[0]),
+            'dhcp_vip': cfg['nico-system']['helm-values']['net-plan']['dhcp_vip'],
+        }
+
     ips = {
         'ss_lo': ss_lo,   'sp_lo': sp_lo,
         'lcp_lo': lcp_lo, 'lmat_lo': lmat_lo,
@@ -498,6 +528,8 @@ def main():
         'dpu_cp_ip': dpu_cp_ip,   'vm_cp_ip': vm_cp_ip,
         'host_inet_ip': host_inet_ip, 'ss_inet_ip': ss_inet_ip,
         'mat_gw': mat_gw,
+        'encl_oob': encl['net'] if encl else '',
+        'encl_gw':  encl['gw']  if encl else '',
     }
 
     print()
@@ -512,6 +544,8 @@ def main():
     print(f'    VM host CP link      : {vm_cp_ip}/31  ← CP node IP')
     print(f'    host internet        : {host_inet_ip}/30')
     print(f'    mat gateway          : {mat_gw}')
+    if encl:
+        print(f'    enclosure gateway    : {encl["gw"]} (leaf-mat:eth3, dhcrelay → {encl["dhcp_vip"]})')
 
     # ── Write topology ────────────────────────────────────────────────────────
     def write_file(path, content):
@@ -525,7 +559,7 @@ def main():
             print(f'  [fixed] {path.name} was a directory (docker bind-mount leftover) — removed')
         path.write_text(content)
 
-    write_file(outdir / 'topo.clab.yml', gen_topo(cfg, ips, dc))
+    write_file(outdir / 'topo.clab.yml', gen_topo(cfg, ips, dc, encl))
     print(f'\n  [ok] topo.clab.yml')
 
     # ── Write per-node FRR configs ────────────────────────────────────────────
@@ -536,7 +570,7 @@ def main():
                                  sp_lcp_ip, lcp_sp_ip, sp_lmat_ip, lmat_sp_ip),
         'leaf-cp':     frr_leaf_cp(cfg, lcp_lo, lcp_sp_ip, sp_lcp_ip,
                                    lcp_dpu_ip, dpu_lcp_ip),
-        'leaf-mat':    frr_leaf_mat(cfg, lmat_lo, lmat_sp_ip, sp_lmat_ip, mat_gw),
+        'leaf-mat':    frr_leaf_mat(cfg, lmat_lo, lmat_sp_ip, sp_lmat_ip, mat_gw, encl),
         'dpu-1':       frr_dpu(cfg, dpu_lo, dpu_lcp_ip, lcp_dpu_ip,
                                dpu_cp_ip, vm_cp_ip),
     }
