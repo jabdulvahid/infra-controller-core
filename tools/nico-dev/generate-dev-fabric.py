@@ -391,7 +391,10 @@ def gen_topo(cfg, ips, dc, encl=None):
         '        - sysctl -w net.ipv4.conf.all.forwarding=1',
         # DHCP relay for the enclosure segment: giaddr is eth3's address, which
         # is how Core picks the segment (prefix containment of the relay).
-        *([f"        - dhcrelay -4 -id eth3 -iu eth1 {encl['dhcp_vip']}"] if encl else []),
+        # dhcrelay binds its interfaces at start and discards packets from an
+        # interface that had no IPv4 address then; FRR assigns eth3 a few
+        # seconds after the container starts, so wait for it.
+        *([f"        - sh -c 'for i in $(seq 60); do ip -4 addr show eth3 | grep -q inet && break; sleep 1; done; dhcrelay -4 -id eth3 -iu eth1 {encl['dhcp_vip']}'"] if encl else []),
         '',
         '    dpu-1:',
         f'      mgmt-ipv4: 172.20.30.20',
