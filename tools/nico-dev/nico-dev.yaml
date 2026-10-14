@@ -81,6 +81,7 @@ fabric:
     internet_uplink:     7.132.0.0/30    # host=7.132.0.1, super-spine=7.132.0.2
     control_plane_link:  7.132.1.0/31    # vm-host=7.132.1.1, dpu=7.132.1.0
     mat_underlay:        7.140.2.0/24
+    encl_oob:            7.140.3.0/24   # enclosure DPU stand-in OOB (leaf-mat:eth3, relayed to nico-dhcp)
     service_vips:        7.133.1.0/27
     overlay:             8.150.0.0/16    # EVPN/VXLAN tenant space
 
@@ -130,6 +131,11 @@ nico-system:
       rack-mat-hosts:
         prefix: "7.140.2.0/24"
         gateway: "7.140.2.1"
+        mtu: 1500
+        reserve_first: 2
+      rack-encl-oob:
+        prefix: "7.140.3.0/24"
+        gateway: "7.140.3.1"
         mtu: 1500
         reserve_first: 2
 

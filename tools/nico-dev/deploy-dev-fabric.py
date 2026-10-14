@@ -157,7 +157,9 @@ def main():
     # whether /etc/fstab was fixed in the base image.
     subprocess.run(['swapoff', '-a'], capture_output=True)
     print('\nStep 2: Creating Linux bridges...')
-    for br in [f'br-{dc}-cp', f'br-{dc}-internet']:
+    encl_oob = pfx.get('encl_oob', '')
+    bridges = [f'br-{dc}-cp', f'br-{dc}-internet'] + ([f'br-{dc}-encl'] if encl_oob else [])
+    for br in bridges:
         if run(['ip', 'link', 'show', br], check=False).returncode != 0:
             run(['ip', 'link', 'add', br, 'type', 'bridge'])
             run(['ip', 'link', 'set', br, 'up'])
@@ -222,8 +224,11 @@ def main():
     has_docker_start = False
     if r.returncode == 0:
         # Check the image actually has docker-start (might be stale)
+        # dhcrelay was added later (enclosure segment relay): an image without
+        # it is stale and rebuilt the same way.
         check = subprocess.run(
-            ['docker', 'run', '--rm', image, 'test', '-f', '/usr/lib/frr/docker-start'],
+            ['docker', 'run', '--rm', image, 'sh', '-c',
+             'test -f /usr/lib/frr/docker-start && test -x /usr/sbin/dhcrelay'],
             capture_output=True)
         has_docker_start = (check.returncode == 0)
 
@@ -232,7 +237,7 @@ def main():
         dockerfile = r'''FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -q && \
-    apt-get install -y -q frr frr-pythontools iproute2 iputils-ping tini && \
+    apt-get install -y -q frr frr-pythontools iproute2 iputils-ping tini isc-dhcp-relay && \
     rm -rf /var/lib/apt/lists/*
 
 # Create docker-start script (not included in Ubuntu apt package)
@@ -319,6 +324,30 @@ CMD ["/usr/lib/frr/docker-start"]
     else:
         print(f'  {vm_cp_ip}/{plen} already on {cp_br}')
 
+    # ── Step 5b: Enclosure cable — enslave the site VM NIC the hypervisor cable
+    # plugs into (identified by MAC from fabric.enclosure.cable_mac) to the
+    # enclosure bridge, which the topology links to leaf-mat:eth3.
+    cable_mac = (cfg['fabric'].get('enclosure') or {}).get('cable_mac', '')
+    if encl_oob and cable_mac:
+        encl_br = f'br-{dc}-encl'
+        print(f'\nStep 5b: Attaching cable NIC {cable_mac} to {encl_br}...')
+        nic = None
+        for line in subprocess.run(['ip', '-o', 'link'], capture_output=True,
+                                   text=True).stdout.splitlines():
+            if cable_mac.lower() in line.lower() and 'link/ether' in line:
+                nic = line.split(':')[1].strip().split('@')[0]
+                break
+        if nic is None:
+            print(f'  ! no interface with MAC {cable_mac} in this VM yet; run '
+                  f'enclosure/cable.sh create on the hypervisor, then rerun this script')
+        else:
+            run(['ip', 'link', 'set', nic, 'master', encl_br])
+            run(['ip', 'link', 'set', nic, 'up'])
+            print(f'  {nic} → {encl_br}')
+    elif encl_oob:
+        print(f'\nStep 5b: enclosure segment defined but no fabric.enclosure.cable_mac; '
+              f'br-{dc}-encl has no cable')
+
     # ── Step 6: Add fabric routes on host ─────────────────────────────────────
     print('\nStep 6: Adding fabric routes...')
     ss_inet = ips['ss_inet_ip']
@@ -344,6 +373,10 @@ CMD ["/usr/lib/frr/docker-start"]
     if not run(['ip', 'route', 'show', mat_pfx], check=False).stdout.strip():
         run(['ip', 'route', 'add', mat_pfx, 'via', ss_inet, 'dev', inet_br])
         print(f'  added route: {mat_pfx} via {ss_inet} (MAT underlay)')
+    # Enclosure OOB segment, same path (so the VM can reach a DPU stand-in)
+    if encl_oob and not run(['ip', 'route', 'show', encl_oob], check=False).stdout.strip():
+        run(['ip', 'route', 'add', encl_oob, 'via', ss_inet, 'dev', inet_br])
+        print(f'  added route: {encl_oob} via {ss_inet} (enclosure OOB)')
 
     # ── Step 7: Restart kubelet (now that the CP bridge and its node IP exist) ───
     if Path('/usr/bin/kubelet').exists():

@@ -150,6 +150,7 @@ def derive_prefixes(o, ov):
         'internet_uplink':    f'{o}.132.0.0/30',
         'control_plane_link': f'{o}.132.1.0/31',
         'mat_underlay':       f'{o}.140.2.0/24',
+        'encl_oob':           f'{o}.140.3.0/24',
         'service_vips':       f'{o}.133.1.0/27',
         'overlay':            f'{ov}.150.0.0/16',
         'admin_network':      f'{ov}.135.0.0/16',
@@ -223,6 +224,8 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('7.132.1.0/31',      pfx['control_plane_link']),
         ('7.140.2.0/24',      pfx['mat_underlay']),
         ('7.140.2.',          f'{o}.140.2.'),   # mat gateway etc.
+        ('7.140.3.0/24',      pfx['encl_oob']),
+        ('7.140.3.',          f'{o}.140.3.'),   # enclosure gateway etc.
         ('7.133.1.0/27',      pfx['service_vips']),
         ('7.133.1.',          f'{o}.133.1.'),
         ('7.132.0.',          f'{o}.132.0.'),
