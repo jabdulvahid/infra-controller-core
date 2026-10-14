@@ -289,8 +289,19 @@ CMD ["/usr/lib/frr/docker-start"]
     # ── Step 3c: Clean up any leftover containers from previous runs ───────────
     print('\nStep 3c: Cleaning up any leftover containers...')
     topo = fabric_dir / 'topo.clab.yml'
+    # Destroy by topology file, not by name: with only the name clab can miss
+    # the lab and leave its state directory behind, after which the next
+    # deploy runs in reconcile mode and refuses new bridge nodes ("externally
+    # managed and cannot be recreate for config drift"). Remove the lab
+    # directory too so the deploy below is always a fresh create.
+    subprocess.run(['clab', 'destroy', '-t', str(topo), '--cleanup'],
+                   cwd=str(fabric_dir), capture_output=True)
     subprocess.run(['clab', 'destroy', '-n', dc, '--cleanup'],
                    capture_output=True)
+    lab_dir = fabric_dir / f'clab-{dc}'
+    if lab_dir.exists():
+        shutil.rmtree(lab_dir, ignore_errors=True)
+        print(f'  removed stale lab directory {lab_dir.name}')
     r = subprocess.run(['docker', 'ps', '-aq', '--filter', f'name=clab-{dc}-'],
                        capture_output=True, text=True)
     leftover = r.stdout.split()
@@ -302,7 +313,7 @@ CMD ["/usr/lib/frr/docker-start"]
 
     # ── Step 4: Deploy ContainerLab ───────────────────────────────────────────
     print('\nStep 4: Deploying ContainerLab topology...')
-    r = subprocess.run(['clab', 'deploy', '-t', str(topo)], cwd=str(fabric_dir))
+    r = subprocess.run(['clab', 'deploy', '-t', str(topo), '--reconfigure'], cwd=str(fabric_dir))
     if r.returncode != 0:
         print('clab deploy failed', file=sys.stderr); sys.exit(1)
 
