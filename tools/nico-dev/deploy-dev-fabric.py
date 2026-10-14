@@ -355,6 +355,25 @@ CMD ["/usr/lib/frr/docker-start"]
             run(['ip', 'link', 'set', nic, 'master', encl_br])
             run(['ip', 'link', 'set', nic, 'up'])
             print(f'  {nic} → {encl_br}')
+            # This VM is a kubernetes node, so bridged frames also traverse
+            # iptables (bridge-nf-call-iptables). A frame from an enclosure to
+            # a service VIP would be DNATed by kube-proxy while it is merely
+            # being bridged to the leaf, and even an un-NATed first sighting
+            # binds the flow in conntrack so the later routed pass is never
+            # DNATed. Keep bridged frames on this cable out of conntrack and
+            # let them be forwarded.
+            for port in (nic, 'eth-encl'):
+                for table, chain, rule in [
+                    ('raw', 'PREROUTING',
+                     ['-m', 'physdev', '--physdev-in', port, '-j', 'NOTRACK']),
+                    ('filter', 'FORWARD',
+                     ['-m', 'physdev', '--physdev-is-bridged', '--physdev-in', port,
+                      '-j', 'ACCEPT']),
+                ]:
+                    if run(['iptables', '-t', table, '-C', chain] + rule,
+                           check=False).returncode != 0:
+                        run(['iptables', '-t', table, '-I', chain, '1'] + rule)
+            print(f'  iptables: NOTRACK + FORWARD accept for bridged frames on {nic}/eth-encl')
     elif encl_oob:
         print(f'\nStep 5b: enclosure segment defined but no fabric.enclosure.cable_mac; '
               f'br-{dc}-encl has no cable')
