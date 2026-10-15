@@ -135,10 +135,13 @@ sudo chown libvirt-qemu:kvm "$WORK/disk.qcow2"
 # NIC order = dpu.env order: OOB, uplink (p0), host link (pf0hpf).
 # --sysinfo makes virt-install set <smbios mode="sysinfo"/>, so DMI inside the
 # guest shows the BlueField identity the agent's enumeration derives from.
+# Core decides "this report is a DPU" from the BOARD name containing BlueField
+# (api-model HardwareInfo::is_dpu), the agent from the PRODUCT name, so both
+# must carry it or the derived machine ids differ and discovery is refused.
 virt-install --connect "$CONNECT" --name "$NAME" \
     --arch aarch64 --machine virt --virt-type qemu --cpu cortex-a72 \
     --vcpus 4 --memory 4096 --boot uefi --import \
-    --sysinfo system.manufacturer=Nvidia,system.product="BlueField SoC",system.serial="$SERIAL" \
+    --sysinfo system.manufacturer=Nvidia,system.product="BlueField SoC",system.serial="$SERIAL",baseBoard.manufacturer=Nvidia,baseBoard.product="BlueField SoC" \
     --disk path="$WORK/disk.qcow2",bus=virtio \
     --disk path="$WORK/seed.iso",device=cdrom,readonly=on \
     --network network="$NET",model=virtio,mac="$OOB_MAC" \
