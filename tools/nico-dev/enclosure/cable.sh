@@ -15,6 +15,14 @@
 #   sudo bash cable.sh attach patch-encl1 dpu-test1 02:00:00:01:00:03
 set -euo pipefail
 CONNECT=${CONNECT:-qemu:///system}
+# virsh attach-interface has no --mtu on older libvirt; set it on the tap
+# instead (the guest side is set by whoever configures the NIC in the guest).
+set_tap_mtu() {
+  local vm=$1 mac=$2 mtu=$3 tap
+  [[ -n "$mtu" ]] || return 0
+  tap=$(virsh --connect "$CONNECT" domiflist "$vm" | awk -v m="$mac" 'tolower($5)==tolower(m){print $1}')
+  [[ -n "$tap" && "$tap" != "-" ]] && ip link set "$tap" mtu "$mtu" || true
+}
 cmd=${1:-}; shift || true
 case "$cmd" in
   create)
@@ -29,8 +37,9 @@ case "$cmd" in
       echo "$vm already has a NIC $mac"
     else
       virsh --connect "$CONNECT" attach-interface "$vm" --type bridge --source "$br" \
-        --model virtio --mac "$mac" ${mtu:+--mtu "$mtu"} --config --live
-      echo "$vm: NIC $mac attached to $br"
+        --model virtio --mac "$mac" --config --live
+      set_tap_mtu "$vm" "$mac" "$mtu"
+      echo "$vm: NIC $mac attached to $br${mtu:+ (tap mtu $mtu)}"
     fi
     ;;
   attach)
@@ -43,8 +52,9 @@ case "$cmd" in
       virsh --connect "$CONNECT" detach-interface "$vm" "${cur%%:*}" --mac "$mac" --config --live
     fi
     virsh --connect "$CONNECT" attach-interface "$vm" --type bridge --source "$br" \
-      --model virtio --mac "$mac" ${mtu:+--mtu "$mtu"} --config --live
-    echo "$vm: NIC $mac now on $br${mtu:+ (mtu $mtu)}"
+      --model virtio --mac "$mac" --config --live
+    set_tap_mtu "$vm" "$mac" "$mtu"
+    echo "$vm: NIC $mac now on $br${mtu:+ (tap mtu $mtu)}"
     ;;
   status)
     br=$1
