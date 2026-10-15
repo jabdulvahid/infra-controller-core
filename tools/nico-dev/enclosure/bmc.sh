@@ -48,7 +48,7 @@ create() {
   ip link show "$bridge" >/dev/null
   local n v; n=$(ns "$role"); v=$(veth "$role")
   mkdir -p "$state"
-  if ! ip netns list | grep -qx "$n"; then
+  if ! ip netns list | awk '{print $1}' | grep -qx "$n"; then
     ip netns add "$n"
     ip link add "$v" type veth peer name eth0 netns "$n"
     ip link set "$v" master "$bridge" up
@@ -99,7 +99,7 @@ UDHCPC
 status() {
   for r in host dpu; do
     local n; n=$(ns "$r")
-    ip netns list | grep -qx "$n" || continue
+    ip netns list | awk '{print $1}' | grep -qx "$n" || continue
     local addr; addr=$(ip -n "$n" -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | head -1)
     local macaddr; macaddr=$(ip -n "$n" -o link show eth0 | awk '{print $17}')
     printf '%-5s ns=%s mac=%s addr=%s unit=%s' "$r" "$n" "$macaddr" "${addr:-none}" "$(systemctl is-active "$(unit "$r")" 2>/dev/null || true)"
@@ -115,7 +115,7 @@ destroy() {
   for r in "${roles[@]}"; do
     systemctl stop "$(unit "$r")" 2>/dev/null || true
     local n; n=$(ns "$r")
-    if ip netns list | grep -qx "$n"; then
+    if ip netns list | awk '{print $1}' | grep -qx "$n"; then
       [[ -f "$state/$r-dhclient.pid" ]] && kill "$(cat "$state/$r-dhclient.pid")" 2>/dev/null || true
       [[ -f "$state/$r-udhcpc.pid" ]] && kill "$(cat "$state/$r-udhcpc.pid")" 2>/dev/null || true
       ip netns del "$n"
