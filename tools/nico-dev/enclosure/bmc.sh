@@ -49,6 +49,7 @@ create() {
   local n v; n=$(ns "$role"); v=$(veth "$role")
   mkdir -p "$state"
   if ! ip netns list | awk '{print $1}' | grep -qx "$n"; then
+    ip link del "$v" 2>/dev/null || true   # stale bridge-side end of an earlier pair
     ip netns add "$n"
     ip link add "$v" type veth peer name eth0 netns "$n"
     ip link set "$v" master "$bridge" up
@@ -119,6 +120,7 @@ destroy() {
       [[ -f "$state/$r-dhclient.pid" ]] && kill "$(cat "$state/$r-dhclient.pid")" 2>/dev/null || true
       [[ -f "$state/$r-udhcpc.pid" ]] && kill "$(cat "$state/$r-udhcpc.pid")" 2>/dev/null || true
       ip netns del "$n"
+      ip link del "$(veth "$r")" 2>/dev/null || true
       echo "removed $n"
     fi
   done
