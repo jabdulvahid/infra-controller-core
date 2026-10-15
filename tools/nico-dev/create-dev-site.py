@@ -68,6 +68,11 @@ def parse_args():
                    help='DPF as the DPU-provisioning path (default true): [dpf] enabled in '
                         'the API config, DPF CRDs before nico, dpf-sim-controller at the end '
                         'of bring-up. false = legacy iPXE path. From bringup.yaml `dpf:`.')
+    p.add_argument('--unbound', choices=['true', 'false'], default='false',
+                   help='serve the .forge compatibility zone with the umbrella chart\'s unbound '
+                        '(default false): stock unbound at net-plan unbound_vip with localData from '
+                        'the site VIPs, DHCP option 6 pointing at it. Required by the enclosure DPU. '
+                        'From bringup.yaml `unbound:`.')
     p.add_argument('--firmware-sim', choices=['true', 'false'], default='false',
                    help='firmware upgrade simulation (default false): nico-api gets a firmware '
                         'definition for the mock GB200 with firmware_global.autoupdate on, and '
@@ -193,6 +198,8 @@ def rewrite(content, pfx, dc_name, site_name, args):
         ('DPF_ENABLED',                  args.dpf),
         # Firmware upgrade simulation (bringup.yaml firmware_sim:, default false)
         ('FIRMWARE_SIM_ENABLED',         args.firmware_sim),
+        # .forge zone via unbound (bringup.yaml unbound:, default false)
+        ('UNBOUND_ENABLED',              args.unbound),
         ('FIRMWARE_SIM_DELIVERY',        args.firmware_sim_delivery),
         # The VM, for host-side scripts (image delivery over ssh)
         ('VM_IP',      args.vm_ip),

@@ -120,6 +120,7 @@ nico-system:
       ntp_vip_2:         "7.133.1.7"
       dns_vip_0:         "7.133.1.20"
       dns_vip_1:         "7.133.1.19"
+      unbound_vip:       "7.133.1.21"   # .forge resolver for DPUs/hosts when nico-system.unbound.enabled
       metallb_asn:       "4268030000"
 
     networks:
@@ -220,6 +221,32 @@ nico-system:
       resources:
         requests: { cpu: 100m, memory: 128Mi }
         limits:   { cpu: 500m, memory: 512Mi }
+
+  # unbound — the .forge compatibility zone (helm-prereqs README step 6,
+  # Option A). enabled comes from bringup.yaml `unbound:` (default false).
+  # false = the chart is not deployed and the DHCP hook hands out nico-dns as
+  # the resolver, exactly as before. true = a stock unbound at net-plan
+  # unbound_vip serves carbide-*.forge / nico-*.forge from the site's own VIPs
+  # (the full list helm-prereqs/values/nico-core.yaml requires, generated,
+  # not configurable), the DHCP hook hands out unbound_vip instead, and
+  # everything that is not a .forge name is forwarded: the site domain to
+  # nico-dns, the rest to upstream_dns. upstream_dns defaults to kube-dns of
+  # the kubeadm cluster nico-dev builds (service CIDR 10.96.0.0/12), which
+  # forwards to the node's resolver; set it to your resolver if you need to.
+  # extra_local_data: site-specific names, same shape as the chart's
+  # localData entries, appended after the generated set.
+  # The enclosure DPU stand-in (fabric.enclosure) refuses to deploy with
+  # enabled: false — the real agent needs the .forge names.
+  unbound:
+    enabled: UNBOUND_ENABLED
+    # The chart renders repository:tag and the override needs /bin/sh, so this
+    # is the Alpine-maintained image (multi-arch, floating `latest` only) pinned
+    # through its index digest in the tag position. Bump by replacing the digest.
+    image:
+      repository: docker.io/alpinelinux/unbound@sha256
+      tag: "44ed086868305b6b14f536c111d3938a047035bbbb5e22f10fa9b9109662d79c"   # unbound 1.25.2, 2026-10-11
+    upstream_dns: ["10.96.0.10"]
+    extra_local_data: []
 
   # Firmware upgrade simulation — enabled comes from bringup.yaml
   # `firmware_sim:` (default false). true = MAT reports `initial` as the

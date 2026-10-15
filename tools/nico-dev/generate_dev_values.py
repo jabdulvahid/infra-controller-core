@@ -612,6 +612,14 @@ def gen_nico(cfg):
     fw_delivery = str(fw_sim.get('delivery') or 'legacy')
     if fw_delivery not in ('legacy', 'api'):
         raise SystemExit(f"nico-system.firmware_sim.delivery must be legacy or api, got {fw_delivery!r}")
+    # unbound — the .forge compatibility zone (nico-system.unbound, default
+    # off — a site yaml without the key renders exactly as before). This is
+    # helm-prereqs README step 6, Option A: a stock unbound at net-plan
+    # unbound_vip serves the names the DPU agent and the boot images have
+    # hardcoded, from the site's own VIPs, and DHCP option 6 points at it.
+    unbound = ns.get('unbound') or {}
+    unbound_enabled = bool(unbound.get('enabled', False))
+    unbound_vip = np.get('unbound_vip', '')
 
     values = {
         'global': {
@@ -672,7 +680,7 @@ def gen_nico(cfg):
         'nico-dsx-exchange-consumer': {'enabled': comps.get('nico_dsx_exchange_consumer', False)},
         'nico-flow':                  {'enabled': False},
         'nico-machine-a-tron':        {'enabled': False},
-        'unbound':                    {'enabled': False},
+        'unbound':                    unbound_values(unbound, np, hv.get('domain', f'{sitename}.example.com')) if unbound_enabled else {'enabled': False},
         'grafanaDashboards':          {'enabled': False},
 
         'nico-dhcp': {
@@ -689,9 +697,12 @@ def gen_nico(cfg):
                     # resolvers and NTP must be the site's own VIPs, otherwise a DPU
                     # agent cannot resolve carbide-pxe.forge / carbide-ntp.forge and
                     # exits its main loop (seen 2026-10-15 with the enclosure DPU).
+                    # With unbound on, the resolver is unbound itself (option 6 in
+                    # the prereqs README), which serves .forge and forwards the rest.
                     'hookParameters': {
                         'provisioningServer': np.get('pxe_vip', ''),
-                        'nameservers': ','.join(v for v in (np.get('dns_vip_0', ''), np.get('dns_vip_1', '')) if v),
+                        'nameservers': unbound_vip if unbound_enabled else
+                                       ','.join(v for v in (np.get('dns_vip_0', ''), np.get('dns_vip_1', '')) if v),
                         'ntpServer': ','.join(v for v in (np.get('ntp_vip_0', ''), np.get('ntp_vip_1', ''), np.get('ntp_vip_2', '')) if v),
                     },
                 },
@@ -733,6 +744,74 @@ def gen_nico(cfg):
     if fw_sim_enabled and fw_delivery == 'legacy':
         values['nico-api']['initContainers'] = [firmware_sim_init_container(fw_desired)]
     return values
+
+
+# The .forge names a site must serve, from helm-prereqs/values/nico-core.yaml
+# (every entry there is REQUIRED): the legacy carbide-* spelling the agent
+# binary and the boot images query, and the nico-* alias, both at the same
+# VIP. Not configurable: a missing name is the silent DPU hang setup.sh warns
+# about. Site-specific names go in nico-system.unbound.extra_local_data.
+UNBOUND_FORGE_NAMES = (
+    ('carbide-api.forge',        'api'),
+    ('nico-api.forge',           'api'),
+    ('carbide-pxe.forge',        'pxe'),
+    ('nico-pxe.forge',           'pxe'),
+    ('carbide-static-pxe.forge', 'pxe'),
+    ('carbide-ntp.forge',        'ntp'),
+    ('nico-ntp.forge',           'ntp'),
+    ('unbound.forge',            'unbound'),
+)
+
+
+def unbound_values(unbound, np, domain):
+    """Values for the umbrella chart's unbound subchart, Option A of the
+    prereqs README with a public image: the chart's documented command
+    override writes a minimal server block and includes the chart-managed
+    local.conf.d (local_data.conf = the .forge records, forwarders.conf), and
+    the exporter is off because a stock image has no remote-control keys."""
+    image = unbound.get('image') or {}
+    repository = image.get('repository') or 'docker.io/alpinelinux/unbound'
+    tag = str(image.get('tag') or 'latest')
+    upstream = [str(a) for a in (unbound.get('upstream_dns') or ['10.96.0.10'])]
+    vips = {
+        'api':     [np.get('api_vip', '')],
+        'pxe':     [np.get('pxe_vip', '')],
+        'ntp':     [v for v in (np.get('ntp_vip_0', ''), np.get('ntp_vip_1', ''), np.get('ntp_vip_2', '')) if v],
+        'unbound': [np.get('unbound_vip', '')],
+    }
+    local_data = [{'name': name, 'addresses': list(vips[group])} for name, group in UNBOUND_FORGE_NAMES]
+    for entry in unbound.get('extra_local_data') or []:
+        if not isinstance(entry, dict) or not entry.get('name') or not entry.get('addresses'):
+            raise SystemExit(f'nico-system.unbound.extra_local_data entries need name and addresses, got {entry!r}')
+        local_data.append({'name': str(entry['name']), 'addresses': [str(a) for a in entry['addresses']]})
+    # Names outside .forge: the site domain is nico-dns's (instance records),
+    # everything else goes upstream. The chart default forwarders.conf is a
+    # deliberately broken placeholder, so this file is always written.
+    dns_vips = [v for v in (np.get('dns_vip_0', ''), np.get('dns_vip_1', '')) if v]
+    forwarders = 'forward-zone:\n    name: "%s."\n%s' % (
+        domain, ''.join(f'    forward-addr: {v}\n' for v in dns_vips))
+    forwarders += 'forward-zone:\n    name: "."\n%s' % ''.join(f'    forward-addr: {a}\n' for a in upstream)
+    # A public image's entrypoint would not read local.conf.d: start unbound
+    # on a server block that includes it (the override the chart documents).
+    # chroot/username/pidfile off because the image runs as root with no
+    # unbound user or /var/run; use-syslog no so the log reaches the pod.
+    startup = ('printf \'server:\\n  interface: 0.0.0.0\\n  interface: ::0\\n  chroot: ""\\n'
+               '  username: ""\\n  pidfile: ""\\n  use-syslog: no\\n'
+               'include: "/etc/unbound/local.conf.d/*.conf"\\n\' > /tmp/unbound.conf '
+               '&& exec unbound -d -c /tmp/unbound.conf')
+    return {
+        'enabled': True,
+        'image': {'repository': repository, 'tag': tag, 'pullPolicy': 'IfNotPresent'},
+        'exporter': {'enabled': False},
+        'command': ['/bin/sh', '-c'],
+        'args': [startup],
+        'externalService': {
+            'enabled': True,
+            'annotations': {'metallb.universe.tf/loadBalancerIPs': np.get('unbound_vip', '')},
+        },
+        'localData': local_data,
+        'localConfig': {'forwarders.conf': forwarders},
+    }
 
 
 def firmware_sim_init_container(desired):
@@ -795,8 +874,29 @@ def write_yaml(path, data, header=None):
     print(f'  [ok] {path}')
 
 
+def validate_site(cfg):
+    """Site-level consistency checks, before any values file is written."""
+    ns = cfg['nico-system']
+    np = ns['helm-values'].get('net-plan', {})
+    unbound_enabled = bool((ns.get('unbound') or {}).get('enabled', False))
+    if unbound_enabled and not np.get('unbound_vip'):
+        raise SystemExit('nico-system.unbound.enabled needs net-plan unbound_vip (the .forge resolver VIP)')
+    # The enclosure DPU stand-in runs the real agent, whose main loop exits
+    # when carbide-pxe.forge / carbide-ntp.forge do not resolve: refuse the
+    # combination instead of rendering a site the DPU hangs on. Same message
+    # setup.sh prints for a production site without a .forge zone.
+    encl = cfg['fabric'].get('enclosure') or {}
+    if any(encl.get(k) for k in ('cable_mac', 'uplink_cable_mac')) and not unbound_enabled:
+        raise SystemExit(
+            'fabric.enclosure is configured but nico-system.unbound.enabled is false: '
+            'the enclosure DPU agent cannot resolve carbide-pxe.forge / carbide-ntp.forge. '
+            'Bring the site up with `unbound: true` in bringup.yaml (helm-prereqs README, '
+            '"DPU compatibility DNS (.forge zone)").')
+
+
 def generate(cfg, outdir):
     """Generate all values files into outdir. Called by deploy-dev-nico.py."""
+    validate_site(cfg)
     outdir = Path(outdir)
     hdr = f'Generated by generate-dev-values.py\nDo not edit manually.'
 

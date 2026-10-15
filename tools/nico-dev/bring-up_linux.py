@@ -287,6 +287,7 @@ def build_steps(args):
                  f' --redeploy-on-insufficient-cpu {args.redeploy_on_insufficient_cpu}'
                  f' --dpf {str(args.dpf).lower()}'
                  f' --firmware-sim {str(args.firmware_sim).lower()}'
+                 f' --unbound {str(args.unbound).lower()}'
                  f' --firmware-sim-delivery {args.firmware_sim_delivery}'
                  + (f' --nico-api-site-config-extra {shlex.quote(args.nico_api_site_config_extra)}'
                     if args.nico_api_site_config_extra else '')
@@ -446,6 +447,11 @@ def main():
     p.add_argument('--dpf', action=argparse.BooleanOptionalAction, default=True,
                    help='DPF as the DPU-provisioning path (default; config: dpf: true|false). '
                         '--no-dpf = legacy iPXE path: no DPF CRDs, no simulator, [dpf] off')
+    p.add_argument('--unbound', action=argparse.BooleanOptionalAction, default=False,
+                   help='deploy the umbrella chart\'s unbound to serve the .forge compatibility zone '
+                        '(carbide-pxe.forge, carbide-ntp.forge, ...) from the site VIPs and hand it to '
+                        'DPUs and hosts as their resolver — helm-prereqs README step 6, Option A '
+                        '(config: unbound: true|false; default false; required by the enclosure DPU)')
     p.add_argument('--firmware-sim', action=argparse.BooleanOptionalAction, default=False,
                    help='give nico-api a firmware definition for the mock GB200 with autoupdate on, '
                         'and start MAT hosts below it, so ingestion runs the firmware upgrade chain '

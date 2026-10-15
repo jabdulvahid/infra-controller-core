@@ -5,6 +5,16 @@ plain libvirt VMs on the hypervisor that also hosts the nico-dev site VM. The
 DPU stand-in is the arm64 image in [`dpu-image/`](dpu-image/README.md). This
 directory holds what connects an enclosure to the site: the cable.
 
+## Prerequisite: the site serves the `.forge` zone
+
+The DPU runs the real agent, which resolves `carbide-pxe.forge` and
+`carbide-ntp.forge` and exits its main loop when it cannot. Bring the site up
+with `unbound: true` in bringup.yaml (helm-prereqs README step 6, Option A):
+the chart's unbound then serves those names from the site VIPs at net-plan
+`unbound_vip`, and DHCP hands it to the DPU as its resolver.
+`generate_dev_values.py` refuses a site with `fabric.enclosure` configured and
+unbound off, so this cannot be missed silently.
+
 ## The cable
 
 A cable is one Linux bridge on the hypervisor that reaches one leaf port inside
