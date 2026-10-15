@@ -20,8 +20,10 @@ CONNECT=${CONNECT:-qemu:///system}
 set_tap_mtu() {
   local vm=$1 mac=$2 mtu=$3 tap
   [[ -n "$mtu" ]] || return 0
-  tap=$(virsh --connect "$CONNECT" domiflist "$vm" | awk -v m="$mac" 'tolower($5)==tolower(m){print $1}')
-  [[ -n "$tap" && "$tap" != "-" ]] && ip link set "$tap" mtu "$mtu" || true
+  # Right after a detach+attach domiflist can still list the old tap too.
+  for tap in $(virsh --connect "$CONNECT" domiflist "$vm" | awk -v m="$mac" 'tolower($5)==tolower(m){print $1}'); do
+    [[ "$tap" != "-" ]] && ip link show "$tap" >/dev/null 2>&1 && ip link set "$tap" mtu "$mtu" || true
+  done
 }
 cmd=${1:-}; shift || true
 case "$cmd" in
