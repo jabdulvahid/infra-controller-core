@@ -356,6 +356,7 @@ redeploy:
   on_insufficient_cpu: scale-down-first   # lets a rolling redeploy proceed on a tight node
 
 dpf: true           # default: DPF provisioning + the DPF simulator; false = legacy iPXE path
+unbound: false      # default; true = serve the .forge zone (carbide-pxe.forge, ...) with the chart's unbound and hand it to DPUs/hosts as resolver — required by the enclosure DPU
 firmware_sim: true  # nico-api gets a firmware definition and autoupdate, MAT reports old versions (Step 11); default false
 
 dc: dc1

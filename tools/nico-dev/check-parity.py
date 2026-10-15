@@ -194,6 +194,10 @@ def run(repo, quiet):
     c.key('helm/charts/nico-api/values.yaml', ('dpf', 'rbacCreate'), 'generate_dev_values.py', 'DPF Role toggle')
     c.value('helm/charts/nico-api/values.yaml', ('dpf', 'operatorNamespace'), 'dpf-operator-system',
             'deploy-dpf-sim.py, nico-dev.yaml template', 'the DPF namespace nico-dev uses')
+    for k in (('localData',), ('externalService', 'enabled'), ('command',), ('args',), ('exporter', 'enabled'),
+              ('localConfig', 'forwarders.conf')):
+        c.key('helm/charts/unbound/values.yaml', k, 'generate_dev_values.py unbound_values', f'nico-dev renders unbound.{".".join(k)}')
+    c.key('helm/Chart.yaml', ('dependencies',), 'generate_dev_values.py (unbound.enabled)', 'the unbound subchart condition')
 
     c.section('REST stack (rest_deploy.py — a transcription of setup.sh phases 7a–7i)')
     for phase, what in (('[7b/7]', 'REST CA issuer'), ('[7c/7] NICo REST postgres', 'standalone REST postgres'),

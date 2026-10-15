@@ -105,6 +105,18 @@ ssh_key: ~/.ssh/id_ed25519.pub    # PUBLIC key authorized in the VM; its private
 # resources) is advanced and lives in the site yaml under nico-system.dpf.
 # dpf: true
 
+# ── unbound — the .forge compatibility zone (helm-prereqs README step 6) ─
+# false (default): the umbrella chart's unbound is not deployed and DHCP hands
+# out nico-dns as the resolver, as before. DPU agents cannot resolve
+# carbide-pxe.forge / carbide-ntp.forge then, which is fine for MAT (its DPUs
+# are mocks) and fatal for a real DPU agent: the enclosure stand-in refuses
+# to deploy without it. true: production's Option A — a stock unbound serves
+# the .forge names from the site's own VIPs at unbound_vip (site yaml
+# net-plan), DHCP option 6 points DPUs and hosts at it, and it forwards
+# everything else upstream (site yaml nico-system.unbound.upstream_dns,
+# default the cluster's kube-dns). Both lanes.
+# unbound: false
+
 # ── Firmware upgrade simulation ─────────────────────────────────────────
 # A site-level scenario switch: it changes nico-api's configuration and MAT's
 # together, which is why it lives here and not in MAT's toml alone.
