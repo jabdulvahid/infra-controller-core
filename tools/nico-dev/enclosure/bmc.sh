@@ -16,6 +16,9 @@
 #   bmc.sh destroy <encl> [host|dpu]
 # Options: --bridge NAME (patch-encl1)  --profile P (nvidia_dgx_h100)  --instance N (1)
 #          --dpu-index K (0)  --bin PATH  --certs DIR  --libvirt-domain NAME (host power via libvirt)
+#          -- <args>   everything after -- is passed to bmc-mock unchanged, e.g. the DPU
+#                      firmware versions NICo's DPF gate checks (BMC >= 24.10):
+#                      -- --dpu-bmc-firmware BF-25.10-24 --dpu-nic-firmware 32.47.3576
 #
 # Example (jaslinux):
 #   sudo bash bmc.sh create encl1 dpu  02:00:00:01:00:01
@@ -25,7 +28,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
 cmd=${1:-}; encl=${2:-}; shift 2 || true
 role=""; mac=""; bridge=patch-encl1; profile=nvidia_dgx_h100; instance=1; dpu_index=0
-bin="$repo/target/release/bmc-mock"; certs="$repo/crates/bmc-mock"; domain=""
+bin="$repo/target/release/bmc-mock"; certs="$repo/crates/bmc-mock"; domain=""; extra=()
 if [[ "$cmd" == create ]]; then role=${1:?role}; mac=${2:?mac}; shift 2; fi
 if [[ "$cmd" == destroy ]]; then role=${1:-}; shift || true; fi
 while [[ $# -gt 0 ]]; do
@@ -34,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --instance) instance=$2; shift 2 ;; --dpu-index) dpu_index=$2; shift 2 ;;
     --bin) bin=$2; shift 2 ;; --certs) certs=$2; shift 2 ;;
     --libvirt-domain) domain=$2; shift 2 ;;
+    --) shift; extra=("$@"); break ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -87,6 +91,7 @@ UDHCPC
   local args=(--machine-role "$role" --hardware-profile "$profile" --instance-index "$instance" --port 443 --cert-path "$certs")
   [[ "$role" == dpu ]] && args+=(--dpu-index "$dpu_index")
   if [[ -n "$domain" ]]; then args+=(--state-backend libvirt --libvirt-domain "$domain"); else args+=(--state-backend internal); fi
+  args+=("${extra[@]}")
   if systemctl is-active --quiet "$(unit "$role")"; then
     echo "$(unit "$role") already running"
   else
