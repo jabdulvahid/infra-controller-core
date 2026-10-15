@@ -685,8 +685,14 @@ def gen_nico(cfg):
                                        % {'arm64': 'aarch64'}.get(
                                            platform.machine(),
                                            platform.machine()),
+                    # What the DHCPv4 hook hands to DPUs and hosts in their lease:
+                    # resolvers and NTP must be the site's own VIPs, otherwise a DPU
+                    # agent cannot resolve carbide-pxe.forge / carbide-ntp.forge and
+                    # exits its main loop (seen 2026-10-15 with the enclosure DPU).
                     'hookParameters': {
                         'provisioningServer': np.get('pxe_vip', ''),
+                        'nameservers': ','.join(v for v in (np.get('dns_vip_0', ''), np.get('dns_vip_1', '')) if v),
+                        'ntpServer': ','.join(v for v in (np.get('ntp_vip_0', ''), np.get('ntp_vip_1', ''), np.get('ntp_vip_2', '')) if v),
                     },
                 },
             },
