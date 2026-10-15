@@ -223,30 +223,41 @@ nico-system:
         limits:   { cpu: 500m, memory: 512Mi }
 
   # unbound — the .forge compatibility zone (helm-prereqs README step 6,
-  # Option A). enabled comes from bringup.yaml `unbound:` (default false).
-  # false = the chart is not deployed and the DHCP hook hands out nico-dns as
-  # the resolver, exactly as before. true = a stock unbound at net-plan
-  # unbound_vip serves carbide-*.forge / nico-*.forge from the site's own VIPs
-  # (the full list helm-prereqs/values/nico-core.yaml requires, generated,
-  # not configurable), the DHCP hook hands out unbound_vip instead, and
-  # everything that is not a .forge name is forwarded: the site domain to
-  # nico-dns, the rest to upstream_dns. upstream_dns defaults to kube-dns of
-  # the kubeadm cluster nico-dev builds (service CIDR 10.96.0.0/12), which
-  # forwards to the node's resolver; set it to your resolver if you need to.
-  # extra_local_data: site-specific names, same shape as the chart's
-  # localData entries, appended after the generated set.
-  # The enclosure DPU stand-in (fabric.enclosure) refuses to deploy with
-  # enabled: false — the real agent needs the .forge names.
+  # Option A). The DPU agent and the boot images have carbide-pxe.forge,
+  # carbide-ntp.forge etc. hardcoded; production serves them with the
+  # umbrella chart's unbound. The enclosure DPU stand-in (fabric.enclosure)
+  # refuses to deploy with enabled: false — the real agent needs the names.
   unbound:
+    # From bringup.yaml `unbound:` (default false). false = the chart is not
+    # deployed and the DHCP hook hands out nico-dns as the resolver, exactly
+    # as before. true = the chart's unbound runs at net-plan unbound_vip, the
+    # DHCP hook hands that VIP out instead (DHCP option 6), and the records
+    # below are served.
     enabled: UNBOUND_ENABLED
-    # The chart renders repository:tag and the override needs /bin/sh, so this
-    # is the Alpine-maintained image (multi-arch, floating `latest` only) pinned
-    # through its index digest in the tag position. Bump by replacing the digest.
+    # The unbound container image. The chart renders repository:tag and its
+    # documented override for a public image needs /bin/sh, so the default is
+    # the Alpine-maintained image (multi-arch, floating `latest` only) pinned
+    # through its index digest in the tag position. Bump by replacing the
+    # digest; any image with /bin/sh and unbound on PATH works.
     image:
       repository: docker.io/alpinelinux/unbound@sha256
       tag: "44ed086868305b6b14f536c111d3938a047035bbbb5e22f10fa9b9109662d79c"   # unbound 1.25.2, 2026-10-11
+    # Where queries that are neither a .forge record nor the site domain go
+    # (forward-zone "."). The site domain (<sitename>.example.com, instance
+    # records) is always forwarded to nico-dns. Default: kube-dns of the
+    # kubeadm cluster nico-dev builds (service CIDR 10.96.0.0/12), which in
+    # turn uses the node's resolver, so the site needs no DNS knowledge. Set
+    # your own resolver(s) if pods must not recurse through kube-dns.
     upstream_dns: ["10.96.0.10"]
+    # Site-specific records appended after the generated .forge set, same
+    # shape as the chart's localData: name + list of IPv4/IPv6 addresses
+    # (A/AAAA by address family). The .forge set itself is not configurable:
+    # every name in helm-prereqs/values/nico-core.yaml is REQUIRED, and a
+    # missing one is the silent DPU hang setup.sh warns about.
     extra_local_data: []
+    # extra_local_data:
+    #   - name: nico-api.dc1-dev          # e.g. the API name in a DPU agent's config.toml
+    #     addresses: ["7.133.1.17"]
 
   # Firmware upgrade simulation — enabled comes from bringup.yaml
   # `firmware_sim:` (default false). true = MAT reports `initial` as the
