@@ -76,8 +76,17 @@ done
 
 # nl2doca stays as supervisord runs it: `nv config apply` triggers
 # nl2doca-reload, which restarts it anyway (first child boot), the agent's
-# ContainerExec health check expects it RUNNING, and without hardware it only
-# logs that the ACL resync control path is missing.
+# ContainerExec health check expects it RUNNING, and without hardware it exits
+# (no br-hbn, no DOCA) and never creates its control tree.
+#
+# cl-acltool's hardware sync (`hw_sync_commit`, `hw_sync_stats`) writes "1"
+# into /cumulus/nl2docad/ctrl/acl/{resync,stats/resync} and reads it back; it
+# only fails when the file is missing or the daemon wrote an error there. With
+# the files present and nobody answering, the write reads back as "1" and the
+# sync passes. Without them every `nv config apply` that carries NICo's ACLs
+# ends in apply_fail and NVUE rolls the revision back, FRR included. The tree
+# lives inside the container, so recreate it on every start.
+podman exec "$NAME" sh -c 'mkdir -p /cumulus/nl2docad/ctrl/acl/stats && : > /cumulus/nl2docad/ctrl/acl/resync && : > /cumulus/nl2docad/ctrl/acl/stats/resync'
 
 # NVUE REST authenticates against the container's Linux users. TO VERIFY: the
 # group NVUE requires for write access (HBN documents nvapply/nvshow; sudo is
