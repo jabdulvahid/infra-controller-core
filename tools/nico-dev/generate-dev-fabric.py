@@ -239,10 +239,20 @@ def frr_leaf_mat(cfg, lmat_lo, lmat_sp_ip, sp_lmat_ip, mat_gw, encl=None):
     # leaf (see gen_topo). Absent when the site defines no encl_oob prefix.
     encl_if = ''
     encl_net_stmt = ''
+    encl_nbr = ''
+    encl_nbr_v4 = ''
+    encl_nbr_evpn = ''
     if encl:
         encl_if = (f"!\n! eth3 connects to the enclosure bridge (DPU stand-in OOB)\n"
-                   f"interface eth3\n ip address {encl['gw']}/{encl['plen']}\n")
+                   f"interface eth3\n ip address {encl['gw']}/{encl['plen']}\n"
+                   f"!\n! eth4 connects to the enclosure uplink bridge (DPU stand-in p0,\n"
+                   f"! BGP unnumbered: the agent configures the DPU side as remote-as external)\n"
+                   f"interface eth4\n no ipv6 nd suppress-ra\n ipv6 nd ra-interval 10\n")
         encl_net_stmt = f"  network {encl['net']}\n"
+        encl_nbr = (" neighbor eth4 interface remote-as external\n"
+                    " neighbor eth4 description enclosure-dpu\n !\n")
+        encl_nbr_v4 = "  neighbor eth4 activate\n"
+        encl_nbr_evpn = "  neighbor eth4 activate\n"
 
     return f'''\
 frr version 9.1
@@ -267,15 +277,15 @@ router bgp {lmat_asn}
  neighbor {sp_lmat_ip} remote-as {sp_asn}
  neighbor {sp_lmat_ip} description spine-1
  !
- address-family ipv4 unicast
+{encl_nbr} address-family ipv4 unicast
   network {lmat_lo}/32
   network {mat_net}
 {encl_net_stmt}  neighbor {sp_lmat_ip} activate
- exit-address-family
+{encl_nbr_v4} exit-address-family
  !
  address-family l2vpn evpn
   neighbor {sp_lmat_ip} activate
- exit-address-family
+{encl_nbr_evpn} exit-address-family
 !
 '''
 
@@ -421,6 +431,10 @@ def gen_topo(cfg, ips, dc, encl=None):
         *([f'    br-{dc}-encl:',
            '      kind: bridge',
            '      # leaf-mat eth3 + the site VM NIC that the hypervisor enclosure cable plugs into',
+           '',
+           f'    br-{dc}-enclup:',
+           '      kind: bridge',
+           '      # leaf-mat eth4 + the site VM NIC of the enclosure uplink cable (DPU p0)',
            ''] if encl else []),
         '  links:',
         '    # super-spine ↔ spine-1',
@@ -438,7 +452,9 @@ def gen_topo(cfg, ips, dc, encl=None):
         '    # super-spine ↔ internet bridge (internet uplink to host NAT)',
         f'    - endpoints: ["super-spine:eth2", "br-{dc}-internet:eth-uplink"]',
         *(['    # leaf-mat ↔ enclosure bridge (DPU stand-in OOB, relayed DHCP)',
-           f'    - endpoints: ["leaf-mat:eth3", "br-{dc}-encl:eth-encl"]'] if encl else []),
+           f'    - endpoints: ["leaf-mat:eth3", "br-{dc}-encl:eth-encl"]',
+           '    # leaf-mat ↔ enclosure uplink bridge (DPU stand-in p0, BGP unnumbered)',
+           f'    - endpoints: ["leaf-mat:eth4", "br-{dc}-enclup:eth-enclup"]'] if encl else []),
     ]
     return '\n'.join(lines) + '\n'
 

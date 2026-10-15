@@ -6,8 +6,8 @@
 # which the topology links to leaf-mat:eth3. Enclosure VMs then attach their
 # OOB NIC to the same bridge.
 #
-#   cable.sh create  <bridge> <site-vm> <cable-mac>        # bridge + site VM NIC (persistent + live)
-#   cable.sh attach  <bridge> <vm> <mac>                   # move a VM NIC (by MAC) onto the bridge
+#   cable.sh create  <bridge> <site-vm> <cable-mac> [mtu]  # bridge + site VM NIC (persistent + live)
+#   cable.sh attach  <bridge> <vm> <mac> [mtu]             # move a VM NIC (by MAC) onto the bridge
 #   cable.sh status  <bridge>
 #
 # Example (jaslinux):
@@ -18,22 +18,23 @@ CONNECT=${CONNECT:-qemu:///system}
 cmd=${1:-}; shift || true
 case "$cmd" in
   create)
-    br=$1; vm=$2; mac=$3
+    br=$1; vm=$2; mac=$3; mtu=${4:-}
     if ! ip link show "$br" >/dev/null 2>&1; then
       ip link add "$br" type bridge
+      [[ -n "$mtu" ]] && ip link set "$br" mtu "$mtu"
       ip link set "$br" up
-      echo "bridge $br created"
+      echo "bridge $br created${mtu:+ (mtu $mtu)}"
     fi
     if virsh --connect "$CONNECT" domiflist "$vm" | grep -qi "$mac"; then
       echo "$vm already has a NIC $mac"
     else
       virsh --connect "$CONNECT" attach-interface "$vm" --type bridge --source "$br" \
-        --model virtio --mac "$mac" --config --live
+        --model virtio --mac "$mac" ${mtu:+--mtu "$mtu"} --config --live
       echo "$vm: NIC $mac attached to $br"
     fi
     ;;
   attach)
-    br=$1; vm=$2; mac=$3
+    br=$1; vm=$2; mac=$3; mtu=${4:-}
     cur=$(virsh --connect "$CONNECT" domiflist "$vm" | awk -v m="$mac" 'tolower($5)==tolower(m){print $2":"$3}')
     if [[ "$cur" == "bridge:$br" ]]; then echo "$vm: $mac already on $br"; exit 0; fi
     if [[ -n "$cur" ]]; then
@@ -42,8 +43,8 @@ case "$cmd" in
       virsh --connect "$CONNECT" detach-interface "$vm" "${cur%%:*}" --mac "$mac" --config --live
     fi
     virsh --connect "$CONNECT" attach-interface "$vm" --type bridge --source "$br" \
-      --model virtio --mac "$mac" --config --live
-    echo "$vm: NIC $mac now on $br"
+      --model virtio --mac "$mac" ${mtu:+--mtu "$mtu"} --config --live
+    echo "$vm: NIC $mac now on $br${mtu:+ (mtu $mtu)}"
     ;;
   status)
     br=$1

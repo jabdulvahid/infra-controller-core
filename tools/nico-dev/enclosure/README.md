@@ -59,8 +59,27 @@ Order on an existing site: `cable.sh create`, edit the site yaml, redeploy the
 fabric inside the VM (`sudo python3 /usr/local/lib/nico-dev/deploy-dev-fabric.py $NICO_DEV_SITE`),
 redeploy the `nico` release so nico-api creates the segment
 (`deploy-dev-nico.py <site> --only nico --tag <current tag>`), then
-`cable.sh attach` for each enclosure VM. The uplink cable (`leaf-mat:eth4`,
-BGP unnumbered) is the next step and is not wired yet.
+`cable.sh attach` for each enclosure VM.
+
+### The uplink cable
+
+The DPU's `p0` needs a leaf port with a BGP unnumbered neighbour, which the
+agent configures on its side as `remote-as external`. With `encl_oob` set the
+generator also gives leaf-mat an `eth4` with router advertisements and
+`neighbor eth4 interface remote-as external` activated for IPv4 unicast and
+L2VPN EVPN, plus a second bridge `br-<dc>-enclup`. A second site VM NIC,
+`fabric.enclosure.uplink_cable_mac`, joins that bridge at MTU 9000, and the
+DPU VM's uplink NIC moves onto the matching hypervisor bridge:
+
+```bash
+sudo bash cable.sh create patch-enclup1 vm-feature1 52:54:00:ee:01:02 9000
+sudo bash cable.sh attach patch-enclup1 dpu-test1   02:00:00:01:00:04 9000
+```
+
+NICo counts established uplinks against the site's
+`min_dpu_functioning_links` (effective default 2); a one-uplink stand-in needs
+`min_dpu_functioning_links = 1` under `[machines]` in the site config
+(`nico-system.site_config_extra` in the site yaml).
 
 ## The BMCs
 
