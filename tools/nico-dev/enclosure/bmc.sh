@@ -62,7 +62,21 @@ create() {
     if command -v dhclient >/dev/null; then
       ip netns exec "$n" dhclient -4 -nw -pf "$state/$role-dhclient.pid" -lf "$state/$role-dhclient.leases" eth0
     else
-      ip netns exec "$n" busybox udhcpc -b -i eth0 -p "$state/$role-udhcpc.pid" -S
+      # busybox udhcpc needs a script to apply the lease; Debian/Ubuntu's busybox
+      # ships none at its default path.
+      cat > "$state/udhcpc.sh" <<'UDHCPC'
+#!/bin/sh
+case "$1" in
+  bound|renew)
+    ip -4 addr flush dev "$interface"
+    ip addr add "$ip/${mask:-24}" dev "$interface"
+    [ -n "$router" ] && { ip route replace default via "${router%% *}" dev "$interface"; }
+    ;;
+  deconfig) ip -4 addr flush dev "$interface" ;;
+esac
+UDHCPC
+      chmod 755 "$state/udhcpc.sh"
+      ip netns exec "$n" busybox udhcpc -b -i eth0 -p "$state/$role-udhcpc.pid" -s "$state/udhcpc.sh"
     fi
     for _ in $(seq 60); do ip -n "$n" -4 addr show eth0 | grep -q 'inet ' && break; sleep 1; done
   fi
