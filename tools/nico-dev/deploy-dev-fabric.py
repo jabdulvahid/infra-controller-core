@@ -158,7 +158,7 @@ def main():
     subprocess.run(['swapoff', '-a'], capture_output=True)
     print('\nStep 2: Creating Linux bridges...')
     encl_oob = pfx.get('encl_oob', '')
-    bridges = [f'br-{dc}-cp', f'br-{dc}-internet'] + ([f'br-{dc}-encl'] if encl_oob else [])
+    bridges = [f'br-{dc}-cp', f'br-{dc}-internet'] + ([f'br-{dc}-encl', f'br-{dc}-enclup'] if encl_oob else [])
     for br in bridges:
         if run(['ip', 'link', 'show', br], check=False).returncode != 0:
             run(['ip', 'link', 'add', br, 'type', 'bridge'])
@@ -335,13 +335,21 @@ CMD ["/usr/lib/frr/docker-start"]
     else:
         print(f'  {vm_cp_ip}/{plen} already on {cp_br}')
 
-    # ── Step 5b: Enclosure cable — enslave the site VM NIC the hypervisor cable
-    # plugs into (identified by MAC from fabric.enclosure.cable_mac) to the
-    # enclosure bridge, which the topology links to leaf-mat:eth3.
-    cable_mac = (cfg['fabric'].get('enclosure') or {}).get('cable_mac', '')
-    if encl_oob and cable_mac:
-        encl_br = f'br-{dc}-encl'
-        print(f'\nStep 5b: Attaching cable NIC {cable_mac} to {encl_br}...')
+    # ── Step 5b: Enclosure cables — enslave the site VM NICs the hypervisor
+    # cables plug into (identified by MAC from fabric.enclosure.*_mac) to the
+    # enclosure bridges, which the topology links to leaf-mat:eth3 (OOB) and
+    # leaf-mat:eth4 (uplink, BGP unnumbered, MTU 9000).
+    encl_cfg = cfg['fabric'].get('enclosure') or {}
+    cables = [
+        (encl_cfg.get('cable_mac', ''),        f'br-{dc}-encl',   'eth-encl',   None),
+        (encl_cfg.get('uplink_cable_mac', ''), f'br-{dc}-enclup', 'eth-enclup', 9000),
+    ]
+    if encl_oob:
+        print('\nStep 5b: Enclosure cables...')
+    for cable_mac, encl_br, leaf_port, mtu in (cables if encl_oob else []):
+        if not cable_mac:
+            print(f'  {encl_br}: no MAC configured (fabric.enclosure), bridge has no cable')
+            continue
         nic = None
         for line in subprocess.run(['ip', '-o', 'link'], capture_output=True,
                                    text=True).stdout.splitlines():
@@ -351,32 +359,33 @@ CMD ["/usr/lib/frr/docker-start"]
         if nic is None:
             print(f'  ! no interface with MAC {cable_mac} in this VM yet; run '
                   f'enclosure/cable.sh create on the hypervisor, then rerun this script')
-        else:
-            run(['ip', 'link', 'set', nic, 'master', encl_br])
-            run(['ip', 'link', 'set', nic, 'up'])
-            print(f'  {nic} → {encl_br}')
-            # This VM is a kubernetes node, so bridged frames also traverse
-            # iptables (bridge-nf-call-iptables). A frame from an enclosure to
-            # a service VIP would be DNATed by kube-proxy while it is merely
-            # being bridged to the leaf, and even an un-NATed first sighting
-            # binds the flow in conntrack so the later routed pass is never
-            # DNATed. Keep bridged frames on this cable out of conntrack and
-            # let them be forwarded.
-            for port in (nic, 'eth-encl'):
-                for table, chain, rule in [
-                    ('raw', 'PREROUTING',
-                     ['-m', 'physdev', '--physdev-in', port, '-j', 'NOTRACK']),
-                    ('filter', 'FORWARD',
-                     ['-m', 'physdev', '--physdev-is-bridged', '--physdev-in', port,
-                      '-j', 'ACCEPT']),
-                ]:
-                    if run(['iptables', '-t', table, '-C', chain] + rule,
-                           check=False).returncode != 0:
-                        run(['iptables', '-t', table, '-I', chain, '1'] + rule)
-            print(f'  iptables: NOTRACK + FORWARD accept for bridged frames on {nic}/eth-encl')
-    elif encl_oob:
-        print(f'\nStep 5b: enclosure segment defined but no fabric.enclosure.cable_mac; '
-              f'br-{dc}-encl has no cable')
+            continue
+        if mtu:
+            run(['ip', 'link', 'set', encl_br, 'mtu', str(mtu)])
+            run(['ip', 'link', 'set', nic, 'mtu', str(mtu)])
+            run(['ip', 'link', 'set', leaf_port, 'mtu', str(mtu)], check=False)
+        run(['ip', 'link', 'set', nic, 'master', encl_br])
+        run(['ip', 'link', 'set', nic, 'up'])
+        print(f'  {nic} → {encl_br}' + (f' (mtu {mtu})' if mtu else ''))
+        # This VM is a kubernetes node, so bridged frames also traverse
+        # iptables (bridge-nf-call-iptables). A frame from an enclosure to
+        # a service VIP would be DNATed by kube-proxy while it is merely
+        # being bridged to the leaf, and even an un-NATed first sighting
+        # binds the flow in conntrack so the later routed pass is never
+        # DNATed. Keep bridged frames on this cable out of conntrack and
+        # let them be forwarded.
+        for port in (nic, leaf_port):
+            for table, chain, rule in [
+                ('raw', 'PREROUTING',
+                 ['-m', 'physdev', '--physdev-in', port, '-j', 'NOTRACK']),
+                ('filter', 'FORWARD',
+                 ['-m', 'physdev', '--physdev-is-bridged', '--physdev-in', port,
+                  '-j', 'ACCEPT']),
+            ]:
+                if run(['iptables', '-t', table, '-C', chain] + rule,
+                       check=False).returncode != 0:
+                    run(['iptables', '-t', table, '-I', chain, '1'] + rule)
+        print(f'  iptables: NOTRACK + FORWARD accept for bridged frames on {nic}/{leaf_port}')
 
     # ── Step 6: Add fabric routes on host ─────────────────────────────────────
     print('\nStep 6: Adding fabric routes...')
