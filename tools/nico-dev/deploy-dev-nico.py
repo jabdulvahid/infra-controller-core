@@ -439,6 +439,33 @@ def patch_allow_insecure_discovery(ns, kubeconfig):
     print('  allow_insecure_discovery patched ✓')
 
 
+def dhcp_config_fingerprint(ns, kubeconfig):
+    """The rendered Kea configuration as the cluster holds it, or '' before
+    the first install. The nico-dhcp chart puts the hook parameters
+    (nameservers, NTP, provisioning server) in a ConfigMap but has no config
+    checksum on its Deployment, so a redeploy that changes only those values
+    leaves the running Kea on its old configuration — the lease keeps
+    advertising the hook's built-in fallbacks (seen 2026-10-15: a seven-day-old
+    pod handing out 1.1.1.1 after two hook changes). Compare before and after
+    the upgrade and restart the pod when the configuration moved."""
+    r = kubectl(['get', 'configmap', 'nico-dhcp-config', '-n', ns,
+                 '-o', 'jsonpath={.data}'], kubeconfig, check=False)
+    return (r.stdout or '') if r.returncode == 0 else ''
+
+
+def restart_dhcp_if_config_changed(before, ns, kubeconfig):
+    after = dhcp_config_fingerprint(ns, kubeconfig)
+    if not before or after == before:
+        return
+    print('  nico-dhcp configuration changed; restarting Kea so the lease carries it...')
+    kubectl(['rollout', 'restart', 'deployment/nico-dhcp', '-n', ns], kubeconfig, check=False)
+    r = kubectl(['rollout', 'status', 'deployment/nico-dhcp', '-n', ns, '--timeout=180s'],
+                kubeconfig, check=False)
+    print('  nico-dhcp restarted ✓' if r.returncode == 0 else
+          '  WARNING: nico-dhcp rollout did not complete in 180s; check '
+          '`kubectl -n nico-system rollout status deployment/nico-dhcp`')
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def resolve_repo(cfg):
@@ -748,11 +775,13 @@ def main():
             _dpf.ensure_dpf_prereqs(repo, dpf_block.get('namespace') or 'dpf-operator-system',
                                     kubeconfig)
         heal_stuck_release('nico', 'nico-system', kubeconfig)
+        dhcp_config_before = dhcp_config_fingerprint('nico-system', kubeconfig)
         helm(['upgrade', '--install', 'nico', helm_dir,
               '-n', 'nico-system',
               '-f', str(vals_dir / 'nico.yaml'),
               '--wait', '--timeout', '15m'], kubeconfig)
         patch_allow_insecure_discovery('nico-system', kubeconfig)
+        restart_dhcp_if_config_changed(dhcp_config_before, 'nico-system', kubeconfig)
         print('  nico ✓')
 
     # ── NICo REST stack (temporal + keycloak + umbrella + site-agent) ─────────
