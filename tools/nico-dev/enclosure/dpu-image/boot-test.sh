@@ -45,7 +45,7 @@ if (( DESTROY )); then
 fi
 
 for c in virt-install qemu-img; do command -v "$c" >/dev/null || { echo "$c missing" >&2; exit 1; }; done
-[[ -f "$IMAGE" ]] || { echo "golden image not found: $IMAGE (build.sh --out ...)" >&2; exit 1; }
+[[ -f "$IMAGE" ]] || { echo "golden image not found: $IMAGE (build-dpu.sh --out ...)" >&2; exit 1; }
 if sudo virsh --connect "$CONNECT" dominfo "$NAME" >/dev/null 2>&1; then
     echo "domain $NAME exists; run with --destroy first" >&2; exit 1
 fi

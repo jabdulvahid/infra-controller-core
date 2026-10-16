@@ -1,7 +1,7 @@
 # nico-dev Enclosure: DPU image child layer on vmctl's library/dpu.
 #
 # Built with vmctl's `vm image build` (the only use of vmctl, at build time);
-# the result is flattened to a standalone QCOW2 by build.sh and run under plain
+# the result is flattened to a standalone QCOW2 by build-dpu.sh and run under plain
 # libvirt. Structure mirrors vmctl's library/dpu/build/Image.pkr.hcl so the
 # parent variables vmctl injects (vm_parent_*, vm_ssh_*) line up.
 
@@ -50,7 +50,7 @@ variable "vm_cpu_model" {
 
 # HBN container, pinned by digest. 3.4.0-doca3.4.0 is what NICo's DPF service
 # definitions pin (DOCA_HBN_SERVICE_IMAGE_TAG) and what vmctl's real-HBN
-# investigation ran. Override with HBN_IMAGE through build.sh.
+# investigation ran. Override with HBN_IMAGE through build-dpu.sh.
 variable "hbn_image" {
   type    = string
   default = "nvcr.io/nvidia/doca/doca_hbn@sha256:9c2008c9ad1ad776fd1263072a78bd3dedaee2b9f315b99071d3e1495f7b1b4f"

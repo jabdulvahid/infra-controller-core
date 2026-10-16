@@ -69,14 +69,14 @@ install -d -m 0755 \
 
 # NICo's arm64 agent and DHCP-server images, baked so a DPU VM boots with them
 # in its local store (no registry is reachable from a DPU's OOB network on a
-# dev site). build.sh copies the tarball into files/images/; a DPU image is
+# dev site). build-dpu.sh copies the tarball into files/images/; a DPU image is
 # therefore a per-NICo-version artefact, rebuilt (child layer only) to move
 # the agent, the same way a DPF site moves its DPU service on a release.
 shopt -s nullglob
 nico_tarballs=("$FILES"/images/*.tgz "$FILES"/images/*.tar "$FILES"/images/*.tar.gz)
 shopt -u nullglob
 if (( ${#nico_tarballs[@]} == 0 )); then
-    echo "no NICo image tarball under files/images/ (build.sh --nico-images); the agent and DHCP units will fail at boot" >&2
+    echo "no NICo image tarball under files/images/ (build-dpu.sh --nico-images); the agent and DHCP units will fail at boot" >&2
     exit 1
 fi
 for t in "${nico_tarballs[@]}"; do
