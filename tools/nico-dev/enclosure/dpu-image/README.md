@@ -31,15 +31,17 @@ version, step 4 alone for a new HBN version.
 ### 1. Install the host tools (once)
 
 ```bash
-sudo apt-get update && sudo apt-get install -y git curl qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils openssh-client docker.io
+sudo apt-get update && sudo apt-get install -y git curl qemu-system-arm qemu-utils qemu-efi-aarch64 qemu-user-static binfmt-support cloud-image-utils openssh-client docker.io
 sudo usermod -aG docker "$USER" && newgrp docker      # or log out and in again
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . "$HOME/.cargo/env" && cargo install cargo-make
 ```
 
 `qemu-system-arm` provides `qemu-system-aarch64`; `qemu-efi-aarch64` the UEFI
 firmware under `/usr/share/AAVMF`; `cloud-image-utils` the `cloud-localds`
-seed tool. Docker runs the NICo cross build; the Rust toolchain exists only
-to run `cargo-make` (the compiler work happens inside the container). The
+seed tool; `qemu-user-static` with `binfmt-support` lets docker run arm64
+containers, which the agent image's builder stage needs. Docker runs the NICo
+cross build; the Rust toolchain exists only to run `cargo-make` (the compiler
+work happens inside the container). The
 host needs outbound access to `github.com`, `cloud-images.ubuntu.com`,
 `nvcr.io` and `www.mellanox.com`.
 
@@ -94,9 +96,11 @@ image is now what `enclosure.py` overlays per DPU; see
 ### What the scripts do
 
 Step 3 builds from the NICo repository's own definitions: the x86 cross
-container CI uses for the arm64 binaries, then the two Dockerfiles, which
-only copy onto a distroless base, so no arm64 emulation is involved. It
-checks the binaries for 64 KiB page-size compatibility and tags the images
+container CI uses for the arm64 binaries, then the two Dockerfiles. The agent
+image has an arm64 builder stage that installs packages to collect `flint`'s
+libraries, so docker needs arm64 emulation (binfmt) even though the Rust
+binaries are cross-compiled. The script checks the binaries for 64 KiB
+page-size compatibility and tags the images
 `localhost/nico/forge-<name>:enclosure` as `dpu.env` expects.
 
 Step 4 is plain qemu and cloud-init: no vmctl, no packer. The build VM runs
