@@ -67,6 +67,35 @@ install -d -m 0755 \
     /opt/forge \
     /data
 
+# NICo's arm64 agent and DHCP-server images, baked so a DPU VM boots with them
+# in its local store (no registry is reachable from a DPU's OOB network on a
+# dev site). build.sh copies the tarball into files/images/; a DPU image is
+# therefore a per-NICo-version artefact, rebuilt (child layer only) to move
+# the agent, the same way a DPF site moves its DPU service on a release.
+shopt -s nullglob
+nico_tarballs=("$FILES"/images/*.tgz "$FILES"/images/*.tar "$FILES"/images/*.tar.gz)
+shopt -u nullglob
+if (( ${#nico_tarballs[@]} == 0 )); then
+    echo "no NICo image tarball under files/images/ (build.sh --nico-images); the agent and DHCP units will fail at boot" >&2
+    exit 1
+fi
+for t in "${nico_tarballs[@]}"; do
+    echo "podman load $t"
+    podman load -i "$t"
+done
+podman image exists localhost/nico/forge-dpu-agent:enclosure
+podman image exists localhost/nico/forge-dhcp-server:enclosure
+
+# Provenance, for `enclosure status` and for anyone asking what a DPU runs.
+{
+    echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "hbn_image=$HBN_IMAGE"
+    for img in localhost/nico/forge-dpu-agent:enclosure localhost/nico/forge-dhcp-server:enclosure; do
+        echo "${img#localhost/nico/}=$(podman image inspect "$img" --format '{{.Id}}' | cut -c1-12) $(podman image inspect "$img" --format '{{index .Labels "org.opencontainers.image.version"}}' 2>/dev/null)"
+    done
+} > "$LIB/provenance"
+cat "$LIB/provenance"
+
 # HBN bootstrap startup YAML: enables NVUE's REST listener the way NICo's own
 # DPF service definition does (system api listening-address 0.0.0.0) and
 # declares the ports the agent will configure. Applied once by
