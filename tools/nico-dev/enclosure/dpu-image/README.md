@@ -26,13 +26,13 @@ host, the other two per NICo version. Nothing is built on a Mac.
 
 | Step | Script | Produces | Time | When |
 |---|---|---|---|---|
-| 1 | `build-base.sh` | vmctl `library/dpu:latest` (arm64 Ubuntu 24.04 + mlx5 + MFT) | hours (TCG, DKMS) | once per host |
-| 2 | `build-nico-images.sh` | `nico-arm64-images.tgz`: NICo's arm64 `forge-dpu-agent` + `forge-dhcp-server` images | ~20 min | per NICo version |
+| 1 | `build-dpu-base.sh` | vmctl `library/dpu:latest` (arm64 Ubuntu 24.04 + mlx5 + MFT) | hours (TCG, DKMS) | once per host |
+| 2 | `build-dpu-nico-images.sh` | `nico-arm64-images.tgz`: NICo's arm64 `forge-dpu-agent` + `forge-dhcp-server` images | ~20 min | per NICo version |
 | 3 | `build.sh` | the flattened QCOW2 (real HBN + the NICo images + the enclosure wiring) | under an hour | per NICo or HBN version |
 
 ```bash
-bash build-base.sh                                   # needs a vmctl checkout on main at ~/vmctl and its host setup (script header)
-bash build-nico-images.sh --repo ~/build/nico --ref upstream/main --out /tmp/nico-arm64-images.tgz
+bash build-dpu-base.sh                                   # needs a vmctl checkout on main at ~/vmctl and its host setup (script header)
+bash build-dpu-nico-images.sh --repo ~/build/nico --ref upstream/main --out /tmp/nico-arm64-images.tgz
 bash build.sh --nico-images /tmp/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
 ```
 
