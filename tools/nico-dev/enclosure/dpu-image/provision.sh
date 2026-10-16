@@ -1,7 +1,9 @@
 #!/bin/bash
-# Enclosure DPU child layer: provisioning inside the arm64 build VM.
-# Runs as root (sudo -E) with HBN_IMAGE in the environment and the
-# files/ directory uploaded to /tmp/enclosure-files.
+# Enclosure DPU image: provisioning inside the arm64 build VM, which
+# build-dpu.sh boots from Ubuntu's noble arm64 cloud image. Runs as root with
+# HBN_IMAGE in the environment and the files/ directory uploaded to
+# /tmp/enclosure-files (files/images: NICo's arm64 image tarball; files/mft:
+# the MFT package for flint).
 set -euo pipefail
 
 : "${HBN_IMAGE:?HBN_IMAGE is required (nvcr.io/nvidia/doca/doca_hbn@sha256:...)}"
@@ -11,7 +13,28 @@ install -d -m 0755 "$LIB" /etc/enclosure
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends curl jq ethtool bridge-utils iproute2 kmod
+apt-get install -y --no-install-recommends curl jq ethtool bridge-utils iproute2 kmod \
+    podman uidmap slirp4netns fuse-overlayfs netavark aardvark-dns busybox-static
+
+# MFT for `flint`, which the agent container mounts from the DPU OS
+# (/usr/local/bin/flint in enclosure-nico-dpu-agent.service). Only the
+# userspace package: no device, so no kernel-mft-dkms.
+shopt -s nullglob
+mft_debs=("$FILES"/mft/mft_*_arm64.deb)
+shopt -u nullglob
+(( ${#mft_debs[@]} )) || { echo "no MFT package under files/mft/ (build-dpu.sh fetches it)" >&2; exit 1; }
+apt-get install -y --no-install-recommends "${mft_debs[@]}"
+flint_bin=$(command -v flint || ls /usr/mst/bin/flint /opt/mellanox/mft/bin/flint 2>/dev/null | head -1 || true)
+[[ -n "$flint_bin" ]] || { echo "flint not found after installing MFT" >&2; exit 1; }
+ln -sfn "$flint_bin" /usr/local/bin/flint
+
+# The enclosure owns the network: first-boot writes the .link/.network files
+# for the three NICs. Keep cloud-init from rendering netplan for whatever NIC
+# the build VM had, and drop the one it rendered for this build.
+install -d -m 0755 /etc/cloud/cloud.cfg.d
+printf 'network: {config: disabled}\n' > /etc/cloud/cloud.cfg.d/99-enclosure-network.cfg
+rm -f /etc/netplan/50-cloud-init.yaml
+systemctl enable systemd-networkd.service
 
 # Kernel modules HBN's legacy firewall tooling and the overlay need
 # (vmctl's real-HBN investigation: ip_tables, iptable_filter, iptable_mangle,
@@ -109,18 +132,10 @@ install -m 0644 "$FILES/enclosure-hbn.service" /etc/systemd/system/enclosure-hbn
 install -m 0644 "$FILES/enclosure-first-boot.service" /etc/systemd/system/enclosure-first-boot.service
 install -m 0644 "$FILES/dpu.env.example" /etc/enclosure/dpu.env.example
 
-# Agent and DHCP server: vmctl's units re-pointed at real HBN (full copies,
-# because a drop-in cannot remove their Requires=nico-hardware-shim.service).
+# Agent and DHCP server units (derived from vmctl's, re-pointed at real HBN
+# and at /etc/vm/environment, which first-boot writes).
 install -m 0644 "$FILES/enclosure-nico-dpu-agent.service" /etc/systemd/system/enclosure-nico-dpu-agent.service
 install -m 0644 "$FILES/enclosure-nico-dhcp-server.service" /etc/systemd/system/enclosure-nico-dhcp-server.service
-systemctl disable vm-nico-dpu-agent.service vm-nico-dhcp-server.service 2>/dev/null || true
-
-# The shim is replaced by real HBN; keep the binary (harmless), never start it.
-# vmctl installed the unit under /etc/systemd/system, where mask wants to put
-# its symlink, so remove the file first.
-systemctl disable nico-hardware-shim.service 2>/dev/null || true
-rm -f /etc/systemd/system/nico-hardware-shim.service
-systemctl mask nico-hardware-shim.service
 
 systemctl daemon-reload
 # first-boot enables enclosure-hbn and the agent units once dpu.env exists.
@@ -134,4 +149,4 @@ EOF
 
 apt-get clean
 rm -rf /var/lib/apt/lists/* "$FILES"
-echo "enclosure/dpu child layer provisioned (HBN $HBN_IMAGE as $HBN_LOCAL)"
+echo "enclosure DPU image provisioned (HBN $HBN_IMAGE as $HBN_LOCAL)"
