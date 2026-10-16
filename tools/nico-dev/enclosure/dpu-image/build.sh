@@ -2,8 +2,14 @@
 # Build the Enclosure DPU image: vmctl `vm image build` of this child recipe on
 # top of library/dpu:latest, then flatten to a standalone QCOW2 for libvirt.
 #
-#   bash build.sh [--out PATH] [--tag NAME:TAG]
-#   HBN_IMAGE=nvcr.io/nvidia/doca/doca_hbn@sha256:... bash build.sh
+#   bash build.sh --nico-images /path/nico-arm64-images.tgz [--out PATH] [--tag NAME:TAG]
+#   HBN_IMAGE=nvcr.io/nvidia/doca/doca_hbn@sha256:... bash build.sh --nico-images ...
+#
+# --nico-images is the docker/podman archive holding NICo's arm64
+# forge-dpu-agent and forge-dhcp-server images tagged
+# localhost/nico/<name>:enclosure (README "Build"); it is copied into
+# files/images/ (ignored by git) and baked into the image by provision.sh.
+# Omit it only to reuse the tarball already in files/images/.
 #
 # The vm daemon resolves relative paths from $HOME, so every path is absolute.
 set -euo pipefail
@@ -11,13 +17,22 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="enclosure/dpu:latest"
 OUT="$HOME/enclosure-dpu.qcow2"
+NICO_IMAGES=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) OUT="$2"; shift 2 ;;
         --tag) TAG="$2"; shift 2 ;;
-        *) echo "usage: $0 [--out PATH] [--tag NAME:TAG]" >&2; exit 2 ;;
+        --nico-images) NICO_IMAGES="$2"; shift 2 ;;
+        *) echo "usage: $0 --nico-images PATH [--out PATH] [--tag NAME:TAG]" >&2; exit 2 ;;
     esac
 done
+if [[ -n "$NICO_IMAGES" ]]; then
+    [[ -f "$NICO_IMAGES" ]] || { echo "--nico-images: $NICO_IMAGES not found" >&2; exit 1; }
+    rm -f "$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz
+    cp "$NICO_IMAGES" "$HERE/files/images/nico-arm64-images.tgz"
+fi
+ls "$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz >/dev/null 2>&1 || {
+    echo "no NICo image tarball in files/images/; pass --nico-images (README \"Build\")" >&2; exit 1; }
 
 command -v vm >/dev/null || { echo "vm (vmctl client) not on PATH" >&2; exit 1; }
 command -v qemu-img >/dev/null || { echo "qemu-img missing" >&2; exit 1; }

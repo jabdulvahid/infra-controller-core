@@ -26,15 +26,38 @@ Prerequisites on the build host (jaslinux): vmctl `main` checked out with
 `claude-notes/nico-dev/spike-vmctl-dpu-tcg-main.md`), `qemu-img`, outbound
 access to `nvcr.io` for the HBN pull.
 
+The build bakes NICo's arm64 `forge-dpu-agent` and `forge-dhcp-server`
+images into the DPU image, so a DPU VM needs no registry. Produce the tarball
+once per NICo version on a machine that can run the cross build (the
+`build-artifacts-container-cross-aarch64` container, Linux-only `CARGO_HOME`,
+`cargo make --cwd bluefield build-dpu-agent-and-dhcp-server`; pitfalls in
+`claude-notes/nico-dev/phase-a-arm64-images.md`), tagged
+`localhost/nico/forge-dpu-agent:enclosure` and
+`localhost/nico/forge-dhcp-server:enclosure`, then:
+
 ```bash
-bash build.sh                       # vm image build → enclosure/dpu:latest, then a flattened QCOW2
-bash build.sh --out /var/lib/libvirt/images/enclosure-dpu.qcow2
+docker save localhost/nico/forge-dpu-agent:enclosure localhost/nico/forge-dhcp-server:enclosure \
+  | gzip > nico-arm64-images.tgz
 ```
 
-`build.sh` passes absolute paths (the `vm` daemon resolves relative paths from
-`$HOME`), builds `enclosure/dpu:latest` with TCG and `cortex-a72`, then
-flattens the store's layered disk with `qemu-img convert` into a standalone
-QCOW2 for libvirt. Override the HBN image with `HBN_IMAGE=...@sha256:...`.
+Copy it to the build host and build:
+
+```bash
+bash build.sh --nico-images /path/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
+```
+
+`build.sh` copies the tarball into `files/images/` (ignored by git), passes
+absolute paths (the `vm` daemon resolves relative paths from `$HOME`), builds
+`enclosure/dpu:latest` with TCG and `cortex-a72`, then flattens the store's
+layered disk with `qemu-img convert` into a standalone QCOW2 for libvirt.
+Override the HBN image with `HBN_IMAGE=...@sha256:...`. The image records
+what it carries in `/usr/local/lib/enclosure/provenance` (build time, HBN
+digest, the two NICo image ids).
+
+A DPU image is therefore a per-NICo-version artefact. Moving the agent means
+a new tarball and a child-layer rebuild (under an hour; the `library/dpu`
+base is untouched), then recreating the DPU VMs from the new image, the way a
+DPF site moves its DPU service only on a release.
 
 ## First boot for verification
 

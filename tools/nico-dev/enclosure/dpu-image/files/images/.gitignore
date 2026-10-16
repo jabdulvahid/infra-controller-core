@@ -1,0 +1,4 @@
+# NICo arm64 image tarballs for the build (podman load at provision time).
+# Produced on the build machine, never committed: see README.md "Build".
+*
+!.gitignore
