@@ -84,9 +84,12 @@ if [[ -n "$NICO_IMAGES" ]]; then
     rm -f "$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz
     cp "$NICO_IMAGES" "$HERE/files/images/nico-arm64-images.tgz"
 fi
-ls "$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz >/dev/null 2>&1 \
-    || die "no NICo image tarball in files/images/; pass --nico-images (README \"Build\")"
-if ! ls "$HERE"/files/mft/mft_*_arm64.deb >/dev/null 2>&1; then
+shopt -s nullglob
+nico_tarballs=("$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz)
+mft_debs=("$HERE"/files/mft/mft_*_arm64.deb)
+shopt -u nullglob
+(( ${#nico_tarballs[@]} )) || die "no NICo image tarball in files/images/; pass --nico-images (README \"Build\")"
+if (( ${#mft_debs[@]} == 0 )); then
     say "MFT package (flint) for the DPU OS"
     curl -fL -o "$WORK/$MFT.tgz" "https://www.mellanox.com/downloads/MFT/$MFT.tgz"
     tar -xzf "$WORK/$MFT.tgz" -C "$WORK"
