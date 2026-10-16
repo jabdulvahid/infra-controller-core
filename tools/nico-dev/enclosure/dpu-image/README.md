@@ -21,32 +21,31 @@ an enclosure file into a running DPU. No NICo code is changed.
 
 ## Build
 
-Prerequisites on the build host (jaslinux): vmctl `main` checked out with
-`library/dpu:latest` already built (see
-`claude-notes/nico-dev/spike-vmctl-dpu-tcg-main.md`), `qemu-img`, outbound
-access to `nvcr.io` for the HBN pull.
+Three steps, all on one x86 Linux host (jaslinux); the first is one-time per
+host, the other two per NICo version. Nothing is built on a Mac.
 
-The build bakes NICo's arm64 `forge-dpu-agent` and `forge-dhcp-server`
-images into the DPU image, so a DPU VM needs no registry. Produce the tarball
-once per NICo version on a machine that can run the cross build (the
-`build-artifacts-container-cross-aarch64` container, Linux-only `CARGO_HOME`,
-`cargo make --cwd bluefield build-dpu-agent-and-dhcp-server`; pitfalls in
-`claude-notes/nico-dev/phase-a-arm64-images.md`), tagged
-`localhost/nico/forge-dpu-agent:enclosure` and
-`localhost/nico/forge-dhcp-server:enclosure`, then:
+| Step | Script | Produces | Time | When |
+|---|---|---|---|---|
+| 1 | `build-base.sh` | vmctl `library/dpu:latest` (arm64 Ubuntu 24.04 + mlx5 + MFT) | hours (TCG, DKMS) | once per host |
+| 2 | `build-nico-images.sh` | `nico-arm64-images.tgz`: NICo's arm64 `forge-dpu-agent` + `forge-dhcp-server` images | ~20 min | per NICo version |
+| 3 | `build.sh` | the flattened QCOW2 (real HBN + the NICo images + the enclosure wiring) | under an hour | per NICo or HBN version |
 
 ```bash
-docker save localhost/nico/forge-dpu-agent:enclosure localhost/nico/forge-dhcp-server:enclosure \
-  | gzip > nico-arm64-images.tgz
+bash build-base.sh                                   # needs a vmctl checkout on main at ~/vmctl and its host setup (script header)
+bash build-nico-images.sh --repo ~/build/nico --ref upstream/main --out /tmp/nico-arm64-images.tgz
+bash build.sh --nico-images /tmp/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
 ```
 
-Copy it to the build host and build:
+Step 2 builds from the NICo repository's own definitions: the x86 cross
+container CI uses for the arm64 binaries, then the two Dockerfiles, which
+only copy onto a distroless base, so no arm64 emulation is involved. Build
+from the commit the site's Core runs (`--ref`), or upstream main at the time
+the site was brought up. The script fetches the MFT package the agent image
+needs for `flint`, checks the binaries for 64 KiB page-size compatibility,
+tags the images `localhost/nico/forge-<name>:enclosure` as `dpu.env`
+expects, and `docker save`s them.
 
-```bash
-bash build.sh --nico-images /path/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
-```
-
-`build.sh` copies the tarball into `files/images/` (ignored by git), passes
+Step 3 copies the tarball into `files/images/` (ignored by git), passes
 absolute paths (the `vm` daemon resolves relative paths from `$HOME`), builds
 `enclosure/dpu:latest` with TCG and `cortex-a72`, then flattens the store's
 layered disk with `qemu-img convert` into a standalone QCOW2 for libvirt.
@@ -55,8 +54,7 @@ what it carries in `/usr/local/lib/enclosure/provenance` (build time, HBN
 digest, the two NICo image ids).
 
 A DPU image is therefore a per-NICo-version artefact. Moving the agent means
-a new tarball and a child-layer rebuild (under an hour; the `library/dpu`
-base is untouched), then recreating the DPU VMs from the new image, the way a
+steps 2 and 3 again and recreating the DPU VMs from the new image, the way a
 DPF site moves its DPU service only on a release.
 
 ## First boot for verification
