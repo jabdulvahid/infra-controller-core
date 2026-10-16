@@ -2,8 +2,8 @@
 # Build the Enclosure DPU image: vmctl `vm image build` of this child recipe on
 # top of library/dpu:latest, then flatten to a standalone QCOW2 for libvirt.
 #
-#   bash build.sh --nico-images /path/nico-arm64-images.tgz [--out PATH] [--tag NAME:TAG]
-#   HBN_IMAGE=nvcr.io/nvidia/doca/doca_hbn@sha256:... bash build.sh --nico-images ...
+#   bash build-dpu.sh --nico-images /path/nico-arm64-images.tgz [--out PATH] [--tag NAME:TAG]
+#   HBN_IMAGE=nvcr.io/nvidia/doca/doca_hbn@sha256:... bash build-dpu.sh --nico-images ...
 #
 # --nico-images is the docker/podman archive holding NICo's arm64
 # forge-dpu-agent and forge-dhcp-server images tagged

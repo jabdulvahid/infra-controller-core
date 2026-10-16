@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Enclosure DPU image's PARENT, vmctl's library/dpu:latest, on an
 # x86 Linux host. One-time per host (hours under TCG); the Enclosure child
-# layer (build.sh) is rebuilt on top of it per NICo version.
+# layer (build-dpu.sh) is rebuilt on top of it per NICo version.
 #
 #   bash build-dpu-base.sh [--vmctl DIR]
 #
@@ -50,4 +50,4 @@ echo "== DPU layer inputs (shims, mlx5 backend; Go + aarch64 cross-compiler on t
 echo "== library/dpu:latest (hours under TCG: DKMS builds inside the arm64 guest)"
 time vm image build -t library/dpu:latest "$VMCTL/library/dpu/build"
 vm image list | grep 'library/dpu'
-echo "done: next  bash build-dpu-nico-images.sh --repo ~/build/nico  and  bash build.sh --nico-images ..."
+echo "done: next  bash build-dpu-nico-images.sh --repo ~/build/nico  and  bash build-dpu.sh --nico-images ..."

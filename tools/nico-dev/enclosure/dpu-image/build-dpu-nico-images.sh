@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build NICo's arm64 forge-dpu-agent and forge-dhcp-server container images on
-# an x86 Linux host and pack them into the tarball build.sh bakes into the
+# an x86 Linux host and pack them into the tarball build-dpu.sh bakes into the
 # Enclosure DPU image. Everything runs in containers from the NICo repository's
 # own build definitions (the cross container CI uses; the two Dockerfiles only
 # COPY onto a distroless base), so no arm64 emulation is needed.
@@ -76,4 +76,4 @@ docker image inspect "$AGENT" "$DHCP" --format '{{index .RepoTags 0}} {{.Archite
 echo "== $OUT"
 docker save "$AGENT" "$DHCP" | gzip > "$OUT"
 ls -l "$OUT"
-echo "done: bake with  bash build.sh --nico-images $OUT --out /var/lib/libvirt/images/enclosure-dpu.qcow2"
+echo "done: bake with  bash build-dpu.sh --nico-images $OUT --out /var/lib/libvirt/images/enclosure-dpu.qcow2"
