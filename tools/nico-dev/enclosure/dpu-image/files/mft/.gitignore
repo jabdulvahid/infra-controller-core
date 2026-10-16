@@ -1,0 +1,3 @@
+# MFT arm64 package for flint on the DPU OS; fetched by build-dpu.sh, never committed.
+*
+!.gitignore
