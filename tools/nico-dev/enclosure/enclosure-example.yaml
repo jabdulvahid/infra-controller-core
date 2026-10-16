@@ -1,0 +1,39 @@
+# One enclosure: a DPU stand-in (arm64 VM, real HBN, real NICo agent) and its
+# two BMCs (bmc-mock), on bridges the hypervisor already has. Copy, edit the
+# paths, run: sudo python3 enclosure.py create <this file>
+# Every key with a default below may be omitted. Identities are derived from
+# bmc.index; the tool prints them.
+
+name: encl2                               # prefix for the VM, namespaces, units, state dir; [a-z0-9-], 1-12 chars
+
+bmc:
+  index: 2                                # bmc-mock instance index (1..255; 0 is MAT's pool): MACs 02:00:00:<index>:00:xx
+  host_profile: lenovo_gb300_nvl          # a Redfish-reset profile with exactly one BlueField-3 DPU (or supermicro_gb300_nvl)
+  bmc_mock: /home/jabdulvahid/nico-tests/vm-7023/shared/infra-controller/target/release/bmc-mock
+  cert_dir: /home/jabdulvahid/nico-tests/vm-7023/shared/infra-controller/crates/bmc-mock   # tls.crt + tls.key
+  dpu_firmware:                           # what the DPU BMC mock reports; defaults satisfy NICo's DPF gate (BMC >= 24.10)
+    bmc: BF-25.10-24
+    uefi: 4.13.2-12-g943a91640d
+    nic: 32.47.3576
+    cec: 00.02.0195.0000_n02
+
+dpu:
+  image: /var/lib/libvirt/images/enclosure-dpu-20261016.qcow2   # golden image from dpu-image/build-dpu.sh; overlaid per DPU
+  vcpus: 4
+  memory_mb: 4096
+  ssh_authorized_keys: []                 # extra public keys for the vm login (the tool adds its own per-enclosure key)
+  # nvue_password / login_password: generated on first create and kept in the state dir;
+  # set here or via ENCLOSURE_NVUE_PASSWORD / ENCLOSURE_LOGIN_PASSWORD to override.
+
+networks:
+  oob: patch-encl1                        # existing bridge: DPU OOB NIC + both BMC namespaces (nico-dev: enclosure/cable.sh)
+  uplink: patch-enclup1                   # existing bridge: DPU p0, MTU 9000
+  hostlink: ""                            # default: the tool creates <name>-hl (private; the server VM plugs in later)
+
+site:
+  root_ca: /home/jabdulvahid/enclosure/f7023-ca.pem   # the site's bootstrap CA (PEM); the only site file the DPU needs
+  api_url: https://carbide-api.forge      # the agent's default; the site's DHCP-provided resolver serves the name
+
+hypervisor:
+  libvirt: qemu:///system
+  state_dir: /var/lib/enclosure
