@@ -5,7 +5,7 @@
 # own build definitions (the cross container CI uses; the two Dockerfiles only
 # COPY onto a distroless base), so no arm64 emulation is needed.
 #
-#   bash build-nico-images.sh --repo DIR [--ref REF] [--out PATH]
+#   bash build-dpu-nico-images.sh --repo DIR [--ref REF] [--out PATH]
 #
 #   --repo DIR   a NICo checkout to build from (cloned if DIR does not exist;
 #                see --ref). Build from the commit the site's Core runs, or
