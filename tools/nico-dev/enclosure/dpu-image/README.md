@@ -22,46 +22,94 @@ No NICo code is changed.
 
 ## Build
 
-Two steps on one x86 Linux host (jaslinux), both scripted, no vmctl:
+Everything below runs on one x86 Linux host (Ubuntu 22.04 or 24.04). It is
+written for someone who has never done it; nothing is assumed to be present.
+Two artefacts come out: a tarball with NICo's arm64 container images (step
+3) and the golden DPU image (step 4). Repeat steps 3 and 4 for a new NICo
+version, step 4 alone for a new HBN version.
 
-| Step | Script | Produces | Time | When |
-|---|---|---|---|---|
-| 1 | `build-dpu-nico-images.sh` | `nico-arm64-images.tgz`: NICo's arm64 `forge-dpu-agent` + `forge-dhcp-server` images | ~20 min | per NICo version |
-| 2 | `build-dpu.sh` | the golden QCOW2: Ubuntu 24.04 arm64 + real HBN + the NICo images + MFT (`flint`) + the enclosure wiring | 30–60 min under TCG | per NICo or HBN version |
+### 1. Install the host tools (once)
 
 ```bash
-bash build-dpu-nico-images.sh --repo ~/build/nico --ref upstream/main --out /tmp/nico-arm64-images.tgz
-bash build-dpu.sh --nico-images /tmp/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
+sudo apt-get update && sudo apt-get install -y git curl qemu-system-arm qemu-utils qemu-efi-aarch64 cloud-image-utils openssh-client docker.io
+sudo usermod -aG docker "$USER" && newgrp docker      # or log out and in again
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . "$HOME/.cargo/env" && cargo install cargo-make
 ```
 
-Host prerequisites: `qemu-system-aarch64`, `qemu-img`, `qemu-efi-aarch64`
-(AAVMF), `cloud-image-utils` (or `genisoimage`/`xorriso`), `ssh`, `curl`,
-`docker` and `cargo-make` for step 1.
+`qemu-system-arm` provides `qemu-system-aarch64`; `qemu-efi-aarch64` the UEFI
+firmware under `/usr/share/AAVMF`; `cloud-image-utils` the `cloud-localds`
+seed tool. Docker runs the NICo cross build; the Rust toolchain exists only
+to run `cargo-make` (the compiler work happens inside the container). The
+host needs outbound access to `github.com`, `cloud-images.ubuntu.com`,
+`nvcr.io` and `www.mellanox.com`.
 
-Step 1 builds from the NICo repository's own definitions: the x86 cross
+### 2. Get the enclosure tooling (once)
+
+The scripts live in the `nico-dev` branch of the fork:
+
+```bash
+git clone -b nico-dev https://github.com/jabdulvahid/infra-controller-core.git ~/nico-dev-src
+cd ~/nico-dev-src/tools/nico-dev/enclosure/dpu-image
+```
+
+### 3. Build NICo's arm64 agent and DHCP-server images (per NICo version)
+
+```bash
+bash build-dpu-nico-images.sh --repo ~/build/nico --ref upstream/main --out ~/nico-arm64-images.tgz
+```
+
+`--repo` is a NICo checkout to build from; the script clones upstream into it
+when it does not exist and checks out `--ref`. Use the commit the site's Core
+runs, or upstream main at the time the site was brought up. About 20
+minutes; the result is the tarball named by `--out`.
+
+### 4. Build the DPU image (per NICo or HBN version)
+
+```bash
+bash build-dpu.sh --nico-images ~/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
+```
+
+30–60 minutes under TCG. The script downloads and checksum-verifies Ubuntu's
+noble arm64 cloud image (cached under `~/.cache/enclosure-dpu-build`),
+fetches the MFT package for `flint`, boots a build VM, provisions it over
+ssh while streaming the log, seals it and writes the golden image. The last
+lines print the provenance: build time, HBN digest, NICo image ids. The
+build directory with the serial and provisioning logs stays under
+`~/.cache/enclosure-dpu-build/build-<timestamp>/`.
+
+`--nico-images` copies the tarball into `files/images/` (ignored by git);
+later runs of `build-dpu.sh` reuse it until you pass a new one. Override the
+HBN image with `HBN_IMAGE=...@sha256:...`.
+
+### 5. Check the result
+
+```bash
+qemu-img info /var/lib/libvirt/images/enclosure-dpu.qcow2 | head -3
+```
+
+Expect a standalone qcow2 (no backing file) of 16 GiB virtual size. The
+image is now what `enclosure.py` overlays per DPU; see
+[`../README.md`](../README.md).
+
+### What the scripts do
+
+Step 3 builds from the NICo repository's own definitions: the x86 cross
 container CI uses for the arm64 binaries, then the two Dockerfiles, which
-only copy onto a distroless base, so no arm64 emulation is involved. Build
-from the commit the site's Core runs (`--ref`), or upstream main at the time
-the site was brought up. The script fetches the MFT package the agent image
-needs for `flint`, checks the binaries for 64 KiB page-size compatibility,
-tags the images `localhost/nico/forge-<name>:enclosure` as `dpu.env`
-expects, and `docker save`s them.
+only copy onto a distroless base, so no arm64 emulation is involved. It
+checks the binaries for 64 KiB page-size compatibility and tags the images
+`localhost/nico/forge-<name>:enclosure` as `dpu.env` expects.
 
-Step 2 downloads Ubuntu's noble arm64 cloud image (checksum-verified, cached
-under `~/.cache/enclosure-dpu-build`), boots it once under
-`qemu-system-aarch64` (TCG on x86; KVM or HVF where the host is arm64) with a
-cloud-init seed and a throw-away build key, uploads `files/` (including the
-NICo tarball and the MFT package it fetches) and runs `provision.sh` over
-ssh, seals the image (cloud-init clean, build key and machine-id removed so
-every DPU VM mints its own identity), powers it off and flattens the disk
-with `qemu-img convert`. Override the HBN image with
-`HBN_IMAGE=...@sha256:...`. The image records what it carries in
-`/usr/local/lib/enclosure/provenance` (build time, HBN digest, the two NICo
-image ids). The build directory with the serial and provisioning logs is
-kept for inspection.
+Step 4 is plain qemu and cloud-init: no vmctl, no packer. The build VM runs
+under TCG on x86 (KVM or HVF where the host is arm64), with a throw-away build
+key. `provision.sh` installs podman and the MFT userspace package, pulls and
+derives the HBN image, loads the NICo images, installs the enclosure units
+and scripts, and disables cloud-init's network rendering because the
+enclosure's first boot owns the NICs. Sealing runs `cloud-init clean`,
+removes the build key and empties the machine id, so every DPU VM created
+from the image mints its own identity.
 
 A DPU image is therefore a per-NICo-version artefact. Moving the agent means
-steps 1 and 2 again and recreating the DPU VMs from the new image, the way a
+steps 3 and 4 again and recreating the DPU VMs from the new image, the way a
 DPF site moves its DPU service only on a release.
 
 ## First boot for verification
