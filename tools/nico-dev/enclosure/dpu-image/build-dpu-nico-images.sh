@@ -15,7 +15,10 @@
 #
 # Host prerequisites: git, docker (the user in the docker group), cargo-make
 # (`cargo install cargo-make`, needs a Rust toolchain — the compile itself runs
-# inside the cross container, the toolchain only runs cargo-make), curl, tar.
+# inside the cross container, the toolchain only runs cargo-make), curl, tar,
+# and arm64 emulation for docker (`qemu-user-static` + `binfmt-support`): the
+# agent image's builder stage RUNs apt inside an arm64 Debian to collect
+# flint's libraries, which needs binfmt even though the binaries are cross-built.
 set -euo pipefail
 
 REPO=""; REF="upstream/main"; OUT="$PWD/nico-arm64-images.tgz"
@@ -31,6 +34,11 @@ done
 for c in git docker cargo curl tar; do command -v "$c" >/dev/null || { echo "$c missing" >&2; exit 1; }; done
 cargo make --version >/dev/null 2>&1 || { echo "cargo-make missing: cargo install cargo-make" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "docker is not usable by this user" >&2; exit 1; }
+if [[ "$(uname -m)" != aarch64 ]] && ! docker run --rm --platform linux/arm64 debian:bookworm-slim true >/dev/null 2>&1; then
+    echo "docker cannot run arm64 containers on this host (the agent image's builder stage needs it):" >&2
+    echo "  sudo apt-get install -y qemu-user-static binfmt-support    # then rerun" >&2
+    exit 1
+fi
 
 # Tags dpu.env expects: ${CARBIDE_IMAGE_REGISTRY}/forge-<name>:${DPU_AGENT_PKG_VERSION},
 # and bluefield/Makefile.toml derives DPU_AGENT_PKG_VERSION from $VERSION.
