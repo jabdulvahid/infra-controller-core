@@ -177,8 +177,9 @@ say "seal: cloud-init clean, build key and machine-id removed, shutdown"
 # an empty machine-id makes each DPU VM mint its own, so networkd's DHCP
 # identity and anything keyed on the machine id differ between enclosures.
 "${SSH[@]}" 'sudo cloud-init clean --logs; sudo rm -f /home/vm/.ssh/authorized_keys; sudo truncate -s0 /etc/machine-id; sudo rm -f /var/lib/dbus/machine-id; sudo sync; sudo systemctl poweroff' || true
-for i in $(seq 60); do kill -0 "$(cat "$BUILD/qemu.pid")" 2>/dev/null || break; sleep 2; done
-kill -0 "$(cat "$BUILD/qemu.pid")" 2>/dev/null && die "guest did not power off"
+# qemu removes its pidfile when it exits.
+for i in $(seq 60); do [[ -f "$BUILD/qemu.pid" ]] || break; sleep 2; done
+[[ -f "$BUILD/qemu.pid" ]] && kill -0 "$(cat "$BUILD/qemu.pid")" 2>/dev/null && die "guest did not power off"
 trap - EXIT
 
 say "flatten → $OUT"
@@ -186,6 +187,6 @@ sudo_if_needed=""
 if ! { [[ -w "$OUT" ]] || { [[ ! -e "$OUT" ]] && [[ -w "$(dirname "$OUT")" ]]; }; }; then sudo_if_needed=sudo; fi
 $sudo_if_needed qemu-img convert -O qcow2 "$BUILD/disk.qcow2" "$OUT"
 if [[ -n "$sudo_if_needed" ]] && id libvirt-qemu >/dev/null 2>&1; then sudo chown libvirt-qemu:kvm "$OUT"; fi
-qemu-img info "$OUT" | grep -E 'virtual size|disk size'
-grep -A4 '^built=' "$BUILD/provision.log" | sed 's/^/  /' || true
+qemu-img info "$OUT" | grep -E '^(virtual size|disk size)'
+grep -A3 '^built=' "$BUILD/provision.log" | sed 's/^/  /' || true
 echo "done: $OUT  (build dir kept: $BUILD)"
