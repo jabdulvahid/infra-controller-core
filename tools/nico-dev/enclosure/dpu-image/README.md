@@ -60,49 +60,64 @@ cd ~/nico-dev-src/tools/nico-dev/enclosure/dpu-image
 bash build-dpu-image.sh --nico-repo ~/build/nico --out /var/lib/libvirt/images/enclosure-dpu.qcow2
 ```
 
-It prints its plan first and waits for a `y`: the NICo checkout it will
-build from (`--nico-repo`, cloned from upstream when the folder does not
-exist) and what it will check out there (`--nico-ref`: main's head by
-default, a release tag such as `v2.4.0`, a commit, or `latest-release` for the
-highest `v*` tag; the checkout must be clean, since the tool moves it), the
-Ubuntu arm64 cloud image (`--ubuntu-image`,
-default the current noble image), the DOCA HBN release (`--hbn-version`, the
-container's tag in the form `<hbn>-doca<doca>`, default `3.4.0-doca3.4.0`
-pinned by digest, which is what NICo's DPF service definition pins; any other
-reference with `--hbn-image`), the output path, and for every asset whether
-it will be reused from an earlier run or built: the NICo images tarball
-(reused when it was built from the checkout's current commit, or
-`--rebuild-nico-images`), the cross build container, the cached cloud image
-(checksum re-verified), the MFT package. `--rebuild-all` discards every
-cached asset first; `--no-prompt` skips the question.
+The command prints its plan and waits for `y` before touching anything. The
+plan lists every input as resolved and, for every asset, whether it is reused
+from an earlier run or built, with the reason. Measured on jaslinux (x86,
+TCG): 16 minutes with the NICo images rebuilt, about 13 with them reused.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--nico-repo DIR` | required | NICo checkout to build the agent and DHCP server from. Cloned from upstream when `DIR` does not exist. The tool checks out `--nico-ref` there on every run and refuses a checkout with local changes, so give it a build checkout of its own. |
+| `--nico-ref REF` | `upstream/main` | What to build: a branch (the default is main's head, fetched fresh each run), a release tag such as `v2.3.0-rc.10`, a commit, or `latest-release` for the highest `v<number>` tag upstream carries. The plan shows the resolved commit, its date and its tag if any. |
+| `--ubuntu-image X` | current noble arm64 cloud image | URL or local file of the Ubuntu arm64 cloud image. A download is cached under `~/.cache/enclosure-dpu-build` and re-verified against the publisher's `SHA256SUMS` on every run. |
+| `--hbn-version TAG` | `3.4.0-doca3.4.0` | DOCA HBN release, as the container's tag `<hbn>-doca<doca>`. The default is pulled by digest (what NICo's DPF service definition pins); any other tag is pulled by tag. |
+| `--hbn-image REF` | unset | Any HBN container reference (`repo:tag` or `repo@sha256:...`) instead of `--hbn-version`. |
+| `--out PATH` | `/var/lib/libvirt/images/enclosure-dpu.qcow2` | The golden image. The plan says whether it exists and would be overwritten. Never overwrite the backing file of a running DPU VM: use a dated name. |
+| `--rebuild-nico-images` | off | Build the NICo images even if a tarball from the same commit exists. |
+| `--rebuild-all` | off | Discard every cached asset first (NICo tarball, MFT package, downloaded cloud image) so the whole chain runs cold. |
+| `--no-prompt` | off | Skip the confirmation. |
+
+What the plan decides about reuse:
+
+- **NICo images tarball** (`files/images/nico-arm64-images.tgz`): reused when
+  its `.provenance` sidecar records the commit `--nico-ref` resolves to;
+  rebuilt otherwise, and the plan says why (no tarball, different commit, no
+  provenance, or a rebuild flag).
+- **Cross build container**: reused when docker has it; rebuilt from the
+  repository's Dockerfile otherwise (docker's layer cache applies).
+- **Ubuntu cloud image**: a local file is used as is; a download is reused
+  from the cache after its checksum matches the publisher's current list.
+- **MFT package** (`files/mft/`): reused when present.
+- **DOCA HBN image**: pulled inside the build VM every time; it is not cached
+  between builds.
 
 Which DOCA a DPU runs is answered in three places: the plan line `DOCA HBN`
 before the build, the provenance printed at the end, and
 `/usr/local/lib/enclosure/provenance` inside every DPU built from the image
 (`hbn_version=` and `hbn_image=`), which `enclosure.py status` shows.
 
-Cold, everything built: about 20 minutes for the NICo images and 15 minutes
-for the image under TCG on jaslinux. Warm, with the tarball reused: the
-second part only. The last line prints the total.
-
 Under the hood it runs two scripts from this directory, which can also be run
 on their own:
 
-- `build-dpu-nico-images.sh --repo DIR --ref REF --out TARBALL` builds NICo's
-  arm64 `forge-dpu-agent` and `forge-dhcp-server` images from the
+- `build-dpu-nico-images.sh --repo DIR [--ref REF] [--out TARBALL]` builds
+  NICo's arm64 `forge-dpu-agent` and `forge-dhcp-server` images from the
   repository's own cross container and Dockerfiles (the agent image has an
   arm64 builder stage, hence binfmt), checks the binaries for 64 KiB
   page-size compatibility, tags them `localhost/nico/forge-<name>:enclosure`
-  and `docker save`s them with a `.provenance` sidecar (commit, ref, image ids).
-- `build-dpu.sh --nico-images TARBALL --out PATH` downloads and
-  checksum-verifies the cloud image (cached under
-  `~/.cache/enclosure-dpu-build`), fetches the MFT package for `flint`, boots a
-  build VM under `qemu-system-aarch64` (TCG on x86; KVM or HVF on arm64
-  hosts) with a cloud-init seed and a throw-away key, uploads `files/` and
-  runs `provision.sh` over ssh while streaming the log, seals the image
+  and `docker save`s them with a `.provenance` sidecar (commit, ref, build
+  time, image ids). `--ref` is used only when it clones.
+- `build-dpu.sh [--nico-images TARBALL] [--out PATH] [--work DIR]
+  [--cloud-image X] [--hbn-image REF] [--disk-size 16G] [--cpus 4]
+  [--memory 4096] [--accel kvm|hvf|tcg]` downloads and checksum-verifies the
+  cloud image, fetches the MFT package for `flint`, boots a build VM under
+  `qemu-system-aarch64` (TCG on x86; KVM or HVF on arm64 hosts) with a
+  cloud-init seed and a throw-away key, uploads `files/` and runs
+  `provision.sh` over ssh while streaming the log, seals the image
   (`cloud-init clean`, build key and machine-id removed so every DPU VM mints
-  its own identity), powers it off and flattens the disk. The build directory
-  with the serial and provisioning logs is kept.
+  its own identity), powers it off and flattens the disk. `--nico-images`
+  copies the tarball into `files/images/`; without it the tarball already
+  there is used. The build directory with the serial and provisioning logs
+  is kept under `--work`.
 
 ### 4. Result
 
