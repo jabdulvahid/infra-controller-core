@@ -9,8 +9,11 @@
 #                           [--hbn-image REF] [--out PATH] [--rebuild-nico-images] [--no-prompt]
 #
 #   --nico-repo DIR       NICo checkout to build the agent and DHCP server from (required).
-#                         Cloned from upstream at --nico-ref if DIR does not exist.
-#   --nico-ref REF        ref to check out when cloning (default upstream/main)
+#                         Cloned from upstream if DIR does not exist; a build checkout the
+#                         tool moves to --nico-ref on every run (it refuses a dirty one).
+#   --nico-ref REF        what to build: a branch (default upstream/main, i.e. main's head),
+#                         a release tag such as v2.4.0, a commit, or `latest-release` for the
+#                         highest v* tag upstream carries
 #   --ubuntu-image X      Ubuntu arm64 cloud image, URL or local file
 #                         (default noble-server-cloudimg-arm64.img, current)
 #   --hbn-version TAG     DOCA HBN release to pull from nvcr.io/nvidia/doca/doca_hbn, as its
@@ -59,6 +62,27 @@ if [[ -n "$HBN_IMAGE" ]]; then hbn_label="$HBN_IMAGE (given as --hbn-image)"
 elif [[ "$HBN_VERSION" == "$HBN_DEFAULT_TAG" ]]; then HBN_IMAGE="$HBN_REPO@$HBN_DEFAULT_DIGEST"; hbn_label="DOCA HBN $HBN_VERSION (${HBN_DEFAULT_DIGEST:0:19}…, NICo's pinned release)"
 else HBN_IMAGE="$HBN_REPO:$HBN_VERSION"; hbn_label="DOCA HBN $HBN_VERSION ($HBN_IMAGE, by tag: not pinned by digest)"; fi
 
+# ── the NICo ref to build ───────────────────────────────────────────────────
+repo_head=""; target_sha=""; target_desc=""
+if [[ -d "$NICO_REPO/.git" ]]; then
+    if [[ -n "$(git -C "$NICO_REPO" status --porcelain --untracked-files=no)" ]]; then
+        echo "$NICO_REPO has local changes; this tool checks out --nico-ref there, so use a clean build checkout" >&2; exit 1
+    fi
+    remote=$(git -C "$NICO_REPO" remote | grep -qx upstream && echo upstream || echo origin)
+    git -C "$NICO_REPO" fetch -q --tags "$remote"
+    ref="$NICO_REF"
+    [[ "$ref" == upstream/* ]] && ref="$remote/${ref#upstream/}"
+    if [[ "$ref" == latest-release ]]; then
+        ref=$(git -C "$NICO_REPO" tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+        [[ -n "$ref" ]] || { echo "no v<number> release tag in $NICO_REPO ($remote)" >&2; exit 1; }
+    fi
+    target_sha=$(git -C "$NICO_REPO" rev-parse --verify -q "$ref^{commit}") || { echo "--nico-ref $NICO_REF: not found in $NICO_REPO ($remote)" >&2; exit 1; }
+    repo_head=$(git -C "$NICO_REPO" rev-parse HEAD)
+    tagnote=$(git -C "$NICO_REPO" describe --tags --exact-match "$target_sha" 2>/dev/null || true)
+    target_desc="$NICO_REF → ${target_sha:0:9} ($(git -C "$NICO_REPO" log -1 --format=%cd --date=short "$target_sha"))${tagnote:+, release tag $tagnote}"
+    [[ "$repo_head" == "$target_sha" ]] && target_desc+=", already checked out" || target_desc+=", will be checked out (detached)"
+fi
+
 # ── what exists already ─────────────────────────────────────────────────────
 TARBALL="$HERE/files/images/nico-arm64-images.tgz"
 cloud_name=$(basename "$UBUNTU_IMAGE")
@@ -67,12 +91,8 @@ if (( REBUILD_ALL )); then
     [[ -f "$UBUNTU_IMAGE" ]] || rm -f "$WORK/$cloud_name"
     echo "--rebuild-all: cached NICo tarball, MFT package and downloaded cloud image removed"
 fi
-repo_state="will be cloned from upstream at $NICO_REF"
-repo_head=""
-if [[ -d "$NICO_REPO/.git" ]]; then
-    repo_head=$(git -C "$NICO_REPO" rev-parse --short HEAD)
-    repo_state="exists, HEAD $repo_head ($(git -C "$NICO_REPO" log -1 --format=%cd --date=short)), reused as is"
-fi
+repo_state="will be cloned from upstream and checked out at $NICO_REF"
+[[ -n "$target_sha" ]] && repo_state="$target_desc"
 nico_action="build"
 nico_reason="no tarball yet"
 if [[ -f "$TARBALL" ]]; then
@@ -81,12 +101,12 @@ if [[ -f "$TARBALL" ]]; then
     elif [[ -f "$TARBALL.provenance" ]]; then
         tb_commit=$(sed -n 's/^commit=//p' "$TARBALL.provenance")
         tb_built=$(sed -n 's/^built=//p' "$TARBALL.provenance")
-        if [[ -n "$repo_head" && "$tb_commit" == "$(git -C "$NICO_REPO" rev-parse HEAD)" ]]; then
-            nico_action="reuse"; nico_reason="tarball built $tb_built from this checkout's HEAD ${tb_commit:0:9}"
-        elif [[ -z "$repo_head" ]]; then
+        if [[ -n "$target_sha" && "$tb_commit" == "$target_sha" ]]; then
+            nico_action="reuse"; nico_reason="tarball built $tb_built from ${tb_commit:0:9}, the commit --nico-ref resolves to"
+        elif [[ -z "$target_sha" ]]; then
             nico_reason="tarball exists (built $tb_built from ${tb_commit:0:9}) but the checkout will be cloned fresh"
         else
-            nico_reason="tarball built from ${tb_commit:0:9}, checkout is at $repo_head"
+            nico_reason="tarball built from ${tb_commit:0:9}, --nico-ref resolves to ${target_sha:0:9}"
         fi
     else
         nico_reason="tarball exists without provenance (older build); rebuilding to record it"
@@ -125,6 +145,10 @@ if (( ! NO_PROMPT )); then
 fi
 
 start=$(date +%s)
+if [[ -n "$target_sha" && "$repo_head" != "$target_sha" ]]; then
+    git -C "$NICO_REPO" checkout -q --detach "$target_sha"
+    echo "checked out ${target_sha:0:9} in $NICO_REPO"
+fi
 if [[ $nico_action == build ]]; then
     bash "$HERE/build-dpu-nico-images.sh" --repo "$NICO_REPO" --ref "$NICO_REF" --out "$WORK/nico-arm64-images.tgz"
     nico_args=(--nico-images "$WORK/nico-arm64-images.tgz")
