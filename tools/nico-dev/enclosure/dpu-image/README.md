@@ -73,7 +73,7 @@ TCG): 16 minutes with the NICo images rebuilt, about 13 with them reused.
 | `--hbn-version TAG` | `3.4.0-doca3.4.0` | DOCA HBN release, as the container's tag `<hbn>-doca<doca>`. The default is pulled by digest (what NICo's DPF service definition pins); any other tag is pulled by tag. |
 | `--hbn-image REF` | unset | Any HBN container reference (`repo:tag` or `repo@sha256:...`) instead of `--hbn-version`. |
 | `--out PATH` | `/var/lib/libvirt/images/enclosure-dpu.qcow2` | The golden image. The plan says whether it exists and would be overwritten. Never overwrite the backing file of a running DPU VM: use a dated name. |
-| `--rebuild-nico-images` | off | Build the NICo images even if a tarball from the same commit exists. |
+| `--rebuild-nico-images` | off | Build the NICo images and `bmc-mock` even if ones from the same commit exist. |
 | `--rebuild-all` | off | Discard every cached asset first (NICo tarball, MFT package, downloaded cloud image) so the whole chain runs cold. |
 | `--no-prompt` | off | Skip the confirmation. |
 
@@ -83,6 +83,11 @@ What the plan decides about reuse:
   its `.provenance` sidecar records the commit `--nico-ref` resolves to;
   rebuilt otherwise, and the plan says why (no tarball, different commit, no
   provenance, or a rebuild flag).
+- **`bmc-mock`** (`~/.cache/enclosure-dpu-build/bmc-mock`, the x86 binary
+  the enclosure's two BMCs run): reused when its `.provenance` records the
+  commit `--nico-ref` resolves to; built otherwise, natively when the host
+  has `cargo` and `protoc`, else in the repository's minimal build container.
+  This is the `bmc.bmc_mock` path for the enclosure file.
 - **Cross build container**: reused when docker has it; rebuilt from the
   repository's Dockerfile otherwise (docker's layer cache applies).
 - **Ubuntu cloud image**: a local file is used as is; a download is reused

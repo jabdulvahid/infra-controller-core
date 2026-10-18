@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the Enclosure DPU image in one command: NICo's arm64 agent and
-# DHCP-server images from a NICo checkout, then the golden QCOW2 from Ubuntu's
+# DHCP-server images from a NICo checkout, the x86 bmc-mock from the same
+# commit (for the enclosure's two BMCs), then the golden QCOW2 from Ubuntu's
 # arm64 cloud image with real HBN and those images baked in. Prints the plan,
 # including every asset it will reuse from an earlier run, and proceeds only
 # after confirmation (--no-prompt to skip).
@@ -21,7 +22,7 @@
 #                         (default: 3.4.0-doca3.4.0 pinned by digest, what NICo's DPF service pins)
 #   --hbn-image REF       any HBN container reference instead (repo:tag or repo@sha256:...)
 #   --out PATH            golden image (default /var/lib/libvirt/images/enclosure-dpu.qcow2)
-#   --rebuild-nico-images build the NICo images even if a tarball from the same commit exists
+#   --rebuild-nico-images build the NICo images and bmc-mock even if ones from the same commit exist
 #   --rebuild-all         ignore every cached asset: NICo images, cloud image, MFT package
 #   --no-prompt           do not ask for confirmation
 #
@@ -87,7 +88,7 @@ fi
 TARBALL="$HERE/files/images/nico-arm64-images.tgz"
 cloud_name=$(basename "$UBUNTU_IMAGE")
 if (( REBUILD_ALL )); then
-    rm -f "$TARBALL" "$TARBALL.provenance" "$HERE"/files/mft/mft_*_arm64.deb
+    rm -f "$TARBALL" "$TARBALL.provenance" "$HERE"/files/mft/mft_*_arm64.deb "$WORK/bmc-mock" "$WORK/bmc-mock.provenance"
     [[ -f "$UBUNTU_IMAGE" ]] || rm -f "$WORK/$cloud_name"
     echo "--rebuild-all: cached NICo tarball, MFT package and downloaded cloud image removed"
 fi
@@ -112,6 +113,19 @@ if [[ -f "$TARBALL" ]]; then
         nico_reason="tarball exists without provenance (older build); rebuilding to record it"
     fi
 fi
+BMC_MOCK="$WORK/bmc-mock"
+mock_action="build"; mock_reason="not built yet"
+if [[ -f "$BMC_MOCK" && -f "$BMC_MOCK.provenance" ]]; then
+    mock_commit=$(sed -n 's/^commit=//p' "$BMC_MOCK.provenance")
+    if (( REBUILD_NICO )); then mock_reason="exists, rebuild requested"
+    elif [[ -n "$target_sha" && "$mock_commit" == "$target_sha" ]]; then mock_action="reuse"; mock_reason="built from ${mock_commit:0:9}, the commit --nico-ref resolves to"
+    else mock_reason="built from ${mock_commit:0:9}, --nico-ref resolves to ${target_sha:0:9}"; fi
+fi
+if [[ $mock_action == build ]]; then
+    if command -v cargo >/dev/null && command -v protoc >/dev/null; then mock_how="native cargo build (cargo and protoc present)"
+    else mock_how="in the repository's minimal build container (no host protoc)"; fi
+    mock_reason="$mock_reason; $mock_how"
+fi
 if [[ -f "$UBUNTU_IMAGE" ]]; then cloud_state="local file, used as is"
 elif [[ -f "$WORK/$cloud_name" ]]; then cloud_state="cached in $WORK ($(date -r "$WORK/$cloud_name" +%Y-%m-%d)), checksum re-verified against the publisher"
 else cloud_state="will be downloaded to $WORK"; fi
@@ -128,6 +142,8 @@ Enclosure DPU image build — plan
   NICo images tarball  $TARBALL
                        $nico_action: $nico_reason
   cross build image    $cross_state
+  bmc-mock (x86)       $BMC_MOCK
+                       $mock_action: $mock_reason
   Ubuntu cloud image   $UBUNTU_IMAGE
                        $cloud_state
   MFT (flint)          $mft_state
@@ -137,7 +153,7 @@ Enclosure DPU image build — plan
                        $out_state
   logs                 $WORK/build-<timestamp>/ (serial.log, provision.log)
 
-Steps: $([[ $nico_action == build ]] && echo "1) build-dpu-nico-images.sh  2) build-dpu.sh" || echo "build-dpu.sh only (NICo images reused)")
+Steps: $([[ $nico_action == build ]] && echo "build-dpu-nico-images.sh; " || echo "")$([[ $mock_action == build ]] && echo "cargo build -p bmc-mock; " || echo "")build-dpu.sh
 EOF
 if (( ! NO_PROMPT )); then
     read -r -p "Proceed? [y/N] " answer
@@ -155,5 +171,19 @@ if [[ $nico_action == build ]]; then
 else
     nico_args=()
 fi
-HBN_VERSION="$HBN_VERSION" bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
+HBN_VERSION="$HBN_VERSION" if [[ $mock_action == build ]]; then
+    echo; echo "== bmc-mock (x86) from $NICO_REPO"
+    if command -v cargo >/dev/null && command -v protoc >/dev/null; then
+        (cd "$NICO_REPO" && cargo build --release -p bmc-mock)
+    else
+        # The repository's minimal cargo container (Rust + protoc); CARGO_HOME is mounted as /cargo.
+        export CARGO_HOME="${CARGO_HOME:-$HOME/.cache/nico-cargo-home}"; mkdir -p "$CARGO_HOME"
+        (cd "$NICO_REPO" && docker image inspect carbide-build-minimal >/dev/null 2>&1 || cargo make build-cargo-docker-image-minimal)
+        (cd "$NICO_REPO" && cargo make cargo-docker-minimal -- build --release -p bmc-mock)
+    fi
+    install -m 0755 "$NICO_REPO/target/release/bmc-mock" "$BMC_MOCK"
+    printf 'commit=%s\nref=%s\nbuilt=%s\n' "$(git -C "$NICO_REPO" rev-parse HEAD)" "$NICO_REF" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BMC_MOCK.provenance"
+fi
+bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
+echo "bmc-mock: $BMC_MOCK  (enclosure file bmc.bmc_mock)"
 echo "total: $(( ($(date +%s) - start) / 60 )) min"
