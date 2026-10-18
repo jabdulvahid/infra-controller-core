@@ -171,7 +171,7 @@ if [[ $nico_action == build ]]; then
 else
     nico_args=()
 fi
-HBN_VERSION="$HBN_VERSION" if [[ $mock_action == build ]]; then
+if [[ $mock_action == build ]]; then
     echo; echo "== bmc-mock (x86) from $NICO_REPO"
     if command -v cargo >/dev/null && command -v protoc >/dev/null; then
         (cd "$NICO_REPO" && cargo build --release -p bmc-mock)
@@ -184,6 +184,6 @@ HBN_VERSION="$HBN_VERSION" if [[ $mock_action == build ]]; then
     install -m 0755 "$NICO_REPO/target/release/bmc-mock" "$BMC_MOCK"
     printf 'commit=%s\nref=%s\nbuilt=%s\n' "$(git -C "$NICO_REPO" rev-parse HEAD)" "$NICO_REF" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BMC_MOCK.provenance"
 fi
-bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
+HBN_VERSION="$HBN_VERSION" bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
 echo "bmc-mock: $BMC_MOCK  (enclosure file bmc.bmc_mock)"
 echo "total: $(( ($(date +%s) - start) / 60 )) min"
