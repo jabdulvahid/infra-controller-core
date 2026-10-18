@@ -83,5 +83,8 @@ docker image inspect "$AGENT" "$DHCP" --format '{{index .RepoTags 0}} {{.Archite
 
 echo "== $OUT"
 docker save "$AGENT" "$DHCP" | gzip > "$OUT"
+# Provenance next to the tarball, read by build-dpu-image.sh to decide reuse.
+printf 'commit=%s\nref=%s\nbuilt=%s\nagent=%s\ndhcp=%s\n' "$(git rev-parse HEAD)" "$REF" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$(docker image inspect "$AGENT" --format '{{.Id}}')" "$(docker image inspect "$DHCP" --format '{{.Id}}')" > "$OUT.provenance"
 ls -l "$OUT"
 echo "done: bake with  bash build-dpu.sh --nico-images $OUT --out /var/lib/libvirt/images/enclosure-dpu.qcow2"

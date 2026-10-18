@@ -15,7 +15,7 @@
 #   --cloud-image URL   Ubuntu arm64 cloud image (default noble-server-cloudimg-arm64.img, current)
 #   --disk-size SIZE    build disk size (default 16G)   --cpus N (4)   --memory MB (4096)
 #   --accel kvm|hvf|tcg force the accelerator (default: kvm on arm64 Linux, hvf on macOS, else tcg)
-#   HBN_IMAGE=...       override the HBN container (default pinned in provision.sh's caller below)
+#   --hbn-image REF     the HBN container (default: doca_hbn 3.4.0-doca3.4.0 pinned by digest; env HBN_IMAGE also works)
 #
 # Host prerequisites: qemu-system-aarch64 + qemu-img, UEFI firmware for the
 # virt machine (Linux: qemu-efi-aarch64 → /usr/share/AAVMF; macOS: brew qemu's
@@ -43,6 +43,7 @@ while [[ $# -gt 0 ]]; do
         --cpus) CPUS="$2"; shift 2 ;;
         --memory) MEMORY="$2"; shift 2 ;;
         --accel) ACCEL="$2"; shift 2 ;;
+        --hbn-image) HBN_IMAGE="$2"; shift 2 ;;
         *) sed -n 2,24p "$0" >&2; exit 2 ;;
     esac
 done
@@ -81,8 +82,9 @@ done
 mkdir -p "$WORK" "$HERE/files/images" "$HERE/files/mft"
 if [[ -n "$NICO_IMAGES" ]]; then
     [[ -f "$NICO_IMAGES" ]] || die "--nico-images: $NICO_IMAGES not found"
-    rm -f "$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz
+    rm -f "$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz "$HERE"/files/images/*.provenance
     cp "$NICO_IMAGES" "$HERE/files/images/nico-arm64-images.tgz"
+    [[ -f "$NICO_IMAGES.provenance" ]] && cp "$NICO_IMAGES.provenance" "$HERE/files/images/nico-arm64-images.tgz.provenance"
 fi
 shopt -s nullglob
 nico_tarballs=("$HERE"/files/images/*.tgz "$HERE"/files/images/*.tar "$HERE"/files/images/*.tar.gz)

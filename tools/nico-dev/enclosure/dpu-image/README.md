@@ -24,9 +24,9 @@ No NICo code is changed.
 
 Everything below runs on one x86 Linux host (Ubuntu 22.04 or 24.04). It is
 written for someone who has never done it; nothing is assumed to be present.
-Two artefacts come out: a tarball with NICo's arm64 container images (step
-3) and the golden DPU image (step 4). Repeat steps 3 and 4 for a new NICo
-version, step 4 alone for a new HBN version.
+One command (step 3) produces the golden DPU image, building NICo's arm64
+container images on the way and reusing what earlier runs left behind.
+Repeat it for a new NICo or HBN version.
 
 ### 1. Install the host tools (once)
 
@@ -54,36 +54,52 @@ git clone -b nico-dev https://github.com/jabdulvahid/infra-controller-core.git ~
 cd ~/nico-dev-src/tools/nico-dev/enclosure/dpu-image
 ```
 
-### 3. Build NICo's arm64 agent and DHCP-server images (per NICo version)
+### 3. Build the image (one command)
 
 ```bash
-bash build-dpu-nico-images.sh --repo ~/build/nico --ref upstream/main --out ~/nico-arm64-images.tgz
+bash build-dpu-image.sh --nico-repo ~/build/nico --out /var/lib/libvirt/images/enclosure-dpu.qcow2
 ```
 
-`--repo` is a NICo checkout to build from; the script clones upstream into it
-when it does not exist and checks out `--ref`. Use the commit the site's Core
-runs, or upstream main at the time the site was brought up. About 20
-minutes; the result is the tarball named by `--out`.
+It prints its plan first and waits for a `y`: the NICo checkout it will
+build from (cloned from upstream at `--nico-ref`, default `upstream/main`,
+when the folder does not exist), the Ubuntu arm64 cloud image (`--ubuntu-image`,
+default the current noble image), the DOCA HBN container (`--hbn-image`,
+default 3.4.0 pinned by digest), the output path, and for every asset whether
+it will be reused from an earlier run or built: the NICo images tarball
+(reused when it was built from the checkout's current commit, or
+`--rebuild-nico-images`), the cross build container, the cached cloud image
+(checksum re-verified), the MFT package. `--no-prompt` skips the question.
 
-### 4. Build the DPU image (per NICo or HBN version)
+Cold, everything built: about 20 minutes for the NICo images and 15 minutes
+for the image under TCG on jaslinux. Warm, with the tarball reused: the
+second part only. The last line prints the total.
 
-```bash
-bash build-dpu.sh --nico-images ~/nico-arm64-images.tgz --out /var/lib/libvirt/images/enclosure-dpu.qcow2
-```
+Under the hood it runs two scripts from this directory, which can also be run
+on their own:
 
-30–60 minutes under TCG. The script downloads and checksum-verifies Ubuntu's
-noble arm64 cloud image (cached under `~/.cache/enclosure-dpu-build`),
-fetches the MFT package for `flint`, boots a build VM, provisions it over
-ssh while streaming the log, seals it and writes the golden image. The last
-lines print the provenance: build time, HBN digest, NICo image ids. The
-build directory with the serial and provisioning logs stays under
-`~/.cache/enclosure-dpu-build/build-<timestamp>/`.
+- `build-dpu-nico-images.sh --repo DIR --ref REF --out TARBALL` builds NICo's
+  arm64 `forge-dpu-agent` and `forge-dhcp-server` images from the
+  repository's own cross container and Dockerfiles (the agent image has an
+  arm64 builder stage, hence binfmt), checks the binaries for 64 KiB
+  page-size compatibility, tags them `localhost/nico/forge-<name>:enclosure`
+  and `docker save`s them with a `.provenance` sidecar (commit, ref, image ids).
+- `build-dpu.sh --nico-images TARBALL --out PATH` downloads and
+  checksum-verifies the cloud image (cached under
+  `~/.cache/enclosure-dpu-build`), fetches the MFT package for `flint`, boots a
+  build VM under `qemu-system-aarch64` (TCG on x86; KVM or HVF on arm64
+  hosts) with a cloud-init seed and a throw-away key, uploads `files/` and
+  runs `provision.sh` over ssh while streaming the log, seals the image
+  (`cloud-init clean`, build key and machine-id removed so every DPU VM mints
+  its own identity), powers it off and flattens the disk. The build directory
+  with the serial and provisioning logs is kept.
 
-`--nico-images` copies the tarball into `files/images/` (ignored by git);
-later runs of `build-dpu.sh` reuse it until you pass a new one. Override the
-HBN image with `HBN_IMAGE=...@sha256:...`.
+### 4. Result
 
-### 5. Check the result
+The image records what it carries in `/usr/local/lib/enclosure/provenance`
+(build time, HBN digest, the two NICo image ids), printed at the end of the
+build.
+
+### 5. Check the image
 
 ```bash
 qemu-img info /var/lib/libvirt/images/enclosure-dpu.qcow2 | head -3
