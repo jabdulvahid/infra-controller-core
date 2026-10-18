@@ -190,5 +190,5 @@ if ! { [[ -w "$OUT" ]] || { [[ ! -e "$OUT" ]] && [[ -w "$(dirname "$OUT")" ]]; }
 $sudo_if_needed qemu-img convert -O qcow2 "$BUILD/disk.qcow2" "$OUT"
 if [[ -n "$sudo_if_needed" ]] && id libvirt-qemu >/dev/null 2>&1; then sudo chown libvirt-qemu:kvm "$OUT"; fi
 qemu-img info "$OUT" | grep -E '^(virtual size|disk size)'
-grep -A3 '^built=' "$BUILD/provision.log" | sed 's/^/  /' || true
+grep -A4 '^built=' "$BUILD/provision.log" | sed 's/^/  /' || true
 echo "done: $OUT  (build dir kept: $BUILD)"
