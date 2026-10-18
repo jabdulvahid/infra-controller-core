@@ -61,8 +61,11 @@ bash build-dpu-image.sh --nico-repo ~/build/nico --out /var/lib/libvirt/images/e
 ```
 
 It prints its plan first and waits for a `y`: the NICo checkout it will
-build from (cloned from upstream at `--nico-ref`, default `upstream/main`,
-when the folder does not exist), the Ubuntu arm64 cloud image (`--ubuntu-image`,
+build from (`--nico-repo`, cloned from upstream when the folder does not
+exist) and what it will check out there (`--nico-ref`: main's head by
+default, a release tag such as `v2.4.0`, a commit, or `latest-release` for the
+highest `v*` tag; the checkout must be clean, since the tool moves it), the
+Ubuntu arm64 cloud image (`--ubuntu-image`,
 default the current noble image), the DOCA HBN release (`--hbn-version`, the
 container's tag in the form `<hbn>-doca<doca>`, default `3.4.0-doca3.4.0`
 pinned by digest, which is what NICo's DPF service definition pins; any other
