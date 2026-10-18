@@ -9,8 +9,8 @@ name: encl2                               # prefix for the VM, namespaces, units
 bmc:
   index: 2                                # bmc-mock instance index (1..255; 0 is MAT's pool): MACs 02:00:00:<index>:00:xx
   host_profile: lenovo_gb300_nvl          # a Redfish-reset profile with exactly one BlueField-3 DPU (or supermicro_gb300_nvl)
-  bmc_mock: /home/jabdulvahid/nico-tests/vm-7023/shared/infra-controller/target/release/bmc-mock
-  cert_dir: /home/jabdulvahid/nico-tests/vm-7023/shared/infra-controller/crates/bmc-mock   # tls.crt + tls.key
+  bmc_mock: /home/jabdulvahid/.cache/enclosure-dpu-build/bmc-mock   # built by dpu-image/build-dpu-image.sh next to the image
+  # cert_dir: the mocks' TLS pair; omitted = the tool generates a self-signed pair per enclosure
   dpu_firmware:                           # what the DPU BMC mock reports; defaults satisfy NICo's DPF gate (BMC >= 24.10)
     bmc: BF-25.10-24
     uefi: 4.13.2-12-g943a91640d

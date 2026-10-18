@@ -22,7 +22,7 @@ The enclosure file (every key with a default may be omitted):
     index: 1                        # bmc-mock instance index; the pool is 02:00:00:<index>:xx:xx
     host_profile: lenovo_gb300_nvl  # a Redfish-reset profile with exactly one BlueField-3 DPU
     bmc_mock: /path/to/bmc-mock
-    cert_dir: /path/to/crates/bmc-mock
+    cert_dir: ""                    # default: the tool generates a self-signed pair per enclosure
     dpu_firmware: {bmc: BF-25.10-24, uefi: 4.13.2-12-g943a91640d, nic: 32.47.3576, cec: 00.02.0195.0000_n02}
   dpu:
     image: /var/lib/libvirt/images/enclosure-dpu.qcow2
@@ -134,7 +134,7 @@ class Enclosure:
         if self.host_profile not in HOST_PROFILES:
             raise Fail(f'bmc.host_profile: one of {", ".join(HOST_PROFILES)} (Redfish reset, one BF3 DPU)')
         self.bmc_mock = Path(str(bmc.get('bmc_mock') or '')).expanduser()
-        self.cert_dir = Path(str(bmc.get('cert_dir') or '')).expanduser()
+        self.cert_dir = Path(str(bmc.get('cert_dir'))).expanduser() if bmc.get('cert_dir') else None
         fw = dict(DEFAULT_DPU_FIRMWARE)
         fw.update({k: str(v) for k, v in (bmc.get('dpu_firmware') or {}).items()})
         self.dpu_firmware = fw
@@ -247,8 +247,10 @@ def check_host(enc, for_create=True):
     for label, p in (('dpu.image', enc.image), ('bmc.bmc_mock', enc.bmc_mock), ('site.root_ca', enc.root_ca)):
         if not p.is_file():
             raise Fail(f'{label}: {p} is not a file')
-    if not (enc.cert_dir / 'tls.crt').is_file() or not (enc.cert_dir / 'tls.key').is_file():
+    if enc.cert_dir is not None and (not (enc.cert_dir / 'tls.crt').is_file() or not (enc.cert_dir / 'tls.key').is_file()):
         raise Fail(f'bmc.cert_dir: tls.crt and tls.key not in {enc.cert_dir}')
+    if enc.cert_dir is None and not shutil.which('openssl'):
+        raise Fail('openssl missing (needed to generate the BMC mocks\' TLS pair; or set bmc.cert_dir)')
     if not os.access(enc.bmc_mock, os.X_OK):
         raise Fail(f'bmc.bmc_mock: {enc.bmc_mock} is not executable')
     if not BMC_SH.is_file():
@@ -288,6 +290,22 @@ def ensure_ssh_key(enc):
     if not key.exists():
         run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', f'enclosure-{enc.name}', '-f', str(key)])
     return key
+
+
+def ensure_mock_certs(enc):
+    """The mocks' Redfish listener needs a TLS pair; NICo's explorer does not
+    verify BMC certificates, so a self-signed pair per enclosure is enough."""
+    if enc.cert_dir is not None:
+        return enc.cert_dir
+    d = enc.state / 'certs'
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not (d / 'tls.crt').exists() or not (d / 'tls.key').exists():
+        run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+             '-nodes', '-days', '3650', '-subj', f'/CN=enclosure-{enc.name}-bmc',
+             '-keyout', str(d / 'tls.key'), '-out', str(d / 'tls.crt')])
+        (d / 'tls.key').chmod(0o600)
+        print(f'  BMC TLS pair: generated in {d}')
+    return d
 
 
 def ensure_hostlink_bridge(enc, reuse):
@@ -410,7 +428,7 @@ def start_mocks(enc):
     d = enc.ids
     fw = enc.dpu_firmware
     common = ['--bridge', enc.oob, '--profile', enc.host_profile, '--instance', str(enc.index),
-              '--bin', str(enc.bmc_mock), '--certs', str(enc.cert_dir)]
+              '--bin', str(enc.bmc_mock), '--certs', str(ensure_mock_certs(enc))]
     run(['bash', str(BMC_SH), 'create', enc.name, 'dpu', d['dpu_bmc_mac'], *common, '--dpu-index', '0', '--',
          '--dpu-bmc-firmware', fw['bmc'], '--dpu-uefi-firmware', fw['uefi'],
          '--dpu-nic-firmware', fw['nic'], '--dpu-cec-firmware', fw['cec']], capture=False)
