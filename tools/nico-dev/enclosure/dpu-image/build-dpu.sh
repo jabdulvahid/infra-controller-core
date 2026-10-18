@@ -172,7 +172,7 @@ tar -C "$HERE/files" -cf - . | "${SSH[@]}" 'mkdir -p /tmp/enclosure-files && tar
 "${SSH[@]}" 'cat > /tmp/provision.sh' < "$HERE/provision.sh"
 
 say "provision (HBN $HBN_IMAGE)"
-"${SSH[@]}" "sudo env HBN_IMAGE='$HBN_IMAGE' bash /tmp/provision.sh" 2>&1 | tee "$BUILD/provision.log"
+"${SSH[@]}" "sudo env HBN_IMAGE='$HBN_IMAGE' HBN_VERSION='${HBN_VERSION:-}' bash /tmp/provision.sh" 2>&1 | tee "$BUILD/provision.log"
 
 say "seal: cloud-init clean, build key and machine-id removed, shutdown"
 # A fresh instance-id per enclosure then re-runs cloud-init (users, write_files);

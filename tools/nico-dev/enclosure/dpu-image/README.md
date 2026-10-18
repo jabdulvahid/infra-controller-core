@@ -63,12 +63,20 @@ bash build-dpu-image.sh --nico-repo ~/build/nico --out /var/lib/libvirt/images/e
 It prints its plan first and waits for a `y`: the NICo checkout it will
 build from (cloned from upstream at `--nico-ref`, default `upstream/main`,
 when the folder does not exist), the Ubuntu arm64 cloud image (`--ubuntu-image`,
-default the current noble image), the DOCA HBN container (`--hbn-image`,
-default 3.4.0 pinned by digest), the output path, and for every asset whether
+default the current noble image), the DOCA HBN release (`--hbn-version`, the
+container's tag in the form `<hbn>-doca<doca>`, default `3.4.0-doca3.4.0`
+pinned by digest, which is what NICo's DPF service definition pins; any other
+reference with `--hbn-image`), the output path, and for every asset whether
 it will be reused from an earlier run or built: the NICo images tarball
 (reused when it was built from the checkout's current commit, or
 `--rebuild-nico-images`), the cross build container, the cached cloud image
-(checksum re-verified), the MFT package. `--no-prompt` skips the question.
+(checksum re-verified), the MFT package. `--rebuild-all` discards every
+cached asset first; `--no-prompt` skips the question.
+
+Which DOCA a DPU runs is answered in three places: the plan line `DOCA HBN`
+before the build, the provenance printed at the end, and
+`/usr/local/lib/enclosure/provenance` inside every DPU built from the image
+(`hbn_version=` and `hbn_image=`), which `enclosure.py status` shows.
 
 Cold, everything built: about 20 minutes for the NICo images and 15 minutes
 for the image under TCG on jaslinux. Warm, with the tarball reused: the

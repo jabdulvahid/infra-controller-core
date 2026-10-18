@@ -13,9 +13,13 @@
 #   --nico-ref REF        ref to check out when cloning (default upstream/main)
 #   --ubuntu-image X      Ubuntu arm64 cloud image, URL or local file
 #                         (default noble-server-cloudimg-arm64.img, current)
-#   --hbn-image REF       DOCA HBN container (default 3.4.0-doca3.4.0, pinned by digest)
+#   --hbn-version TAG     DOCA HBN release to pull from nvcr.io/nvidia/doca/doca_hbn, as its
+#                         tag "<hbn>-doca<doca>", e.g. 3.4.0-doca3.4.0 or 2.4.1-doca2.9.3
+#                         (default: 3.4.0-doca3.4.0 pinned by digest, what NICo's DPF service pins)
+#   --hbn-image REF       any HBN container reference instead (repo:tag or repo@sha256:...)
 #   --out PATH            golden image (default /var/lib/libvirt/images/enclosure-dpu.qcow2)
 #   --rebuild-nico-images build the NICo images even if a tarball from the same commit exists
+#   --rebuild-all         ignore every cached asset: NICo images, cloud image, MFT package
 #   --no-prompt           do not ask for confirmation
 #
 # Runs build-dpu-nico-images.sh and build-dpu.sh (same directory); see the
@@ -25,18 +29,23 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NICO_REPO=""; NICO_REF="upstream/main"
 UBUNTU_IMAGE="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img"
-HBN_IMAGE="${HBN_IMAGE:-nvcr.io/nvidia/doca/doca_hbn@sha256:9c2008c9ad1ad776fd1263072a78bd3dedaee2b9f315b99071d3e1495f7b1b4f}"
+HBN_REPO=nvcr.io/nvidia/doca/doca_hbn
+HBN_DEFAULT_TAG=3.4.0-doca3.4.0            # NICo's DOCA_HBN_SERVICE_IMAGE_TAG (crates/api-core/src/dpf_services.rs)
+HBN_DEFAULT_DIGEST=sha256:9c2008c9ad1ad776fd1263072a78bd3dedaee2b9f315b99071d3e1495f7b1b4f
+HBN_VERSION="$HBN_DEFAULT_TAG"; HBN_IMAGE="${HBN_IMAGE:-}"
 OUT=/var/lib/libvirt/images/enclosure-dpu.qcow2
 WORK="$HOME/.cache/enclosure-dpu-build"
-REBUILD_NICO=0; NO_PROMPT=0
+REBUILD_NICO=0; REBUILD_ALL=0; NO_PROMPT=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --nico-repo) NICO_REPO="$2"; shift 2 ;;
         --nico-ref) NICO_REF="$2"; shift 2 ;;
         --ubuntu-image) UBUNTU_IMAGE="$2"; shift 2 ;;
+        --hbn-version) HBN_VERSION="$2"; shift 2 ;;
         --hbn-image) HBN_IMAGE="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
         --rebuild-nico-images) REBUILD_NICO=1; shift ;;
+        --rebuild-all) REBUILD_ALL=1; REBUILD_NICO=1; shift ;;
         --no-prompt) NO_PROMPT=1; shift ;;
         -h|--help) sed -n 2,22p "$0"; exit 0 ;;
         *) echo "unknown option $1" >&2; sed -n 8,10p "$0" >&2; exit 2 ;;
@@ -44,9 +53,20 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$NICO_REPO" ]] || { echo "--nico-repo DIR is required" >&2; exit 2; }
 NICO_REPO="${NICO_REPO/#\~/$HOME}"
+# The HBN reference: an explicit --hbn-image wins; the default release is
+# pulled by digest so the image is reproducible; another release by its tag.
+if [[ -n "$HBN_IMAGE" ]]; then hbn_label="$HBN_IMAGE (given as --hbn-image)"
+elif [[ "$HBN_VERSION" == "$HBN_DEFAULT_TAG" ]]; then HBN_IMAGE="$HBN_REPO@$HBN_DEFAULT_DIGEST"; hbn_label="DOCA HBN $HBN_VERSION (${HBN_DEFAULT_DIGEST:0:19}…, NICo's pinned release)"
+else HBN_IMAGE="$HBN_REPO:$HBN_VERSION"; hbn_label="DOCA HBN $HBN_VERSION ($HBN_IMAGE, by tag: not pinned by digest)"; fi
 
 # ── what exists already ─────────────────────────────────────────────────────
 TARBALL="$HERE/files/images/nico-arm64-images.tgz"
+cloud_name=$(basename "$UBUNTU_IMAGE")
+if (( REBUILD_ALL )); then
+    rm -f "$TARBALL" "$TARBALL.provenance" "$HERE"/files/mft/mft_*_arm64.deb
+    [[ -f "$UBUNTU_IMAGE" ]] || rm -f "$WORK/$cloud_name"
+    echo "--rebuild-all: cached NICo tarball, MFT package and downloaded cloud image removed"
+fi
 repo_state="will be cloned from upstream at $NICO_REF"
 repo_head=""
 if [[ -d "$NICO_REPO/.git" ]]; then
@@ -72,7 +92,6 @@ if [[ -f "$TARBALL" ]]; then
         nico_reason="tarball exists without provenance (older build); rebuilding to record it"
     fi
 fi
-cloud_name=$(basename "$UBUNTU_IMAGE")
 if [[ -f "$UBUNTU_IMAGE" ]]; then cloud_state="local file, used as is"
 elif [[ -f "$WORK/$cloud_name" ]]; then cloud_state="cached in $WORK ($(date -r "$WORK/$cloud_name" +%Y-%m-%d)), checksum re-verified against the publisher"
 else cloud_state="will be downloaded to $WORK"; fi
@@ -92,7 +111,7 @@ Enclosure DPU image build — plan
   Ubuntu cloud image   $UBUNTU_IMAGE
                        $cloud_state
   MFT (flint)          $mft_state
-  DOCA HBN image       $HBN_IMAGE
+  DOCA HBN             $hbn_label
                        pulled inside the build VM (not cached between builds)
   output               $OUT
                        $out_state
@@ -112,5 +131,5 @@ if [[ $nico_action == build ]]; then
 else
     nico_args=()
 fi
-bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
+HBN_VERSION="$HBN_VERSION" bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
 echo "total: $(( ($(date +%s) - start) / 60 )) min"

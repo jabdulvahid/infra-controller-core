@@ -112,6 +112,7 @@ podman image exists localhost/nico/forge-dhcp-server:enclosure
 # Provenance, for `enclosure status` and for anyone asking what a DPU runs.
 {
     echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "hbn_version=${HBN_VERSION:-unknown}"
     echo "hbn_image=$HBN_IMAGE"
     for img in localhost/nico/forge-dpu-agent:enclosure localhost/nico/forge-dhcp-server:enclosure; do
         echo "${img#localhost/nico/}=$(podman image inspect "$img" --format '{{.Id}}' | cut -c1-12) $(podman image inspect "$img" --format '{{index .Labels "org.opencontainers.image.version"}}' 2>/dev/null)"
