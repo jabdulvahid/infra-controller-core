@@ -39,7 +39,8 @@ owns VMs, bridges and network namespaces.
 | seed ISO tool | one of `cloud-localds`, `genisoimage`, `xorriso` | `apt-get install -y cloud-image-utils` |
 | Python | `python3` with PyYAML | `apt-get install -y python3-yaml` |
 | the DPU image | the golden QCOW2 | [`dpu-image/README.md`](dpu-image/README.md), one command, ~15 min |
-| `bmc-mock` | the x86 binary and its TLS pair | `cargo build --release -p bmc-mock` in a NICo checkout → `target/release/bmc-mock`; the certificate pair ships in `crates/bmc-mock/` |
+| `bmc-mock` | the x86 binary | built by `dpu-image/build-dpu-image.sh` next to the image, or `cargo build --release -p bmc-mock` in a NICo checkout |
+| `openssl` | generates the mocks' TLS pair | `apt-get install -y openssl` (present on any Ubuntu) |
 | two bridges | `oob` and `uplink`, already reaching the site's leaf ports | site-specific; nico-dev: [`cable.sh`](cable.sh) below |
 | the site's root CA | PEM file | site-specific; nico-dev: one `kubectl` line below |
 | `.forge` DNS on the site | the site serves `carbide-pxe.forge` etc. to DPUs | helm-prereqs README step 6; nico-dev: `unbound: true` in bringup.yaml |
@@ -98,8 +99,8 @@ the state directory `<state_dir>/<name>/`. Pick a name you can type into
 |---|---|---|
 | `index` | required | `bmc-mock`'s instance index, 1 to 255. Every identity below derives from it (see [Identities](#identities)), so it must be unique per site. Index 0 is MAT's pool; enclosures start at 1. The tool refuses an index another enclosure in the same state directory uses; across hypervisors, keep a short list next to the site definition. |
 | `host_profile` | `lenovo_gb300_nvl` | The `bmc-mock` hardware profile of the host BMC. It must be a profile NICo resets over Redfish and that carries exactly one BlueField-3 DPU: `lenovo_gb300_nvl` or `supermicro_gb300_nvl`. Not `nvidia_dgx_h100`: NICo force-restarts that vendor over IPMI, which a standalone mock does not serve. The tool refuses anything else. |
-| `bmc_mock` | required | Path to the x86 `bmc-mock` binary. Build it once in a NICo checkout with `cargo build --release -p bmc-mock`; it is independent of the DPU image. |
-| `cert_dir` | required | Directory holding `tls.crt` and `tls.key` for the mocks' Redfish listener. The pair ships in NICo's `crates/bmc-mock/`; any checkout works. |
+| `bmc_mock` | required | Path to the x86 `bmc-mock` binary. `dpu-image/build-dpu-image.sh` builds it from the same NICo commit as the image and leaves it next to its cache as `~/.cache/enclosure-dpu-build/bmc-mock`; or build it yourself with `cargo build --release -p bmc-mock` in a NICo checkout. |
+| `cert_dir` | generated | Directory holding `tls.crt` and `tls.key` for the mocks' Redfish listener. Omitted, the tool generates a self-signed pair per enclosure in its state directory, which is enough because NICo's explorer does not verify BMC certificates. Set it only to serve a pair of your own. |
 | `dpu_firmware` | the four values shown | What the DPU BMC mock reports as firmware. NICo's DPF gate requires a BMC firmware of 24.10 or newer or it pins the host to the legacy path at creation, which cannot be undone without deleting the host. Leave the defaults unless you are testing the gate. |
 
 ### `dpu`
@@ -321,8 +322,8 @@ then plugs the DPU VM and the BMC namespaces into those bridges itself.
 ### The site inputs
 
 - `site.root_ca`: `kubectl --kubeconfig <site>/dc1-<site>.kubeconfig.yaml -n nico-system get secret nico-api-certificate -o jsonpath='{.data.ca\.crt}' | base64 -d > site-ca.pem`
-- `bmc.bmc_mock` and `bmc.cert_dir`: `cargo build --release -p bmc-mock` in
-  the site's checkout; `target/release/bmc-mock` and `crates/bmc-mock/`.
+- `bmc.bmc_mock`: `~/.cache/enclosure-dpu-build/bmc-mock` after
+  `build-dpu-image.sh`, or `cargo build --release -p bmc-mock` in a checkout.
 - registration: the site folder's generated `run-admin-cli.sh` runs the
   `expected-machine add` line `create` prints; the DPU's interface id comes
   from `machine show` and goes in with `dpu-config` as described above.
