@@ -16,6 +16,17 @@ apt-get update
 apt-get install -y --no-install-recommends curl jq ethtool bridge-utils iproute2 kmod \
     podman uidmap slirp4netns fuse-overlayfs netavark aardvark-dns busybox-static
 
+# podman: every enclosure container runs with --network host, so no podman
+# network is ever used. Ubuntu's podman package still drops a CNI bridge config
+# while the CNI plugins are not installed, and every podman command then warns
+# about it; pin the netavark backend (installed above) and drop that file.
+install -d -m 0755 /etc/containers
+cat > /etc/containers/containers.conf <<'EOF_CONF'
+[network]
+network_backend = "netavark"
+EOF_CONF
+rm -f /etc/cni/net.d/87-podman-bridge.conflist
+
 # MFT for `flint`, which the agent container mounts from the DPU OS
 # (/usr/local/bin/flint in enclosure-nico-dpu-agent.service). Only the
 # userspace package: no device, so no kernel-mft-dkms.
