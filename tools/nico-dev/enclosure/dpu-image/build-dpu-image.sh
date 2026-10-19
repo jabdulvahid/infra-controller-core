@@ -22,6 +22,8 @@
 #                         (default: 3.4.0-doca3.4.0 pinned by digest, what NICo's DPF service pins)
 #   --hbn-image REF       any HBN container reference instead (repo:tag or repo@sha256:...)
 #   --out PATH            golden image (default /var/lib/libvirt/images/enclosure-dpu.qcow2)
+#   --bmc-mock-out PATH   where to put the x86 bmc-mock binary the enclosure's BMCs run
+#                         (default ~/.cache/enclosure-dpu-build/bmc-mock); the enclosure file's bmc.bmc_mock
 #   --rebuild-nico-images build the NICo images and bmc-mock even if ones from the same commit exist
 #   --rebuild-all         ignore every cached asset: NICo images, cloud image, MFT package
 #   --no-prompt           do not ask for confirmation
@@ -39,6 +41,7 @@ HBN_DEFAULT_DIGEST=sha256:9c2008c9ad1ad776fd1263072a78bd3dedaee2b9f315b99071d3e1
 HBN_VERSION="$HBN_DEFAULT_TAG"; HBN_IMAGE="${HBN_IMAGE:-}"
 OUT=/var/lib/libvirt/images/enclosure-dpu.qcow2
 WORK="$HOME/.cache/enclosure-dpu-build"
+BMC_MOCK=""
 REBUILD_NICO=0; REBUILD_ALL=0; NO_PROMPT=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -48,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --hbn-version) HBN_VERSION="$2"; shift 2 ;;
         --hbn-image) HBN_IMAGE="$2"; shift 2 ;;
         --out) OUT="$2"; shift 2 ;;
+        --bmc-mock-out) BMC_MOCK="$2"; shift 2 ;;
         --rebuild-nico-images) REBUILD_NICO=1; shift ;;
         --rebuild-all) REBUILD_ALL=1; REBUILD_NICO=1; shift ;;
         --no-prompt) NO_PROMPT=1; shift ;;
@@ -57,6 +61,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$NICO_REPO" ]] || { echo "--nico-repo DIR is required" >&2; exit 2; }
 NICO_REPO="${NICO_REPO/#\~/$HOME}"
+BMC_MOCK="${BMC_MOCK:-$WORK/bmc-mock}"; BMC_MOCK="${BMC_MOCK/#\~/$HOME}"
 # The HBN reference: an explicit --hbn-image wins; the default release is
 # pulled by digest so the image is reproducible; another release by its tag.
 if [[ -n "$HBN_IMAGE" ]]; then hbn_label="$HBN_IMAGE (given as --hbn-image)"
@@ -88,7 +93,7 @@ fi
 TARBALL="$HERE/files/images/nico-arm64-images.tgz"
 cloud_name=$(basename "$UBUNTU_IMAGE")
 if (( REBUILD_ALL )); then
-    rm -f "$TARBALL" "$TARBALL.provenance" "$HERE"/files/mft/mft_*_arm64.deb "$WORK/bmc-mock" "$WORK/bmc-mock.provenance"
+    rm -f "$TARBALL" "$TARBALL.provenance" "$HERE"/files/mft/mft_*_arm64.deb "$BMC_MOCK" "$BMC_MOCK.provenance"
     [[ -f "$UBUNTU_IMAGE" ]] || rm -f "$WORK/$cloud_name"
     echo "--rebuild-all: cached NICo tarball, MFT package and downloaded cloud image removed"
 fi
@@ -113,7 +118,6 @@ if [[ -f "$TARBALL" ]]; then
         nico_reason="tarball exists without provenance (older build); rebuilding to record it"
     fi
 fi
-BMC_MOCK="$WORK/bmc-mock"
 mock_action="build"; mock_reason="not built yet"
 if [[ -f "$BMC_MOCK" && -f "$BMC_MOCK.provenance" ]]; then
     mock_commit=$(sed -n 's/^commit=//p' "$BMC_MOCK.provenance")
@@ -136,7 +140,7 @@ out_state=$([[ -e "$OUT" ]] && echo "EXISTS, will be overwritten ($(date -r "$OU
 
 cat <<EOF
 
-Enclosure DPU image build — plan
+Enclosure DPU image build — plan (two outputs: the DPU image and the bmc-mock binary)
   NICo checkout        $NICO_REPO
                        $repo_state
   NICo images tarball  $TARBALL
@@ -181,9 +185,13 @@ if [[ $mock_action == build ]]; then
         (cd "$NICO_REPO" && docker image inspect carbide-build-minimal >/dev/null 2>&1 || cargo make build-cargo-docker-image-minimal)
         (cd "$NICO_REPO" && cargo make cargo-docker-minimal -- build --release -p bmc-mock)
     fi
+    mkdir -p "$(dirname "$BMC_MOCK")"
     install -m 0755 "$NICO_REPO/target/release/bmc-mock" "$BMC_MOCK"
     printf 'commit=%s\nref=%s\nbuilt=%s\n' "$(git -C "$NICO_REPO" rev-parse HEAD)" "$NICO_REF" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BMC_MOCK.provenance"
 fi
 HBN_VERSION="$HBN_VERSION" bash "$HERE/build-dpu.sh" "${nico_args[@]}" --out "$OUT" --work "$WORK" --cloud-image "$UBUNTU_IMAGE" --hbn-image "$HBN_IMAGE"
-echo "bmc-mock: $BMC_MOCK  (enclosure file bmc.bmc_mock)"
+echo
+echo "outputs:"
+echo "  DPU image  $OUT                 (enclosure file dpu.image)"
+echo "  bmc-mock   $BMC_MOCK  (enclosure file bmc.bmc_mock)"
 echo "total: $(( ($(date +%s) - start) / 60 )) min"
